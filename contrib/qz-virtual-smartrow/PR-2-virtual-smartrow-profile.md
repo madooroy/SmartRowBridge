@@ -24,7 +24,7 @@ pulley 0x1235 write  <─ smartrowrower::virtualSmartRowWrite  <─ smartRowWrit
 ### Not covered - why this is a draft
 
 1. **Android**: advertising goes through `BleAdvertiser.startAdvertisingRower*`; a SmartRow variant (name, `0x1234`, manufacturer data) is still needed, so on Android the service is in the GATT table but not advertised.
-2. **iOS native peripheral** (`lockscreen` / `virtualrower.swift`): untouched, so the profile is inert there. CoreBluetooth cannot advertise manufacturer data, so the SmartRow app would not see the pulley ID; untested whether it accepts the device without it.
+2. **iOS native peripheral** (`lockscreen` / `virtualrower.swift`): untouched, so the profile is inert there. CoreBluetooth cannot advertise manufacturer data, so the SmartRow app would not see the pulley ID. Tested with my bridge: the iOS SmartRow app does not list a device without that manufacturer data (the Android app does, as plain `SmartRow`), so QZ on iOS cannot host the virtual pulley for the iOS SmartRow app. The iOS app also needs `0x1234`/`0x1235`/`0x1236` declared as 16-bit UUIDs, as this patch does.
 3. **One central at a time** (as far as I know for the Qt peripheral): this gives "SmartRow app *or* an FTMS client". Both apps on the *same* phone/tablet may work, since they share one BLE link and the single advertisement carries `0x1826` and `0x1234` - untested. Both on separate devices at once needs a multi-central peripheral (my bridge uses two extended advertising sets with Bumble on Linux).
 4. In this mode FTMS clients also see the device named `SmartRow`.
 5. QZ and the SmartRow app must run on different devices.

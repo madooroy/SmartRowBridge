@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Let an iOS Shortcut ("Run Script over SSH") shut the Pi down cleanly - and nothing else.
 #
-# Run as the pi user (not with sudo):
+# Run as your normal user (not with sudo):
 #   bash ~/smartrow-bridge/tools/setup_shutdown_shortcut.sh
 # and paste the public key the Shortcuts app generated when asked.
 #
 # It installs two narrowly scoped permissions:
-#   1. /etc/sudoers.d/010-pi-shutdown - pi may run exactly "shutdown -h now" without a password.
+#   1. /etc/sudoers.d/010-<user>-shutdown - your user may run exactly "shutdown -h now" without a password.
 #   2. ~/.ssh/authorized_keys entry  - the phone's key is forced to run only that command
 #      (no shell, no port forwarding), whatever the Shortcut asks for.
 set -euo pipefail

@@ -162,7 +162,7 @@ Common problems:
 |---|---|---|
 | `SRB_PULLEY_ADDRESS` | empty | Empty = the first device advertising the SmartRow service; a MAC pins one pulley (use where several SmartRows are in range) |
 | `SRB_FITNESS_NAME` | `PiRower` | The name fitness apps see |
-| `SRB_CLONE_NAME` | the pulley's name | The name the SmartRow app sees |
+| `SRB_CLONE_NAME` | the pulley's name | The name the SmartRow app sees. Leave it empty: a test with `SmartRowPi` did not work with the SmartRow app |
 | `SRB_CLONE_ADDRESS`, `SRB_FITNESS_ADDRESS` | derived from the dongle's MAC | Addresses of the two virtual devices: the same on every boot, unique per Pi |
 | `SRB_ADVERTISE_PULLEY_ID` | `1` | Test only: `0` advertises the clone without the pulley ID (manufacturer data), as an iPhone would; change `SRB_CLONE_ADDRESS` too so the app sees a new device |
 | `SRB_CENTRAL_MAC`, `SRB_PERIPHERAL_MAC` | empty | Empty = built-in radio for the pulley, USB dongle for the apps; set the radios' MACs to pin them |

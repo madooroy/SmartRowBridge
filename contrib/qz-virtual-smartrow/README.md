@@ -32,6 +32,9 @@ pulley 0x1235 write  <── smartrowrower::virtualSmartRowWrite  <──emit sm
   (company id `0x1235`, e.g. `"34"`) copied from `Rower->bluetoothDevice`. That manufacturer data is the pulley's
   ID: the SmartRow app shows it as `SmartRow-34` and remembers the pulley by it. To fit 31 bytes, the TX power
   level and `0xFF00` are dropped in this mode.
+  The iOS SmartRow app lists a device only if this manufacturer data is advertised, and uses the service only
+  if `0x1234`, `0x1235` and `0x1236` are declared as 16-bit UUIDs (as the patch does); the Android app accepts
+  a device without the manufacturer data and with either UUID form.
 - Hand-over of the pulley dialogue. While the app is attached (it subscribed to `0x1236`, or wrote to `0x1235`),
   QZ stops sending its own init, `$` polls, `#` and KEYLOCK answer: the app does all of that itself through the
   relay, and a second KEYLOCK answer or a competing init breaks the handshake. When the app leaves, QZ
@@ -49,8 +52,10 @@ pulley 0x1235 write  <── smartrowrower::virtualSmartRowWrite  <──emit sm
    the patch leaves the existing calls in place, so on Android the service is in the GATT table but not advertised.
 3. **iOS native peripheral** (`ios_peloton_workaround` → `lockscreen`): not touched, so the profile is inert
    there. Note that CoreBluetooth only lets a peripheral advertise a local name and service UUIDs, not
-   manufacturer data, so on iOS the SmartRow app would not see the pulley ID. Untested whether it then
-   accepts the device.
+   manufacturer data, so on iOS the SmartRow app would not see the pulley ID. Tested since with our bridge
+   (`SRB_ADVERTISE_PULLEY_ID=0`): the iOS SmartRow app does not list a device without that manufacturer
+   data, so a virtual pulley hosted by QZ on iOS cannot serve the iOS SmartRow app. The Android SmartRow
+   app accepts it and lists it as plain `SmartRow`.
 4. **One central at a time (the main design question).** As far as we know the Qt peripheral serves a
    single connection, so this patch gives "SmartRow app *or* an FTMS client", not both at once. Three ways
    it can be used:
