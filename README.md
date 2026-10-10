@@ -50,7 +50,7 @@ workout summary.
 | Part | Notes |
 |---|---|
 | Raspberry Pi 4 | Other models with built-in Bluetooth probably work; untested |
-| microSD card | Raspberry Pi OS **Lite (64-bit)**, flashed with Raspberry Pi Imager; set up Wi-Fi and SSH there |
+| microSD card | Raspberry Pi OS **Lite (64-bit)**, flashed with Raspberry Pi Imager (see [Prepare the Pi](#1-prepare-the-pi)) |
 | USB Bluetooth dongle | TP-Link **UB500** (Realtek RTL8761BU). It must support LE extended advertising; other Bluetooth 5 dongles may work |
 | SmartRow pulley | Firmware V3.10 tested |
 | Two devices for the apps | The SmartRow app on one, the fitness app on another (or the same one) |
@@ -64,10 +64,23 @@ Why two radios: the built-in radio is the *client* of the pulley, and the dongle
 
 Skip this if your Pi already runs Raspberry Pi OS Lite (64-bit) and you can reach it over SSH.
 
-1. Flash **Raspberry Pi OS Lite (64-bit)** to the microSD card with
-   [Raspberry Pi Imager](https://www.raspberrypi.com/software/). In its settings, set a user name and
-   password, enter your Wi-Fi network, and enable SSH. Leave **Raspberry Pi Connect** off: it is Raspberry
-   Pi's service for reaching a Pi from outside your home through their website, and the bridge does not use it.
+1. Flash the microSD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/). The Imager
+   lists its steps down the left side; these are the ones in version 2. Older versions ask for the same
+   things in a different layout.
+
+   | Step | What to do |
+   |---|---|
+   | **Device** | Choose your Pi model |
+   | **OS** | Choose **Raspberry Pi OS (other)**, then **Raspberry Pi OS Lite (64-bit)** |
+   | **Storage** | Choose the microSD card |
+   | **Customisation: Hostname** | A name for the Pi on your network, e.g. `rowbridge`. You use it to connect in step 3 |
+   | **Customisation: Localisation** | Your country's capital, your time zone and your keyboard layout. The time zone sets the times shown in the bridge's log |
+   | **Customisation: User** | A user name and password. You need both to connect in step 3 |
+   | **Customisation: Wi-Fi** | **Secure network**, then your network's name (SSID) and its password, twice |
+   | **Customisation: Remote access** | Turn on **Enable SSH** and choose **Use password authentication** |
+   | **Customisation: Raspberry Pi Connect** | Leave it off: it is Raspberry Pi's service for reaching a Pi from outside your home through their website, and the bridge does not use it |
+   | **Writing** | Check that the summary lists the hostname, localisation, user account, Wi-Fi and SSH, then click **Write** |
+
 2. Put the card in the Pi, plug in the USB Bluetooth dongle and power the Pi on. The first boot takes a
    minute or two.
 3. Connect from your computer: `ssh <user>@<hostname>.local`, with the user and hostname you set in the Imager.
