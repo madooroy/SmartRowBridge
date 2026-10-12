@@ -3,8 +3,9 @@
 Every function returns a PIL image; the hardware module only copies it to the LCD,
 and `python -m smartrow_bridge.display --preview DIR` saves them as PNG files.
 
-Button hints sit next to the buttons: A top left, B bottom left, X top right,
-Y bottom right.
+Button hints are small tabs in the corners next to the buttons (A top left,
+B bottom left, X top right, Y bottom right): a power symbol on A, and on B the
+screen it switches to.
 """
 
 from __future__ import annotations
@@ -59,16 +60,53 @@ def _canvas() -> tuple[Image.Image, ImageDraw.ImageDraw]:
     return image, ImageDraw.Draw(image)
 
 
-def _hints(draw: ImageDraw.ImageDraw, a: str = "", b: str = "", x: str = "", y: str = "") -> None:
+def _icon_power(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, colour) -> None:
+    """The standard power symbol: a circle open at the top, a line through the gap."""
+    draw.arc((cx - r, cy - r, cx + r, cy + r), start=-50, end=230, fill=colour, width=2)
+    draw.line((cx, cy - r - 1, cx, cy), fill=colour, width=2)
+
+
+def _icon_rowing(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, colour) -> None:
+    """Rowing figures: three bars of a bar chart."""
+    for i, h in enumerate((0.5, 1.0, 0.75)):
+        x = cx - r + 1 + i * (2 * r // 3 + 1)
+        draw.rectangle((x, cy + r - int(2 * r * h), x + 3, cy + r), fill=colour)
+
+
+def _icon_status(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, colour) -> None:
+    """Status list: three dots with lines, like the status screen's rows."""
+    for i in range(3):
+        y = cy - r + 2 + i * (r - 1)
+        draw.ellipse((cx - r, y - 2, cx - r + 4, y + 2), fill=colour)
+        draw.line((cx - r + 7, y, cx + r, y), fill=colour, width=2)
+
+
+_ICONS = {"power": _icon_power, "rowing": _icon_rowing, "status": _icon_status}
+
+
+def _button(draw: ImageDraw.ImageDraw, corner: str, icon: str, label: str) -> None:
+    """A small tab in the screen corner next to a button: icon + word."""
     f = font(13)
-    if a:
-        draw.text((4, 4), "◀ " + a, font=f, fill=DIM)
-    if b:
-        draw.text((4, HEIGHT - 4), "◀ " + b, font=f, fill=DIM, anchor="ld")
-    if x:
-        draw.text((WIDTH - 4, 4), x + " ▶", font=f, fill=DIM, anchor="ra")
-    if y:
-        draw.text((WIDTH - 4, HEIGHT - 4), y + " ▶", font=f, fill=DIM, anchor="rd")
+    tab_h, r = 22, 7
+    width = 8 + 2 * r + 6 + int(draw.textlength(label, font=f)) + 8
+    left = corner in ("A", "B")
+    top = corner in ("A", "X")
+    x0 = 0 if left else WIDTH - width
+    y0 = 0 if top else HEIGHT - tab_h
+    draw.rounded_rectangle((x0 - 8 if left else x0, y0 - 8 if top else y0,
+                            x0 + width if left else WIDTH + 8, y0 + tab_h if top else HEIGHT + 8),
+                           radius=8, fill=TILE)
+    _ICONS[icon](draw, x0 + 8 + r, y0 + tab_h // 2, r, FG)
+    draw.text((x0 + 8 + 2 * r + 6, y0 + tab_h // 2), label, font=f, fill=FG, anchor="lm")
+
+
+def _hints(draw: ImageDraw.ImageDraw, view: str) -> None:
+    """A: hold to switch off. B: go to the other screen."""
+    _button(draw, "A", "power", "Hold: off")
+    if view == "status":
+        _button(draw, "B", "rowing", "Rowing")
+    else:
+        _button(draw, "B", "status", "Status")
 
 
 def _centered(draw: ImageDraw.ImageDraw, lines: list[tuple[str, int, bool, tuple]], centre_y: int = HEIGHT // 2):
@@ -103,7 +141,7 @@ def format_time(seconds: int) -> str:
 def status_screen(status: dict | None, now: float, uptime: float, address: str = "") -> Image.Image:
     image, draw = _canvas()
     state = bridge_state(status, now, uptime)
-    _hints(draw, a="hold: switch off", b="rowing")
+    _hints(draw, "status")
     if address:
         draw.text((WIDTH - 4, HEIGHT - 4), address, font=_fit(draw, address, 13, 170), fill=DIM, anchor="rd")
 
@@ -149,9 +187,9 @@ def status_screen(status: dict | None, now: float, uptime: float, address: str =
 
 def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image:
     image, draw = _canvas()
-    _hints(draw, a="hold: switch off", b="status")
+    _hints(draw, "rowing")
     if bridge_state(status, now, uptime) != "ok":
-        _centered(draw, [("No data", 28, True, DIM), ("◀ B shows the status", 16, False, DIM)])
+        _centered(draw, [("No data", 28, True, DIM), ("B shows the status", 16, False, DIM)])
         return image
 
     m = status.get("metrics") or {}
@@ -163,7 +201,7 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
         ("PACE / 500 M", live(format_pace(int(m.get("pace_s_per_500m", 0))))),
         ("METRES", str(m.get("distance_m", 0))),
     ]
-    top, tile_w, tile_h, gap = 24, 154, 84, 4
+    top, tile_w, tile_h, gap = 26, 154, 82, 4
     for i, (label, value) in enumerate(tiles):
         x0 = 4 + (i % 2) * (tile_w + gap)
         y0 = top + (i // 2) * (tile_h + gap)

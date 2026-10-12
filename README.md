@@ -293,6 +293,8 @@ without a phone:
   the two.
 - **Switching off:** hold button **A** for 2 seconds. When the Pi has stopped, the screen says
   *Safe to unplug*. It does the same however the Pi is shut down (the iPhone shortcut, SSH).
+- **Buttons:** small tabs in the screen's corners show what A and B do: a power symbol on A, and on B
+  the screen it switches to.
 - **LED:** yellow while waiting for the pulley, green when ready, red if the bridge is not running.
 
 The screen is a separate service that only reads a status file the bridge writes, so the bridge works the
