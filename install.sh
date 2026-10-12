@@ -40,6 +40,16 @@ systemctl daemon-reload
 systemctl enable smartrow-bridge.service
 systemctl restart smartrow-bridge.service
 
+# Optional screen (tools/setup_display.sh): keep its libraries and files up to date.
+if [[ -f /etc/systemd/system/smartrow-display.service ]]; then
+    cp requirements-display.txt "$PREFIX"/
+    "$PREFIX/venv/bin/pip" install -r "$PREFIX/requirements-display.txt"
+    install -m 644 deploy/smartrow-display.service /etc/systemd/system/smartrow-display.service
+    install -m 755 deploy/smartrow-display.shutdown /usr/lib/systemd/system-shutdown/smartrow-display.shutdown
+    systemctl daemon-reload
+    systemctl restart smartrow-display.service
+fi
+
 echo
 echo "Installed. Wake the pulley (pull the handle), then check with:"
 echo "  sudo bash tools/health_check.sh"

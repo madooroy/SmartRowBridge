@@ -170,6 +170,25 @@ else
     tail -n 5 <<<"$problems" | sed 's/^/          /'
 fi
 
+if [[ -f /etc/systemd/system/smartrow-display.service ]]; then
+    section "Screen (Display HAT Mini)"
+    if [[ $(systemctl is-active smartrow-display 2>/dev/null) == active ]]; then
+        ok "screen service running"
+    else
+        bad "screen service not running - see: journalctl -u smartrow-display -b"
+    fi
+    [[ -e /dev/spidev0.1 ]] && ok "SPI switched on" || bad "SPI is off - rerun tools/setup_display.sh and reboot"
+    STATUS_FILE=$(sed -n 's/^SRB_STATUS_FILE=//p' "$ENV_FILE" 2>/dev/null | tail -n 1)
+    STATUS_FILE=${STATUS_FILE:-/run/smartrow-bridge/status.json}
+    if [[ $STATUS_FILE == off ]]; then
+        bad "SRB_STATUS_FILE=off - the screen has nothing to show"
+    elif [[ -f $STATUS_FILE ]] && (( $(date +%s) - $(stat -c %Y "$STATUS_FILE") <= 5 )); then
+        ok "bridge status file up to date ($STATUS_FILE)"
+    else
+        warn "bridge status file missing or old ($STATUS_FILE)"
+    fi
+fi
+
 section "SD card and system"
 root_dev=$(findmnt -no SOURCE /)
 if findmnt -no OPTIONS / | grep -qE '(^|,)rw(,|$)'; then

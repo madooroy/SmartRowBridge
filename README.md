@@ -154,6 +154,7 @@ the SD card and power supply. It works after a reboot too: the bridge keeps a sm
 | `tools/sniff_pulley.py` | Connects to the pulley directly and prints its services and raw packets (stop the bridge first) |
 | `tools/setup_shutdown_shortcut.sh` | Lets an iOS Shortcut shut the Pi down, and nothing else, see [switching the Pi off from an iPhone](#optional-switch-the-pi-off-from-an-iphone) |
 | `tools/faster_startup.sh` | Optional boot-time tuning of the Pi, see [faster start-up](#optional-faster-start-up) |
+| `tools/setup_display.sh` | Optional status screen, see [a status screen on the Pi](#optional-a-status-screen-on-the-pi) |
 
 Live log: `journalctl -u smartrow-bridge -f`. Raspberry Pi OS keeps the log in memory, so save it before
 shutting down if you want to share it: `journalctl -u smartrow-bridge -b --no-pager > ~/bridge.log`.
@@ -184,6 +185,8 @@ Common problems:
 | `SRB_SNIFF_LOG` | empty | Append every raw pulley packet to this file |
 | `SRB_GATT_LOG` | empty | `1` logs every GATT request the apps make to the virtual devices (verbose) |
 | `SRB_LOG_LEVEL` | `INFO` | `DEBUG` adds a line per second |
+| `SRB_STATUS_FILE` | `/run/smartrow-bridge/status.json` | Status the optional screen shows, rewritten every second in RAM; `off` disables |
+| `SRB_DISPLAY_LED`, `SRB_DISPLAY_HOLD_S` | `1`, `2` | Screen only: `0` leaves its LED off; seconds to hold button A to switch the Pi off |
 
 ## How it works
 
@@ -196,6 +199,7 @@ Common problems:
 | `smartrow_bridge/bridge.py` | Wiring; runs the pulley handshake when the SmartRow app is absent; 1 Hz FTMS; data-flow log |
 | `smartrow_bridge/adapters.py` | Picks the two radios, clears rfkill, hands the dongle to Bumble |
 | `smartrow_bridge/addresses.py`, `advertising.py`, `session_log.py`, `config.py` | Virtual device addresses, advertising payloads, session record, settings |
+| `smartrow_bridge/status.py`, `smartrow_bridge/display/` | Status file; the optional screen, a separate service that only reads it |
 
 - **Pass-through.** Every pulley notification is forwarded to the clone first, unchanged and in order; parsing
   works on a copy. The SmartRow app's writes go back to the pulley unchanged.
@@ -275,6 +279,42 @@ shell or do anything else. To remove it again, delete that line from `~/.ssh/aut
 
 The setup belongs to the SD card: after re-flashing the card or moving to a new one, run step 3 again with
 the same key. A second phone needs its own key: repeat all four steps on it.
+
+## Optional: a status screen on the Pi
+
+A [Pimoroni Display HAT Mini](https://shop.pimoroni.com/products/display-hat-mini) (2" screen, four
+buttons, an RGB LED) on the Pi's 40-pin header shows what the bridge is doing, and switches the Pi off
+without a phone:
+
+- **Status:** the pulley (waiting, connected, lost), and whether the SmartRow app and the fitness app are
+  connected. The Pi's name and IP address are at the bottom.
+- **Rowing:** watts, strokes per minute, pace and distance, with time and stroke count. It appears by itself
+  when you start rowing and goes back to the status a minute after you stop. Button **B** switches between
+  the two.
+- **Switching off:** hold button **A** for 2 seconds. When the Pi has stopped, the screen says
+  *Safe to unplug*. It does the same however the Pi is shut down (the iPhone shortcut, SSH).
+- **LED:** yellow while waiting for the pulley, green when ready, red if the bridge is not running.
+
+The screen is a separate service that only reads a status file the bridge writes, so the bridge works the
+same with or without it, and a problem with the screen cannot stop the bridge.
+
+1. Shut the Pi down, unplug it, and fit the HAT (a 2x20 riser header between the Pi and the HAT keeps it
+   clear of the processor). The screen faces up, buttons A and B on the left.
+2. Update the bridge, then set up the screen:
+
+   ```bash
+   cd ~/smartrow-bridge && git pull && sudo bash install.sh
+   sudo bash ~/smartrow-bridge/tools/setup_display.sh
+   sudo reboot
+   ```
+
+   The reboot is needed once, to switch on the SPI interface the screen uses. After that, updating with
+   `install.sh` keeps the screen up to date too.
+3. Check: `sudo bash ~/smartrow-bridge/tools/health_check.sh` has a *Screen* section. Log:
+   `journalctl -u smartrow-display -f`.
+
+To remove it: `sudo bash ~/smartrow-bridge/tools/setup_display.sh --undo`. To see the screens without the
+hardware: `python3 -m smartrow_bridge.display --preview /tmp/screens` (needs Pillow) saves them as images.
 
 ## Optional: faster start-up
 

@@ -1,0 +1,6 @@
+# Optional screen (Pimoroni Display HAT Mini), installed by tools/setup_display.sh.
+# st7789 brings spidev (built on the Pi), numpy and gpiodevice.
+st7789>=1.0.1
+gpiodevice>=0.1.0
+gpiod>=2.2
+pillow>=10.1

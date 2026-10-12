@@ -8,7 +8,7 @@ import logging
 import time
 from typing import IO, TYPE_CHECKING
 
-from . import adapters, addresses, protocol
+from . import adapters, addresses, protocol, status
 from .central import PulleyLink
 from .config import Config
 
@@ -28,6 +28,7 @@ def _load_peripheral_module():
 POLL_INTERVAL_S = 2.0
 FTMS_INTERVAL_S = 1.0
 STATS_INTERVAL_S = 60.0
+STATUS_INTERVAL_S = 1.0
 
 
 class Bridge:
@@ -41,6 +42,9 @@ class Bridge:
         self._pulley_ready = False
         self._pulley_packets = 0
         self._sniff: IO[str] | None = None
+        self._stage = status.STARTING
+        self._pulley_label: str | None = None
+        self._clone_name: str | None = None
 
     # The pulley only streams after the "$\rV@\r" init, periodic "$" polls and,
     # on V3 hardware, a KEYLOCK answer. The SmartRow app does all of that through
@@ -124,7 +128,48 @@ class Bridge:
                 log.warning("%d pulley packets had bad checksums", self.parser.bad_checksums)
                 self.parser.bad_checksums = 0
 
+    def _status(self) -> dict:
+        stage = self._stage
+        if stage == status.CONNECTED and not (self.link and self.link.connected):
+            stage = status.RECONNECTING
+        p = self.peripheral
+        snap = self.parser.snapshot()
+        return status.build(
+            stage=stage,
+            pulley=self._pulley_label,
+            smartrow_app=bool(p and p.tablet_connected),
+            fitness_app=bool(p and p.fitness_connected),
+            clone_name=self._clone_name,
+            fitness_name=self.cfg.fitness_name,
+            metrics=snap,
+            rowing=snap.stroke_rate_spm > 0 or snap.power_w > 0,
+        )
+
+    async def _status_loop(self) -> None:
+        """Keep the status file (read by the optional screen) up to date."""
+        path = self.cfg.status_file
+        failed = False
+        while True:
+            try:
+                status.write(path, self._status())
+                failed = False
+            except Exception as exc:  # noqa: BLE001 - the status file must never stop the bridge
+                if not failed:
+                    log.warning("Could not write status file %s: %s", path, exc)
+                failed = True
+            await asyncio.sleep(STATUS_INTERVAL_S)
+
     async def run(self) -> None:
+        status_task = None
+        if self.cfg.status_file.lower() != "off":
+            status_task = asyncio.create_task(self._status_loop())
+        try:
+            await self._run()
+        finally:
+            if status_task is not None:
+                status_task.cancel()
+
+    async def _run(self) -> None:
         # Bumble is only needed once the pulley is connected, so load it in a thread
         # while the radios are prepared and the pulley scan runs.
         peripheral_module = asyncio.create_task(asyncio.to_thread(_load_peripheral_module))
@@ -154,7 +199,10 @@ class Bridge:
             on_notify=self._on_notify,
         )
         self.link.on_connected = self._on_pulley_connected
+        self._stage = status.SEARCHING
         snapshot = await self.link.connect_first()
+        self._pulley_label = status.pulley_label(snapshot.name, snapshot.manufacturer_data)
+        self._clone_name = self.cfg.clone_name or snapshot.name
         BridgePeripheral = (await peripheral_module).BridgePeripheral
 
         try:
@@ -169,6 +217,7 @@ class Bridge:
                 on_clone_write=self.link.write,
             ) as peripheral:
                 self.peripheral = peripheral
+                self._stage = status.CONNECTED
                 await asyncio.gather(
                     self.link.run(), self._driver_loop(), self._ftms_loop(), self._stats_loop()
                 )

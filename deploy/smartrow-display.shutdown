@@ -1,0 +1,10 @@
+#!/bin/sh
+# Installed in /usr/lib/systemd/system-shutdown/ by tools/setup_display.sh.
+# systemd runs this at the very end of a shutdown, after every service has stopped and
+# the SD card has been made read-only: the moment the Pi is about to stop. $1 is
+# poweroff, halt, reboot or kexec.
+PY=/opt/smartrow-bridge/venv/bin/python
+[ -x "$PY" ] || exit 0
+cd /opt/smartrow-bridge || exit 0
+PYTHONDONTWRITEBYTECODE=1 timeout 8 "$PY" -m smartrow_bridge.display --final "$1" >/dev/null 2>&1
+exit 0

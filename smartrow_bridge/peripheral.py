@@ -95,6 +95,11 @@ class BridgePeripheral:
         """True while the SmartRow app is attached to the clone (subscribed or writing)."""
         return bool(self._tablet_connections)
 
+    @property
+    def fitness_connected(self) -> bool:
+        """True while a fitness app (Peloton) is subscribed to Rower Data."""
+        return bool(self._fitness_connections)
+
     # ------------------------------------------------------------------ GATT
 
     def _clone_characteristic(self, spec: CharSpec) -> Characteristic:

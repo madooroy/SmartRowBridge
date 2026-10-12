@@ -6,7 +6,7 @@ import argparse
 import os
 from dataclasses import dataclass
 
-from . import session_log
+from . import session_log, status
 
 
 @dataclass
@@ -26,6 +26,7 @@ class Config:
     drive_without_tablet: bool
     sniff_log: str | None
     session_log: str
+    status_file: str
     gatt_log: bool
     log_level: str
 
@@ -72,6 +73,8 @@ def parse(argv: list[str] | None = None) -> Config:
                    help="append every raw pulley packet (hex + ascii) to this file")
     p.add_argument("--session-log", default=_env("SRB_SESSION_LOG", session_log.DEFAULT_PATH),
                    help="milestone record that survives shutdown ('off' to disable)")
+    p.add_argument("--status-file", default=_env("SRB_STATUS_FILE", status.DEFAULT_PATH),
+                   help="status file for the optional screen, rewritten every second ('off' to disable)")
     p.add_argument("--gatt-log", action="store_true",
                    default=_env("SRB_GATT_LOG", "0") in ("1", "true", "yes"),
                    help="debugging: log every GATT request the apps make to the virtual devices")

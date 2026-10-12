@@ -1,0 +1,20 @@
+[Unit]
+Description=SmartRow bridge screen (Pimoroni Display HAT Mini)
+# Optional: installed by tools/setup_display.sh. It only reads the bridge's status
+# file, so the bridge runs the same whether or not this is running.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/smartrow-bridge
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/opt/smartrow-bridge
+ExecStart=/opt/smartrow-bridge/venv/bin/python -m smartrow_bridge.display
+Restart=always
+RestartSec=10
+TimeoutStopSec=5
+# SPI and GPIO access.
+User=root
+
+[Install]
+WantedBy=multi-user.target
