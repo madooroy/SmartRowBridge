@@ -309,6 +309,7 @@ What the script changes:
 |---|---|---|
 | `/boot/firmware/config.txt` | `boot_delay=0`, `disable_splash=1`, `camera_auto_detect=0`, `display_auto_detect=0` | No firmware pause, splash screen or probing for cameras and displays |
 | `/boot/firmware/config.txt` | `auto_initramfs=0` | Skips loading the initramfs (not needed to boot from the SD card) |
+| `/etc/initramfs-tools/conf.d/smartrow-bridge-speedup` | `MODULES=most` | Keeps kernel and driver updates working with `auto_initramfs=0`. Without it, rebuilding the unused initramfs fails ("failed to determine device for /") and takes the update with it |
 | `/boot/firmware/cmdline.txt` | adds `cloud-init=disabled` | The first-boot configuration service no longer runs on every boot (about 2 s) |
 | Bootloader (Pi 4 only) | `NET_INSTALL_AT_POWER_ON=0` | No wait for a keyboard at power-on. Stored on the Pi's board, not on the SD card |
 
@@ -321,6 +322,9 @@ Things to know:
   Wi-Fi about 10 s after that, and your computer may need longer still to find the Pi by name. That is the
   same with or without these settings.
 - **A new camera or DSI display** would no longer be detected automatically.
+- **Applied with an earlier version of the script?** Run it again (it is safe to repeat) to add the initramfs
+  setting, then `sudo dpkg --configure -a` to finish any update that already failed. `sudo dpkg --audit`
+  prints nothing when all is well.
 - **Undo:** `sudo bash ~/smartrow-bridge/tools/faster_startup.sh --undo`, then reboot.
 - **If the Pi does not start afterwards:** both files are on the SD card's boot partition, which any
   computer can read. Put the card in a computer, copy `config.txt.before-speedup` back over `config.txt`,

@@ -14,6 +14,11 @@
 #                                   files Raspberry Pi Imager left on the card.
 #   3. Bootloader (Pi 4 only)     - NET_INSTALL_AT_POWER_ON=0: no wait for a keyboard at power-on.
 #                                   This is stored on the Pi's board, not on the SD card.
+#   4. /etc/initramfs-tools/conf.d/smartrow-bridge-speedup - MODULES=most. Started without an
+#                                   initramfs, Linux names the system drive /dev/root, and
+#                                   rebuilding the (now unused) initramfs then fails with "failed
+#                                   to determine device for /". That rebuild is part of every
+#                                   kernel or driver update, so those updates would fail too.
 # The first time it runs it keeps the original config.txt next to the changed one as
 # config.txt.before-speedup. Both files are on the SD card's boot partition, which any
 # computer can read: if the Pi ever fails to start, put the card in a computer, copy
@@ -24,6 +29,7 @@ set -euo pipefail
 BOOT=${BOOT_DIR:-/boot/firmware}  # BOOT_DIR: try it on copies of the two files
 CONFIG=$BOOT/config.txt
 CMDLINE=$BOOT/cmdline.txt
+INITRAMFS_CONF=${INITRAMFS_DIR:-/etc/initramfs-tools/conf.d}/smartrow-bridge-speedup   # INITRAMFS_DIR: for trying it out
 SUFFIX=.before-speedup
 UNDO=0
 [[ ${1:-} == --undo ]] && UNDO=1
@@ -71,6 +77,10 @@ if [[ $UNDO -eq 1 ]]; then
     else
         echo "   $CMDLINE: cloud-init=disabled was not set"
     fi
+    if [[ -f $INITRAMFS_CONF ]]; then
+        rm -f "$INITRAMFS_CONF"
+        echo "   initramfs: back to the default"
+    fi
     set_net_install 1
     echo "Done. Reboot to apply: sudo reboot"
     exit 0
@@ -105,6 +115,12 @@ if grep -qw 'cloud-init=disabled' "$CMDLINE"; then
 else
     sed -i '1 s/[[:space:]]*$/ cloud-init=disabled/' "$CMDLINE"
     echo "   $CMDLINE: added cloud-init=disabled"
+fi
+
+if [[ -d $(dirname "$INITRAMFS_CONF") ]]; then
+    printf '%s\n' '# smartrow-bridge faster_startup.sh: the Pi starts without the initramfs (auto_initramfs=0),' \
+        '# so build it without needing to know the system drive. Bigger, but not loaded.' 'MODULES=most' >"$INITRAMFS_CONF"
+    echo "   initramfs: builds without looking up the system drive (keeps kernel updates working)"
 fi
 
 set_net_install 0
