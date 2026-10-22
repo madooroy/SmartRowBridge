@@ -12,6 +12,8 @@ holds the only Bluetooth connection the pulley allows and re-publishes it as two
 
 Both apps record the same strokes. Switch the Pi on, pull the handle, open your apps.
 
+<img src="docs/images/screen-rowing.jpg" alt="The bridge on a Raspberry Pi 4 with the optional screen, showing watts, strokes per minute, pace and metres while rowing" width="480">
+
 **Do you need this?** Only if the app you want is Peloton, or another app that accepts a standard Bluetooth
 rower but that the SmartRow app cannot broadcast to. At the time of writing the SmartRow app broadcasts to
 EXR, Kinomap, Zwift, Bitgym, Regatta, ImersU, Holofit and ErgZone
@@ -286,6 +288,8 @@ the same key. A second phone needs its own key: repeat all four steps on it.
 ## Optional: a status screen on the Pi
 
 Tested on a Raspberry Pi 4 (Raspberry Pi OS Lite, trixie) with a 2x20 riser header under the HAT.
+
+<img src="docs/images/screen-status.jpg" alt="Status screen: pulley, SmartRow app and PiRower all connected" width="400">
 
 A [Pimoroni Display HAT Mini](https://shop.pimoroni.com/products/display-hat-mini) (2" screen, four
 buttons, an RGB LED) on the Pi's 40-pin header shows what the bridge is doing, and switches the Pi off
