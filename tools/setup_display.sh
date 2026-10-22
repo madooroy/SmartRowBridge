@@ -7,7 +7,11 @@
 #
 # Run install.sh first (after a "git pull"), so the installed code includes the screen.
 # What it does:
-#   1. switches on the Pi's SPI interface, which the screen uses (needs one reboot);
+#   1. switches on the Pi's SPI interface, which the screen uses, without its MISO line
+#      (needs one reboot). The screen's data/command pin is GPIO 9, which is also SPI's
+#      MISO (data-in) pin; the screen never sends data back. With the usual
+#      dtparam=spi=on the kernel keeps GPIO 9 and the screen stays blank, so this uses
+#      dtoverlay=spi0-2cs,no_miso instead (found on the same HAT in the PiRadioAux project);
 #   2. installs a font and the screen's Python libraries into /opt/smartrow-bridge/venv
 #      (one of them, spidev, is compiled on the Pi, hence the compiler);
 #   3. installs and starts the smartrow-display service;
@@ -19,6 +23,7 @@ PREFIX=/opt/smartrow-bridge
 UNIT=/etc/systemd/system/smartrow-display.service
 HOOK=/usr/lib/systemd/system-shutdown/smartrow-display.shutdown
 CONFIG=/boot/firmware/config.txt
+SPI_LINE="dtoverlay=spi0-2cs,no_miso"
 
 if [[ $EUID -ne 0 ]]; then
     echo "Run as root: sudo bash $0" >&2
@@ -32,7 +37,7 @@ if [[ ${1:-} == --undo ]]; then
     rm -f "$UNIT" "$HOOK"
     systemctl daemon-reload
     echo "   service and shutdown hook removed"
-    echo "   left in place: SPI switched on, the screen's Python libraries (both harmless)"
+    echo "   left in place: SPI ($SPI_LINE in $CONFIG) and the screen's Python libraries (both harmless)"
     exit 0
 fi
 
@@ -42,19 +47,21 @@ if [[ ! -d $PREFIX/smartrow_bridge/display || ! -x $PREFIX/venv/bin/python ]]; t
     exit 1
 fi
 
-echo "== 1. SPI interface =="
+echo "== 1. SPI interface (without MISO, so GPIO 9 is free for the screen) =="
 reboot_needed=0
-if [[ -e /dev/spidev0.1 ]]; then
-    echo "   already on"
+if grep -qx "$SPI_LINE" "$CONFIG"; then
+    echo "   already set: $SPI_LINE"
+elif grep -q '^dtparam=spi=on' "$CONFIG"; then
+    sed -i "s/^dtparam=spi=on.*/$SPI_LINE/" "$CONFIG"
+    echo "   changed dtparam=spi=on to $SPI_LINE (takes effect after a reboot)"
+    reboot_needed=1
 else
-    if command -v raspi-config >/dev/null; then
-        raspi-config nonint do_spi 0
-    elif ! grep -q '^dtparam=spi=on' "$CONFIG"; then
-        printf '\n[all]\ndtparam=spi=on\n' >>"$CONFIG"
-    fi
-    echo "   switched on (takes effect after a reboot)"
+    printf '\n# Screen on the Display HAT Mini (smartrow-bridge tools/setup_display.sh)\n[all]\n%s\n' \
+        "$SPI_LINE" >>"$CONFIG"
+    echo "   switched on: $SPI_LINE (takes effect after a reboot)"
     reboot_needed=1
 fi
+[[ -e /dev/spidev0.1 ]] || reboot_needed=1
 
 echo "== 2. Font and Python libraries =="
 apt-get install -y fonts-dejavu-core build-essential python3-dev >/dev/null

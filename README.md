@@ -310,7 +310,10 @@ same with or without it, and a problem with the screen cannot stop the bridge.
    sudo reboot
    ```
 
-   The reboot is needed once, to switch on the SPI interface the screen uses. After that, updating with
+   The reboot is needed once, to switch on the SPI interface the screen uses. It is switched on without
+   its MISO (data-in) line, `dtoverlay=spi0-2cs,no_miso` in `config.txt`: the screen uses that pin, GPIO 9,
+   for something else, and with the usual `dtparam=spi=on` the Pi won't let go of it, so the screen stays
+   blank. After that, updating with
    `install.sh` keeps the screen up to date too.
 3. Check: `sudo bash ~/smartrow-bridge/tools/health_check.sh` has a *Screen* section. Log:
    `journalctl -u smartrow-display -f`.

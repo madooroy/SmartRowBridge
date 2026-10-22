@@ -177,7 +177,13 @@ if [[ -f /etc/systemd/system/smartrow-display.service ]]; then
     else
         bad "screen service not running - see: journalctl -u smartrow-display -b"
     fi
-    [[ -e /dev/spidev0.1 ]] && ok "SPI switched on" || bad "SPI is off - rerun tools/setup_display.sh and reboot"
+    if ! grep -qx 'dtoverlay=spi0-2cs,no_miso' /boot/firmware/config.txt 2>/dev/null; then
+        bad "SPI is not set up without MISO, so GPIO 9 is not free for the screen - rerun tools/setup_display.sh, then reboot"
+    elif [[ -e /dev/spidev0.1 ]]; then
+        ok "SPI on, without MISO (GPIO 9 free for the screen)"
+    else
+        bad "SPI is set up but not on yet - reboot once (sudo reboot)"
+    fi
     STATUS_FILE=$(sed -n 's/^SRB_STATUS_FILE=//p' "$ENV_FILE" 2>/dev/null | tail -n 1)
     STATUS_FILE=${STATUS_FILE:-/run/smartrow-bridge/status.json}
     if [[ $STATUS_FILE == off ]]; then
