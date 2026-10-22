@@ -23,18 +23,18 @@ BACK_TO_STATUS_S = 60.0
 @dataclass
 class Frame:
     image: Image.Image
-    led: tuple[bool, bool, bool]  # red, green, blue
+    led: str | None  # "red", "green" or None (off)
     switch_off: bool = False  # the hold finished: shut the Pi down now
 
 
-def led_for(status: dict | None, now: float, uptime: float) -> tuple[bool, bool, bool]:
-    """Green: ready. Yellow: waiting for the pulley. Red: bridge not running."""
-    state = screens.bridge_state(status, now, uptime)
-    if state == "down":
-        return True, False, False
-    if state == "ok" and status.get("stage") == "connected":
-        return False, True, False
-    return True, True, False
+def led_for(status: dict | None, now: float, uptime: float, rowing_recently: bool = False) -> str | None:
+    """Dim red: starting, looking for the pulley, or bridge not running. Dim green: ready.
+    Off: while rowing, until the screen goes back to the status a minute after the last stroke."""
+    if rowing_recently:
+        return None
+    if screens.bridge_state(status, now, uptime) == "ok" and status.get("stage") == "connected":
+        return "green"
+    return "red"
 
 
 class Controller:
@@ -49,6 +49,9 @@ class Controller:
         self._b_was_down = False
         self.switching_off = False
 
+    def _rowing_recently(self, now: float) -> bool:
+        return now - self._last_rowing < BACK_TO_STATUS_S
+
     def _auto_view(self, rowing: bool, now: float) -> str:
         if rowing:
             self._last_rowing = now
@@ -57,12 +60,12 @@ class Controller:
             self._was_rowing = rowing
         if self._manual:
             return self._manual
-        return "rowing" if now - self._last_rowing < BACK_TO_STATUS_S else "status"
+        return "rowing" if self._rowing_recently(now) else "status"
 
     def step(self, status: dict | None, now: float, uptime: float, buttons: dict[str, bool],
              address: str = "") -> Frame:
         if self.switching_off:
-            return Frame(screens.switching_off_screen(), (False, False, False))
+            return Frame(screens.switching_off_screen(), None)
 
         fresh = screens.bridge_state(status, now, uptime) == "ok"
         rowing = fresh and bool(status.get("rowing"))
@@ -82,12 +85,12 @@ class Controller:
             held = now - self._a_since
             if held >= self.hold_s:
                 self.switching_off = True
-                return Frame(screens.switching_off_screen(), (False, False, False), switch_off=True)
-            return Frame(screens.hold_screen(held / self.hold_s), led_for(status, now, uptime))
+                return Frame(screens.switching_off_screen(), None, switch_off=True)
+            return Frame(screens.hold_screen(held / self.hold_s), led_for(status, now, uptime, self._rowing_recently(now)))
         self._a_since = None
 
         if self.view == "rowing":
             image = screens.rowing_screen(status, now, uptime)
         else:
             image = screens.status_screen(status, now, uptime, address)
-        return Frame(image, led_for(status, now, uptime))
+        return Frame(image, led_for(status, now, uptime, self._rowing_recently(now)))

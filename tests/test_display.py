@@ -78,7 +78,7 @@ class ControllerTest(unittest.TestCase):
         self.assertFalse(self.step(c, status(), 1.5, A=True).switch_off)
         frame = self.step(c, status(), 2.0, A=True)
         self.assertTrue(frame.switch_off)
-        self.assertEqual(frame.led, (False, False, False))
+        self.assertIsNone(frame.led)
         self.assertFalse(self.step(c, status(), 2.1).switch_off)  # only once
         self.assertTrue(c.switching_off)
 
@@ -100,10 +100,17 @@ class ControllerTest(unittest.TestCase):
         self.assertFalse(c.switching_off)
 
     def test_led(self):
-        self.assertEqual(app.led_for(status(), NOW, UPTIME), (False, True, False))  # green
-        self.assertEqual(app.led_for(status("searching"), NOW, UPTIME), (True, True, False))  # yellow
-        self.assertEqual(app.led_for(None, NOW, UPTIME), (True, False, False))  # red
+        self.assertEqual(app.led_for(status(), NOW, UPTIME), "green")
+        self.assertEqual(app.led_for(status("searching"), NOW, UPTIME), "red")
+        self.assertEqual(app.led_for(None, NOW, UPTIME), "red")
+        self.assertIsNone(app.led_for(status(), NOW, UPTIME, rowing_recently=True))
 
+    def test_led_off_while_rowing_and_green_a_minute_after(self):
+        c = app.Controller()
+        self.assertEqual(self.step(c, status(), 0).led, "green")
+        self.assertIsNone(self.step(c, status(rowing=True), 1).led)
+        self.assertIsNone(self.step(c, status(rowing=False, age=-30), 30).led)
+        self.assertEqual(self.step(c, status(rowing=False, age=-62), 62).led, "green")  # status file still fresh
 
 if __name__ == "__main__":
     unittest.main()

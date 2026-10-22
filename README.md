@@ -295,7 +295,8 @@ without a phone:
   *Safe to unplug*. It does the same however the Pi is shut down (the iPhone shortcut, SSH).
 - **Buttons:** small tabs in the screen's corners show what A and B do: a power symbol on A, and on B
   the screen it switches to.
-- **LED:** yellow while waiting for the pulley, green when ready, red if the bridge is not running.
+- **LED:** dim red while the bridge starts and waits for the pulley (or is not running), dim green
+  when ready, and off while you row, until the screen goes back to the status.
 
 The screen is a separate service that only reads a status file the bridge writes, so the bridge works the
 same with or without it, and a problem with the screen cannot stop the bridge.

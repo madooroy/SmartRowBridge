@@ -20,7 +20,13 @@ SPI_PORT, SPI_CS, DC_PIN, BACKLIGHT_PIN = 0, 1, 9, 13
 WIDTH, HEIGHT = 320, 240
 
 _INPUT = gpiod.LineSettings(direction=Direction.INPUT, bias=Bias.PULL_UP)
-_LED_OFF = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Value.ACTIVE)
+# The LED's three colours are lit by pulling their pin low. Full on (output low) is far
+# too bright, so "on" is the pin as an input with the Pi's weak internal pull-down:
+# the LED then gets only a trickle of current and glows dimly. Off is output high, with
+# the pull-up also set so it stays off after the program exits.
+_LED_OFF = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Value.ACTIVE, bias=Bias.PULL_UP)
+_LED_DIM = gpiod.LineSettings(direction=Direction.INPUT, bias=Bias.PULL_DOWN)
+LED_COLOURS = {"red": ("r",), "green": ("g",)}
 # Backlight on, with the pin's pull-up also set. When a program lets go of a pin, the
 # Pi turns it back into an input, which would switch the backlight off the moment the
 # screen service stops, long before the Pi has finished shutting down. With the
@@ -41,6 +47,7 @@ class DisplayHat:
                      for colour, pin in LED_PINS.items()} if led else {}
         self._backlight = gpiodevice.get_pin(BACKLIGHT_PIN, "backlight", _BACKLIGHT_ON)
         self._last_frame: bytes | None = None
+        self._led_state: dict[str, bool] = {name: False for name in self._led}
 
     def show(self, image: Image.Image) -> None:
         """Send the image to the LCD, unless it is the frame already shown."""
@@ -56,12 +63,15 @@ class DisplayHat:
         lines, offset = pin
         return lines.get_value(offset) == Value.INACTIVE
 
-    def set_led(self, r: bool = False, g: bool = False, b: bool = False) -> None:
-        for colour, on in (("r", r), ("g", g), ("b", b)):
-            pin = self._led.get(colour)
-            if pin is not None:
+    def set_led(self, colour: str | None) -> None:
+        """Dim "red" or "green", or None for off. Only changes pins whose state changes."""
+        lit = LED_COLOURS.get(colour, ()) if colour else ()
+        for name, pin in self._led.items():
+            on = name in lit
+            if self._led_state.get(name) != on:
                 lines, offset = pin
-                lines.set_value(offset, Value.INACTIVE if on else Value.ACTIVE)
+                lines.reconfigure_lines({offset: _LED_DIM if on else _LED_OFF})
+                self._led_state[name] = on
 
     def backlight(self, on: bool) -> None:
         """Off also sets the pull-down, so the screen stays dark after the program exits."""

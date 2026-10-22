@@ -107,7 +107,7 @@ def run() -> None:
                 address, address_at = _address(), now
             frame = controller.step(status_file.read(path), time.time(), _uptime(), buttons, address)
             hat.show(frame.image)
-            hat.set_led(*frame.led)
+            hat.set_led(frame.led)
             last_draw = now
             if frame.switch_off:
                 log.info("A held: switching off")
@@ -116,7 +116,7 @@ def run() -> None:
         last_buttons = buttons
         time.sleep(TICK_S)
 
-    hat.set_led(False, False, False)
+    hat.set_led(None)
     if controller.switching_off or _system_stopping():
         # Shutting down (from here, SSH or the iPhone shortcut): say so; the shutdown
         # hook draws the final "Safe to unplug" screen at the very end.
@@ -131,7 +131,7 @@ def final(kind: str) -> None:
     from .hat import DisplayHat
 
     hat = DisplayHat(buttons=False, led=True)
-    hat.set_led(False, False, False)
+    hat.set_led(None)
     hat.show(screens.final_screen(kind))
     # The kernel may reset a GPIO line once its owner exits, which could switch the
     # backlight off. A child keeps the lines open until the Pi stops; the hook (our
