@@ -20,6 +20,10 @@ data into **Peripheral Server 2**.
 5. **hci1 (Peripheral Server 2)** hosts standard Bluetooth Fitness Machine
 Service (FTMS) protocols (specifically Rower Data characteristic `0x2AD1`),
 allowing the Peloton App to see a generic smart rowing machine (named `PiRower`).
+- **Optional screen:** Pimoroni Display HAT Mini on the 40-pin header (ST7789 LCD on
+SPI0 CE1, data/command on GPIO 9, so SPI is set up as `dtoverlay=spi0-2cs,no_miso`).
+A separate `smartrow-display` service reads `/run/smartrow-bridge/status.json`, which
+the bridge writes once a second; the bridge never depends on the screen.
 ## Operational Constraints
 - Target environment is headless Linux. The script must execute automatically on
 boot via a systemd service.

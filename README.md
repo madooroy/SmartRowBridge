@@ -39,6 +39,9 @@ Working on the author's setup: SmartRow pulley firmware **V3.10**, Raspberry Pi 
 - the SmartRow app on an Android tablet (Lenovo), an iPhone and an iPad;
 - the Peloton app on an Android tablet (Lenovo), an iPhone and an iPad.
 
+The optional [status screen](#optional-a-status-screen-on-the-pi) (Pimoroni Display HAT Mini) is tested on
+the same Pi 4.
+
 Cold boot to both apps recording needs no interaction. Other firmware versions, dongles and apps are
 untested - reports welcome.
 
@@ -281,6 +284,8 @@ The setup belongs to the SD card: after re-flashing the card or moving to a new 
 the same key. A second phone needs its own key: repeat all four steps on it.
 
 ## Optional: a status screen on the Pi
+
+Tested on a Raspberry Pi 4 (Raspberry Pi OS Lite, trixie) with a 2x20 riser header under the HAT.
 
 A [Pimoroni Display HAT Mini](https://shop.pimoroni.com/products/display-hat-mini) (2" screen, four
 buttons, an RGB LED) on the Pi's 40-pin header shows what the bridge is doing, and switches the Pi off
