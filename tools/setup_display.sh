@@ -81,7 +81,7 @@ else
 fi
 
 echo "== 4. Shutdown screen =="
-install -m 755 deploy/smartrow-display.shutdown "$HOOK"
+install -D -m 755 deploy/smartrow-display.shutdown "$HOOK"
 echo "   installed $HOOK"
 
 echo

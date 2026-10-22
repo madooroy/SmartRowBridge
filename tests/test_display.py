@@ -73,6 +73,7 @@ class ControllerTest(unittest.TestCase):
 
     def test_hold_a_to_switch_off(self):
         c = app.Controller(hold_s=2.0)
+        self.step(c, status(), -1)  # A seen released first
         self.assertFalse(self.step(c, status(), 0, A=True).switch_off)
         self.assertFalse(self.step(c, status(), 1.5, A=True).switch_off)
         frame = self.step(c, status(), 2.0, A=True)
@@ -81,8 +82,18 @@ class ControllerTest(unittest.TestCase):
         self.assertFalse(self.step(c, status(), 2.1).switch_off)  # only once
         self.assertTrue(c.switching_off)
 
+    def test_a_pressed_from_start_never_switches_off(self):
+        c = app.Controller(hold_s=2.0)
+        for t in (0, 1, 2, 3, 10):
+            self.assertFalse(self.step(c, status(), t, A=True).switch_off)
+        self.assertFalse(c.switching_off)
+        self.step(c, status(), 11)  # released once: from now on a hold counts
+        self.step(c, status(), 12, A=True)
+        self.assertTrue(self.step(c, status(), 14, A=True).switch_off)
+
     def test_letting_go_cancels(self):
         c = app.Controller(hold_s=2.0)
+        self.step(c, status(), -1)
         self.step(c, status(), 0, A=True)
         self.step(c, status(), 1.5)  # released
         self.assertFalse(self.step(c, status(), 2.5, A=True).switch_off)  # timer restarted

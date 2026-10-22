@@ -4,7 +4,9 @@
   minute after the last stroke.
 - B switches between the two by hand (until rowing starts or stops again).
 - Holding A for SRB_DISPLAY_HOLD_S seconds (2) switches the Pi off; letting go
-  earlier cancels.
+  earlier cancels. A only counts once it has been seen released: a button that reads
+  as pressed from the start (stuck, shorted, HAT seated a row off) must never be able
+  to switch the Pi off on every boot.
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ class Controller:
         self._was_rowing = False
         self._last_rowing = -1e9
         self._a_since: float | None = None
+        self.a_armed = False  # A has been seen released since start
         self._b_was_down = False
         self.switching_off = False
 
@@ -71,7 +74,9 @@ class Controller:
             self.view = self._manual
         self._b_was_down = b_down
 
-        if buttons.get("A", False):
+        if not buttons.get("A", False):
+            self.a_armed = True
+        if buttons.get("A", False) and self.a_armed:
             if self._a_since is None:
                 self._a_since = now
             held = now - self._a_since

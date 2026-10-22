@@ -60,6 +60,18 @@ def _system_stopping() -> bool:
     return state == "stopping"
 
 
+def _record(message: str) -> None:
+    """Also note it in the bridge's session record, which survives shutdown (the journal does not)."""
+    path = _env("SRB_SESSION_LOG", "/var/lib/smartrow-bridge/sessions.log")
+    if path.lower() == "off":
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} WARNING smartrow_bridge.display: {message}\n")
+    except OSError:
+        pass
+
+
 def run() -> None:
     from .hat import DisplayHat  # hardware libraries only when there is hardware
 
@@ -78,6 +90,11 @@ def run() -> None:
     signal.signal(signal.SIGTERM, on_term)
     signal.signal(signal.SIGINT, on_term)
     log.info("Display running; status file %s", path)
+    first = {name: hat.pressed(name) for name in ("A", "B", "X", "Y")}
+    log.info("Buttons at start (True = pressed): %s", first)
+    if first["A"]:
+        log.warning("Button A reads as pressed at start; it is ignored until it is released")
+        _record("Button A read as pressed when the screen started; ignored until released")
 
     address, address_at = "", 0.0
     last_draw, last_buttons = 0.0, {}
@@ -94,6 +111,7 @@ def run() -> None:
             last_draw = now
             if frame.switch_off:
                 log.info("A held: switching off")
+                _record("Button A held: switching the Pi off")
                 subprocess.Popen(["systemctl", "poweroff"])
         last_buttons = buttons
         time.sleep(TICK_S)

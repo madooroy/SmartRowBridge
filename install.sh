@@ -45,7 +45,7 @@ if [[ -f /etc/systemd/system/smartrow-display.service ]]; then
     cp requirements-display.txt "$PREFIX"/
     "$PREFIX/venv/bin/pip" install -r "$PREFIX/requirements-display.txt"
     install -m 644 deploy/smartrow-display.service /etc/systemd/system/smartrow-display.service
-    install -m 755 deploy/smartrow-display.shutdown /usr/lib/systemd/system-shutdown/smartrow-display.shutdown
+    install -D -m 755 deploy/smartrow-display.shutdown /usr/lib/systemd/system-shutdown/smartrow-display.shutdown
     systemctl daemon-reload
     systemctl restart smartrow-display.service
 fi
