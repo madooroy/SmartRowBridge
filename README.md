@@ -291,8 +291,10 @@ without a phone:
 - **Rowing:** watts, strokes per minute, pace and distance, with time and stroke count. It appears by itself
   when you start rowing and goes back to the status a minute after you stop. Button **B** switches between
   the two.
-- **Switching off:** hold button **A** for 2 seconds. When the Pi has stopped, the screen says
-  *Safe to unplug*. It does the same however the Pi is shut down (the iPhone shortcut, SSH).
+- **Switching off:** hold button **A** for 2 seconds (you can let go once it says *Switching off…*).
+  Unplug when the screen goes dark: it shows *Safe to unplug* for a moment at the very end, after the SD
+  card has been closed, and goes dark as the Pi stops. The Pi's own green light may flash a few more
+  times; that is fine. It does the same however the Pi is shut down (the iPhone shortcut, SSH).
 - **Buttons:** small tabs in the screen's corners show what A and B do: a power symbol on A, and on B
   the screen it switches to.
 - **LED:** dim red while the bridge starts and waits for the pulley (or is not running), dim green

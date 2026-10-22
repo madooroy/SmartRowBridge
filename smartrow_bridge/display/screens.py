@@ -237,7 +237,8 @@ def blank() -> Image.Image:
 
 def switching_off_screen() -> Image.Image:
     image, draw = _canvas()
-    _centered(draw, [("Switching off…", 28, True, AMBER), ("Do not unplug yet", 18, False, FG)])
+    _centered(draw, [("Switching off…", 28, True, AMBER), ("Unplug when the screen", 18, False, FG),
+                     ("goes dark", 18, False, FG)])
     return image
 
 
@@ -247,7 +248,5 @@ def final_screen(kind: str) -> Image.Image:
     if kind == "reboot":
         _centered(draw, [("Restarting…", 28, True, FG)])
     else:
-        _centered(draw, [("Safe to unplug", 30, True, GREEN),
-                         ("once the green light on the Pi", 16, False, DIM),
-                         ("has stopped flashing", 16, False, DIM)])
+        _centered(draw, [("Safe to unplug", 30, True, GREEN)])
     return image
