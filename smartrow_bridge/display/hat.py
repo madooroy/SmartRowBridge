@@ -21,18 +21,25 @@ WIDTH, HEIGHT = 320, 240
 
 _INPUT = gpiod.LineSettings(direction=Direction.INPUT, bias=Bias.PULL_UP)
 _LED_OFF = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Value.ACTIVE)
+# Backlight on, with the pin's pull-up also set. When a program lets go of a pin, the
+# Pi turns it back into an input, which would switch the backlight off the moment the
+# screen service stops, long before the Pi has finished shutting down. With the
+# pull-up set the input still reads high, so the last picture stays lit.
+_BACKLIGHT_ON = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Value.ACTIVE, bias=Bias.PULL_UP)
+_BACKLIGHT_OFF = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Value.INACTIVE, bias=Bias.PULL_DOWN)
 
 
 class DisplayHat:
     def __init__(self, buttons: bool = True, led: bool = True) -> None:
         self.lcd = ST7789(
-            port=SPI_PORT, cs=SPI_CS, dc=DC_PIN, backlight=BACKLIGHT_PIN,
+            port=SPI_PORT, cs=SPI_CS, dc=DC_PIN, backlight=None,  # backlight: see _BACKLIGHT_ON
             width=WIDTH, height=HEIGHT, rotation=180, spi_speed_hz=60_000_000,
         )
         self._buttons = {name: gpiodevice.get_pin(pin, f"button-{name}", _INPUT)
                          for name, pin in BUTTONS.items()} if buttons else {}
         self._led = {colour: gpiodevice.get_pin(pin, f"led-{colour}", _LED_OFF)
                      for colour, pin in LED_PINS.items()} if led else {}
+        self._backlight = gpiodevice.get_pin(BACKLIGHT_PIN, "backlight", _BACKLIGHT_ON)
         self._last_frame: bytes | None = None
 
     def show(self, image: Image.Image) -> None:
@@ -57,4 +64,6 @@ class DisplayHat:
                 lines.set_value(offset, Value.INACTIVE if on else Value.ACTIVE)
 
     def backlight(self, on: bool) -> None:
-        self.lcd.set_backlight(on)
+        """Off also sets the pull-down, so the screen stays dark after the program exits."""
+        lines, offset = self._backlight
+        lines.reconfigure_lines({offset: _BACKLIGHT_ON if on else _BACKLIGHT_OFF})
