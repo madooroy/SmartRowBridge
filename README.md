@@ -382,7 +382,8 @@ Things to know:
 - **Applied with an earlier version of the script?** Run it again (it is safe to repeat) to add the initramfs
   setting, then `sudo dpkg --configure -a` to finish any update that already failed. `sudo dpkg --audit`
   prints nothing when all is well.
-- **Undo:** `sudo bash ~/smartrow-bridge/tools/faster_startup.sh --undo`, then reboot.
+- **Undo:** `sudo bash ~/smartrow-bridge/tools/faster_startup.sh --undo`, then reboot. If the screen
+  is set up, the undo keeps its SPI line (`dtoverlay=spi0-2cs,no_miso`) in `config.txt`.
 - **If the Pi does not start afterwards:** both files are on the SD card's boot partition, which any
   computer can read. Put the card in a computer, copy `config.txt.before-speedup` back over `config.txt`,
   and delete the words `cloud-init=disabled` from the end of `cmdline.txt`.

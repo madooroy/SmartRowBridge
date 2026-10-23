@@ -82,6 +82,18 @@ if [[ $UNDO -eq 1 ]]; then
         echo "   initramfs: back to the default"
     fi
     set_net_install 1
+    # The restored config.txt may predate the screen (tools/setup_display.sh): keep
+    # its SPI line, or the screen goes blank after the reboot.
+    SPI_LINE="dtoverlay=spi0-2cs,no_miso"
+    if [[ -f ${DISPLAY_UNIT:-/etc/systemd/system/smartrow-display.service} ]] && ! grep -qx "$SPI_LINE" "$CONFIG"; then
+        if grep -q '^dtparam=spi=on' "$CONFIG"; then
+            sed -i "s/^dtparam=spi=on.*/$SPI_LINE/" "$CONFIG"
+        else
+            printf '\n# Screen on the Display HAT Mini (smartrow-bridge tools/setup_display.sh)\n[all]\n%s\n' \
+                "$SPI_LINE" >>"$CONFIG"
+        fi
+        echo "   $CONFIG: kept $SPI_LINE for the screen"
+    fi
     echo "Done. Reboot to apply: sudo reboot"
     exit 0
 fi
