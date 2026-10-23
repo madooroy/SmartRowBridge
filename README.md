@@ -1,4 +1,4 @@
-# smartrow-bridge
+# SmartRowBridge
 
 Row on a **SmartRow** with the **Peloton app** - and keep using the SmartRow app at the same time.
 
@@ -96,7 +96,7 @@ On the Pi, over SSH, with the USB Bluetooth dongle plugged in:
 
 ```bash
 sudo apt-get update && sudo apt-get install -y git
-git clone https://github.com/madooroy/smartrow-bridge.git ~/smartrow-bridge
+git clone https://github.com/madooroy/SmartRowBridge.git ~/smartrow-bridge
 cd ~/smartrow-bridge
 sudo bash install.sh
 ```
