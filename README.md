@@ -326,25 +326,27 @@ same with or without it, and a problem with the screen cannot stop the bridge.
 
 ### Interval coach
 
-<img src="docs/images/screen-interval.png" alt="Interval screen: time, watts, live force curve and a FINISH THE STROKE cue" width="320"> <img src="docs/images/screen-interval-summary.png" alt="Interval summary: average force curve against steady, finish, length and peak" width="320">
+<img src="docs/images/screen-interval.png" alt="Interval screen: time, watts, finish meter at -15% and a FINISH THE STROKE cue" width="320"> <img src="docs/images/screen-interval-summary.png" alt="Interval summary: average force curve against steady, finish, length and peak" width="320">
 
 No buttons to press and nothing to set up: the bridge learns your steady rowing during the first minute or
 two, then treats any stretch of strokes clearly harder than that (about 20 % and 15 W above, for at least 8
 strokes) as an interval.
 
-- **During an interval:** time into the effort, watts, your last few strokes' average force curve (coloured)
-  over the shape of your steady curve (grey), and one cue in large type:
+- **During an interval:** time into the effort, watts, a **finish meter** (how much of your last 8 strokes'
+  force comes in the back half of the drive, against your steady rowing: a big percentage and a bar with a
+  tick at steady, green / amber / red), and one cue in large type:
   - **GOOD** (green): the curve keeps your steady shape.
   - **FINISH THE STROKE** (amber): too little force in the back half of the drive; the stroke has gone short
     and leg-heavy (back swing and arm draw cut short).
   - **LONGER STROKES** (amber): strokes are more than 3 cm shorter than your steady ones.
-- **After an interval:** for 45 seconds, its duration and watts, its average curve against your steady shape,
-  and three numbers: **finish** (back-half force against steady: green within 5 %, amber to 12 %, red
+- **After an interval:** for 45 seconds, its duration and watts, its average force curve against your steady
+  shape (the force missing in the finish half filled in light grey), and three numbers: **finish** (back-half force against steady: green within 5 %, amber to 12 %, red
   beyond), **length** and **peak** force. The same summary goes into the session record, one line per
   interval. **X** brings it back any time, or closes it early.
 
-The grey line is scaled to the same total force as the coloured curve, so the picture compares where in the
-drive the force comes, not how much there is. The strokes just after an interval (recovery) and easy paddling
+On the summary, the grey line is scaled to the same total force as the coloured curve, so the picture compares
+where in the drive the force comes, not how much there is. The difference is real but small on a 2" screen,
+which is why the live screen shows the meter instead of the curve. The strokes just after an interval (recovery) and easy paddling
 never count towards your steady reference, a rise in pace that lasts more than 5 minutes becomes the new
 steady instead of an interval, and a new SmartRow app session starts over. The thresholds were set from real
 sessions (in `smartrow_bridge/coach.py`); `SRB_COACH=0` turns the coach off.

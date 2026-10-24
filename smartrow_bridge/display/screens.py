@@ -15,6 +15,8 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+FORCE_HALF = 12  # samples in the first half of the drive (smartrow_bridge.coach.back_share)
+
 WIDTH, HEIGHT = 320, 240
 
 BG = (0, 0, 0)
@@ -25,6 +27,7 @@ TILE = (26, 26, 26)
 GREEN = (70, 205, 95)
 AMBER = (245, 175, 45)
 RED = (235, 75, 65)
+GAP = (215, 215, 215)  # force missing in the finish, against the steady shape
 
 STALE_AFTER_S = 5.0  # status file older than this: the bridge is not running
 BOOT_GRACE_S = 90.0  # before this much uptime, a missing bridge is still "starting"
@@ -236,6 +239,14 @@ CUES = {
     "good": ("GOOD", GREEN),
 }
 RATING_COLOURS = {"good": GREEN, "ok": AMBER, "short": RED}
+GOOD_FINISH_PCT, OK_FINISH_PCT = -5, -12  # same bands as smartrow_bridge.coach (GOOD_FINISH, OK_FINISH)
+METER_MIN_PCT, METER_MAX_PCT = -30, 15
+
+
+def finish_colour(pct: int | None) -> tuple:
+    if pct is None:
+        return DIM
+    return GREEN if pct >= GOOD_FINISH_PCT else AMBER if pct >= OK_FINISH_PCT else RED
 
 
 def _shade(colour: tuple, amount: float = 0.35) -> tuple:
@@ -263,27 +274,80 @@ def _plot_curves(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], curv
         step = (x1 - x0) / (len(values) - 1)
         return [(x0 + i * step, y1 - (y1 - y0) * v / top) for i, v in enumerate(values)]
 
+    mid = x0 + (x1 - x0) * (FORCE_HALF + 1) / (len(curve or steady or [0]) + 1)
     if curve:
         pts = points(curve)
         draw.polygon([(x0, y1), *pts, (x1, y1)], fill=_shade(colour))
+    if curve and steady:
+        # Back half of the drive: fill the force missing against the steady shape.
+        sp = points(steady)
+        for i in range(FORCE_HALF + 1, len(pts) - 1):
+            a, b, c, d = pts[i], pts[i + 1], sp[i + 1], sp[i]
+            if c[1] < b[1] or d[1] < a[1]:  # steady above the effort here (smaller y = higher)
+                draw.polygon([a, b, (b[0], min(b[1], c[1])), (a[0], min(a[1], d[1]))], fill=GAP)
+    if curve:
         draw.line(pts, fill=colour, width=3, joint="curve")
     if steady:
         draw.line(points(steady), fill=DIM, width=2, joint="curve")
         draw.text((x1, y0), "steady shape", font=font(12), fill=DIM, anchor="rt")
+    if curve:
+        for y in range(y0 + 16, y1, 8):  # dashed line where the finish half starts
+            draw.line((mid, y, mid, y + 3), fill=FAINT, width=1)
+        draw.text((mid + 4, y1 - 2), "finish", font=font(11), fill=DIM, anchor="lb")
+
+
+def _finish_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct: int | None,
+                  length_delta: int | None) -> None:
+    """Back-half force against steady: a big number and a bar with a tick at steady."""
+    x0, y0, x1, y1 = box
+    draw.rounded_rectangle(box, radius=8, fill=TILE)
+    colour = finish_colour(pct)
+    draw.text((x0 + 10, y0 + 8), "FINISH vs STEADY", font=font(13), fill=DIM)
+    value = "…" if pct is None else f"{pct:+d}%"
+    draw.text((x1 - 10, y0 + 22), value, font=font(34, True), fill=colour, anchor="rm")
+
+    bx0, bx1, by0, by1 = x0 + 12, x1 - 12, y0 + 46, y0 + 66
+
+    def at(p: float) -> float:
+        p = max(METER_MIN_PCT, min(METER_MAX_PCT, p))
+        return bx0 + (bx1 - bx0) * (p - METER_MIN_PCT) / (METER_MAX_PCT - METER_MIN_PCT)
+
+    for lo, hi, zone in ((METER_MIN_PCT, OK_FINISH_PCT, RED), (OK_FINISH_PCT, GOOD_FINISH_PCT, AMBER),
+                         (GOOD_FINISH_PCT, METER_MAX_PCT, GREEN)):
+        draw.rectangle((at(lo), by0, at(hi), by1), fill=_shade(zone, 0.3))
+    if pct is not None:
+        draw.rectangle((bx0, by0 + 4, at(pct), by1 - 4), fill=colour)
+        draw.polygon([(at(pct) - 7, by0 - 6), (at(pct) + 7, by0 - 6), (at(pct), by0 + 2)], fill=FG)
+    draw.line((at(0), by0 - 3, at(0), by1 + 3), fill=FG, width=2)
+    draw.text((at(0), by1 + 3), "steady", font=font(11), fill=DIM, anchor="mt")
+    if length_delta is not None:
+        draw.text((bx0, by1 + 3), f"length {length_delta:+d} cm", font=font(11), fill=DIM, anchor="lt")
+
+
+def _mini_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct: int) -> None:
+    """A thin version of the finish meter's bar, for the summary's FINISH tile."""
+    x0, y0, x1, y1 = box
+
+    def at(p: float) -> float:
+        p = max(METER_MIN_PCT, min(METER_MAX_PCT, p))
+        return x0 + (x1 - x0) * (p - METER_MIN_PCT) / (METER_MAX_PCT - METER_MIN_PCT)
+
+    draw.rectangle(box, fill=FAINT)
+    draw.rectangle((x0, y0, at(pct), y1), fill=finish_colour(pct))
+    draw.line((at(0), y0 - 2, at(0), y1 + 2), fill=FG, width=2)
 
 
 def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
-    """During an effort: time and watts, the live curve against steady, and one cue."""
+    """During an effort: time and watts, a finish meter, and one cue."""
     image, draw = _canvas()
     _hints(draw, "rowing")
     live = status["coach"]["live"]
     draw.text((WIDTH - 6, 4), f"INTERVAL {live['index']}", font=font(15, True), fill=DIM, anchor="rt")
     draw.text((8, 58), format_time(live["elapsed_s"]), font=font(50, True), fill=FG, anchor="lm")
     draw.text((WIDTH - 8, 58), f"{live['power_w']} W", font=font(40, True), fill=FG, anchor="rm")
+    _finish_meter(draw, (4, 90, WIDTH - 4, 176), live.get("finish_pct"), live.get("length_delta_cm"))
 
     text, colour = CUES.get(live.get("cue"), ("…", DIM))
-    _plot_curves(draw, (4, 90, WIDTH - 4, 176), live.get("curve") or [], live.get("steady_curve") or [],
-                 colour if colour != DIM else FG)
     banner = (4, 181, WIDTH - 4, 215)
     if colour == DIM:
         draw.rounded_rectangle(banner, radius=8, fill=TILE)
@@ -316,8 +380,10 @@ def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
         x0 = 5 + i * (tile_w + gap)
         draw.rounded_rectangle((x0, y0, x0 + tile_w, y1), radius=8, fill=TILE)
         draw.text((x0 + 8, y0 + 5), label, font=font(12), fill=DIM)
-        draw.text((x0 + tile_w // 2, y0 + 32), value, font=_fit(draw, value, 24, tile_w - 10, True),
+        draw.text((x0 + tile_w // 2, y0 + 30), value, font=_fit(draw, value, 24, tile_w - 10, True),
                   fill=value_colour, anchor="mm")
+        if label == "FINISH":
+            _mini_meter(draw, (x0 + 8, y1 - 8, x0 + tile_w - 8, y1 - 4), last["finish_pct"])
     note = f"{delta:+.0f} cm vs steady"
     draw.text((WIDTH - 6, HEIGHT - 4), note, font=font(12), fill=DIM, anchor="rd")
     return image

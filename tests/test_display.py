@@ -21,7 +21,7 @@ LAST = {"index": 2, "duration_s": 62, "strokes": 22, "power_w": 150, "stroke_rat
         "length_delta_cm": 4.6, "peak_n": 623, "finish_pct": 0, "rating": "good", "fade_pct": -3, "curve": CURVE,
         "steady_curve": CURVE}
 LIVE = {"index": 3, "elapsed_s": 72, "strokes": 25, "power_w": 154, "length_cm": 112, "cue": "finish",
-        "curve": CURVE, "steady_curve": CURVE}
+        "finish_pct": -15, "length_delta_cm": -3, "curve": CURVE, "steady_curve": CURVE}
 
 
 def coached(live=None, last=None, show_summary=False, age=0.0):
@@ -45,6 +45,15 @@ class ScreensTest(unittest.TestCase):
         self.assertEqual(screens.format_time(455), "7:35")
         self.assertEqual(screens.format_time(3723), "1:02:03")
 
+    def test_finish_colours_match_the_coach(self):
+        from smartrow_bridge import coach
+        self.assertEqual(screens.GOOD_FINISH_PCT, round((coach.GOOD_FINISH - 1) * 100))
+        self.assertEqual(screens.OK_FINISH_PCT, round((coach.OK_FINISH - 1) * 100))
+        self.assertEqual(screens.finish_colour(2), screens.GREEN)
+        self.assertEqual(screens.finish_colour(-8), screens.AMBER)
+        self.assertEqual(screens.finish_colour(-15), screens.RED)
+        self.assertEqual(screens.finish_colour(None), screens.DIM)
+
     def test_every_screen_draws_at_lcd_size(self):
         images = [
             screens.status_screen(None, NOW, 10.0),
@@ -54,8 +63,9 @@ class ScreensTest(unittest.TestCase):
             screens.rowing_screen(None, NOW, UPTIME),
             screens.hold_screen(0.5), screens.switching_off_screen(), screens.final_screen("poweroff"),
             screens.interval_screen(coached(live=LIVE), NOW, UPTIME),
-            screens.interval_screen(coached(live={**LIVE, "cue": None, "curve": [], "steady_curve": []}), NOW,
-                                    UPTIME),
+            screens.interval_screen(coached(live={**LIVE, "cue": None, "finish_pct": None, "curve": [],
+                                                  "steady_curve": []}), NOW, UPTIME),
+            screens.interval_screen(coached(live={**LIVE, "finish_pct": -60}), NOW, UPTIME),  # off the scale
             screens.summary_screen(coached(last=LAST, show_summary=True), NOW, UPTIME),
             screens.summary_screen(coached(last={**LAST, "rating": "short", "finish_pct": -15}), NOW, UPTIME),
             screens.rowing_screen(coached(last=LAST), NOW, UPTIME),

@@ -117,9 +117,12 @@ class CoachTest(unittest.TestCase):
         r.row(60, 110)
         r.row(3, 155, SHORT, length=112)
         self.assertIsNone(r.state()["live"]["cue"])  # too early to judge
+        self.assertIsNone(r.state()["live"]["finish_pct"])
         r.row(8, 155, SHORT, length=112)
         live = r.state()["live"]
         self.assertEqual(live["cue"], "finish")
+        self.assertLess(live["finish_pct"], -12)
+        self.assertEqual(live["length_delta_cm"], -3)
         self.assertEqual(live["index"], 1)
         self.assertEqual(len(live["curve"]), 24)
         r.row(30, 155, SHORT, length=112)

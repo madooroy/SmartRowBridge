@@ -312,6 +312,9 @@ class IntervalCoach:
                 "power_w": round(statistics.fmean(stroke_power(s) for s in strokes[-3:])),
                 "length_cm": round(statistics.fmean(s.stroke_length_cm for s in window)),
                 "cue": self.effort.cue,
+                "finish_pct": round((back_share(mean_curve(window)) / (self.steady_back_share() or 1) - 1) * 100)
+                if len(strokes) >= CUE_MIN else None,
+                "length_delta_cm": round(statistics.fmean(s.stroke_length_cm for s in window) - self.steady_length()),
                 "curve": [round(v) for v in mean_curve(window)],
                 "steady_curve": [round(v) for v in mean_curve(self.steady)],
             }
