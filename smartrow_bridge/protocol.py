@@ -20,8 +20,12 @@ SmartRow app; decoding always works on a copy.
 
 from __future__ import annotations
 
+import logging
 import time
-from dataclasses import dataclass, replace
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
+
+log = logging.getLogger(__name__)
 
 SERVICE_UUID = "00001234-0000-1000-8000-00805f9b34fb"
 WRITE_CHAR_UUID = "00001235-0000-1000-8000-00805f9b34fb"
@@ -106,6 +110,36 @@ def keylock_response(notification: bytes) -> bytes:
     return b"\r" + f"{response & 0xFFFF:04x}".encode() + b"\r"
 
 
+# Force curve: each stroke arrives as three records, 'x', 'y' and 'z', whose
+# bytes 6-13 hold 8 samples each, in order from catch to finish (24 in all). A
+# sample is one printable character: (code - '!') x 16 N, so '!' is no force.
+# Worked out from captures/sniff2.log against a SmartRow app CSV export of the
+# same pulley, whose force columns are exactly these values (all multiples of
+# 16 N, up to 800 N) after a leading 0. The 'b' record that follows the 'z'
+# belongs to the same stroke: its work matches the curve's integral over the
+# stroke length to within about 10 %.
+FORCE_UNIT_N = 16
+FORCE_SAMPLES = 24
+
+
+def decode_force(payload: bytes) -> list[int]:
+    """Force samples (N) from the 8 data bytes of an x/y/z record."""
+    return [max(0, c - 0x21) * FORCE_UNIT_N for c in payload]
+
+
+@dataclass
+class StrokeCurve:
+    """One completed stroke: its force curve plus the metrics current when it finished."""
+
+    time: float  # time.monotonic() when the stroke's 'b' record arrived
+    force_n: list[int] = field(default_factory=list)  # FORCE_SAMPLES values, catch -> finish
+    power_w: int = 0
+    stroke_rate_spm: float = 0.0
+    stroke_length_cm: int = 0
+    work_j: float = 0.0
+    stroke_count: int = 0
+
+
 @dataclass
 class RowingMetrics:
     distance_m: int = 0
@@ -128,6 +162,9 @@ class SmartRowParser:
         self.metrics = RowingMetrics()
         self.v3 = False
         self.bad_checksums = 0
+        self.on_stroke: Callable[[StrokeCurve], None] | None = None
+        self._curve_parts: list[list[int]] = []
+        self._pending_curve: list[int] | None = None
 
     def feed(self, packet: bytes, now: float | None = None) -> bool:
         """Consume one notification. Returns True if metrics changed."""
@@ -151,7 +188,11 @@ class SmartRowParser:
             # [11] repeats the current time with extra data and is harmless here.
             m.elapsed_s = _atoi(p[6:9]) * 60 + _atoi(p[9:11])
         elif kind == "b":
+            # " 2630108": work 263.0 J [6:11], stroke length 108 cm [11:14].
             m.stroke_length_cm = _atoi(p[11:14])
+            if self._pending_curve is not None:
+                curve, self._pending_curve = self._pending_curve, None
+                self._emit_stroke(curve, _atoi(p[6:11]) / 10.0, now)
         elif kind == "c":
             # " 45  358": instantaneous W [6:9], session average W x10 [9:14].
             # Matches the Concept2 pace->watts curve within ~2% from 45 to 264 W.
@@ -173,8 +214,25 @@ class SmartRowParser:
             # keeps repeating the last c/d/e values after that, so this is the stop signal.
             if p[11:12] == b"!":
                 m.stopped = True
-        # 'x'/'y'/'z' (force curve) only carry distance.
+        elif kind == "x":
+            self._curve_parts = [decode_force(p[6:14])]  # a repeated 'x' starts over
+        elif kind in "yz" and len(self._curve_parts) == "xyz".index(kind):
+            self._curve_parts.append(decode_force(p[6:14]))
+            if kind == "z":
+                self._pending_curve = [f for part in self._curve_parts for f in part]
+                self._curve_parts = []
         return True
+
+    def _emit_stroke(self, curve: list[int], work_j: float, now: float) -> None:
+        if self.on_stroke is None or not any(curve):
+            return
+        m = self.metrics
+        stroke = StrokeCurve(time=now, force_n=curve, power_w=m.power_w, stroke_rate_spm=m.stroke_rate_spm,
+                             stroke_length_cm=m.stroke_length_cm, work_j=work_j, stroke_count=m.stroke_count)
+        try:
+            self.on_stroke(stroke)
+        except Exception:  # noqa: BLE001 - coaching must never break parsing
+            log.exception("Stroke handler failed")
 
     def snapshot(self, stale_after: float = 6.0, now: float | None = None) -> RowingMetrics:
         """Current metrics, with live values zeroed once the rower stops.

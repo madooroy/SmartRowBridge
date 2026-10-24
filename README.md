@@ -191,6 +191,7 @@ Common problems:
 | `SRB_GATT_LOG` | empty | `1` logs every GATT request the apps make to the virtual devices (verbose) |
 | `SRB_LOG_LEVEL` | `INFO` | `DEBUG` adds a line per second |
 | `SRB_STATUS_FILE` | `/run/smartrow-bridge/status.json` | Status the optional screen shows, rewritten every second in RAM; `off` disables |
+| `SRB_COACH` | `1` | Interval coach on the screen (force-curve feedback during and after each effort); `0` turns it off |
 | `SRB_DISPLAY_LED`, `SRB_DISPLAY_HOLD_S` | `1`, `2` | Screen only: `0` leaves its LED off; seconds to hold button A to switch the Pi off |
 
 ## How it works
@@ -199,7 +200,8 @@ Common problems:
 |---|---|
 | `smartrow_bridge/central.py` | Finds and holds the pulley, copies its GATT table, reconnects, keeps writes in order |
 | `smartrow_bridge/peripheral.py` | Bumble GATT server: pulley clone + FTMS rower, two advertising sets |
-| `smartrow_bridge/protocol.py` | SmartRow record decoding, checksum, V3 KEYLOCK handshake |
+| `smartrow_bridge/protocol.py` | SmartRow record decoding (including each stroke's force curve), checksum, V3 KEYLOCK handshake |
+| `smartrow_bridge/coach.py` | Interval coach: steady reference, automatic interval detection, live cue, per-interval summary |
 | `smartrow_bridge/ftms.py` | FTMS Rower Data (0x2AD1), Feature, Control Point |
 | `smartrow_bridge/bridge.py` | Wiring; runs the pulley handshake when the SmartRow app is absent; 1 Hz FTMS; data-flow log |
 | `smartrow_bridge/adapters.py` | Picks the two radios, clears rfkill, hands the dongle to Bumble |
@@ -240,7 +242,14 @@ checksum of bytes 0-13 (bytes 14-15), CR.
 | `d` | strokes/min ×10 [6:9], stroke count [9:13] |
 | `e` | instantaneous split `mss` [6:9], average split [9:12] |
 | `f` | `!` at [11] = rowing stopped |
-| `b`, `x`/`y`/`z` | work and stroke length, force curve (passed through, not translated) |
+| `b` | work J×10 [6:11], stroke length cm [11:14] |
+| `x`, `y`, `z` | force curve: 8 samples each at [6:14], catch to finish (24 per stroke); sample = (code − `!`) × 16 N |
+
+The force curve of a stroke arrives as `x`, `y`, `z`, then that stroke's `b` record. The decoding matches a
+SmartRow app CSV export exactly (every force value is a multiple of 16 N), and the curve's integral over the
+stroke length comes within about 10 % of the `b` record's work. The `c` record's instantaneous power is the
+*previous* stroke's (the same lag shows in the app's CSV export), so the coach uses each stroke's own
+work × rate / 60 instead. None of this changes what is forwarded to the apps.
 
 ## Optional: switch the Pi off from an iPhone
 
@@ -305,12 +314,40 @@ without a phone:
   card has been closed, and goes dark as the Pi stops. The Pi's own green light may flash a few more
   times; that is fine. It does the same however the Pi is shut down (the iPhone shortcut, SSH).
 - **Buttons:** small tabs in the screen's corners show what A and B do: a power symbol on A, and on B
-  the screen it switches to.
+  the screen it switches to (and on X, once there is an interval to look back at).
 - **LED:** dim red while the bridge starts and waits for the pulley (or is not running), dim green
   when ready, and off while you row, until the screen goes back to the status.
 
+- **Interval coach:** while you row, the bridge spots harder efforts by itself and judges each stroke's
+  force curve (see below). Button **X** brings back the last interval's summary.
+
 The screen is a separate service that only reads a status file the bridge writes, so the bridge works the
 same with or without it, and a problem with the screen cannot stop the bridge.
+
+### Interval coach
+
+<img src="docs/images/screen-interval.png" alt="Interval screen: time, watts, live force curve and a FINISH THE STROKE cue" width="320"> <img src="docs/images/screen-interval-summary.png" alt="Interval summary: average force curve against steady, finish, length and peak" width="320">
+
+No buttons to press and nothing to set up: the bridge learns your steady rowing during the first minute or
+two, then treats any stretch of strokes clearly harder than that (about 20 % and 15 W above, for at least 8
+strokes) as an interval.
+
+- **During an interval:** time into the effort, watts, your last few strokes' average force curve (coloured)
+  over the shape of your steady curve (grey), and one cue in large type:
+  - **GOOD** (green): the curve keeps your steady shape.
+  - **FINISH THE STROKE** (amber): too little force in the back half of the drive; the stroke has gone short
+    and leg-heavy (back swing and arm draw cut short).
+  - **LONGER STROKES** (amber): strokes are more than 3 cm shorter than your steady ones.
+- **After an interval:** for 45 seconds, its duration and watts, its average curve against your steady shape,
+  and three numbers: **finish** (back-half force against steady: green within 5 %, amber to 12 %, red
+  beyond), **length** and **peak** force. The same summary goes into the session record, one line per
+  interval. **X** brings it back any time, or closes it early.
+
+The grey line is scaled to the same total force as the coloured curve, so the picture compares where in the
+drive the force comes, not how much there is. The strokes just after an interval (recovery) and easy paddling
+never count towards your steady reference, a rise in pace that lasts more than 5 minutes becomes the new
+steady instead of an interval, and a new SmartRow app session starts over. The thresholds were set from real
+sessions (in `smartrow_bridge/coach.py`); `SRB_COACH=0` turns the coach off.
 
 1. Shut the Pi down, unplug it, and fit the HAT (a 2x20 riser header between the Pi and the HAT keeps it
    clear of the processor). The screen faces up, buttons A and B on the left.

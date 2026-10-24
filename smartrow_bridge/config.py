@@ -28,6 +28,7 @@ class Config:
     session_log: str
     status_file: str
     gatt_log: bool
+    coach: bool
     log_level: str
 
 
@@ -78,5 +79,8 @@ def parse(argv: list[str] | None = None) -> Config:
     p.add_argument("--gatt-log", action="store_true",
                    default=_env("SRB_GATT_LOG", "0") in ("1", "true", "yes"),
                    help="debugging: log every GATT request the apps make to the virtual devices")
+    p.add_argument("--no-coach", dest="coach", action="store_false",
+                   default=_env("SRB_COACH", "1") not in ("0", "false", "no"),
+                   help="turn off the interval coach (force-curve feedback on the screen)")
     p.add_argument("--log-level", default=_env("SRB_LOG_LEVEL", "INFO"))
     return Config(**vars(p.parse_args(argv)))

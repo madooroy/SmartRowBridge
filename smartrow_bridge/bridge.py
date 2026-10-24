@@ -8,7 +8,7 @@ import logging
 import time
 from typing import IO, TYPE_CHECKING
 
-from . import adapters, addresses, protocol, status
+from . import adapters, addresses, coach, protocol, status
 from .central import PulleyLink
 from .config import Config
 
@@ -35,6 +35,10 @@ class Bridge:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         self.parser = protocol.SmartRowParser()
+        self.coach: coach.IntervalCoach | None = None
+        if cfg.coach and cfg.status_file.lower() != "off":
+            self.coach = coach.IntervalCoach()
+            self.parser.on_stroke = self.coach.add
         self.peripheral: BridgePeripheral | None = None
         self.link: PulleyLink | None = None
         self._driver_initialized = False
@@ -143,6 +147,7 @@ class Bridge:
             fitness_name=self.cfg.fitness_name,
             metrics=snap,
             rowing=snap.stroke_rate_spm > 0 or snap.power_w > 0,
+            coach=self.coach.state(time.monotonic()) if self.coach else None,
         )
 
     async def _status_loop(self) -> None:

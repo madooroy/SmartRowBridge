@@ -16,6 +16,21 @@ def status(stage="connected", rowing=False, age=0.0):
                         "stroke_count": 50, "pace_s_per_500m": 120 if rowing else 0, "elapsed_s": 130}}
 
 
+CURVE = [100, 200, 300, 400, 500, 520, 500, 450, 400, 350, 300, 250, 200, 160, 120, 90, 60, 40, 20, 10, 0, 0, 0, 0]
+LAST = {"index": 2, "duration_s": 62, "strokes": 22, "power_w": 150, "stroke_rate_spm": 21.5, "length_cm": 118.7,
+        "length_delta_cm": 4.6, "peak_n": 623, "finish_pct": 0, "rating": "good", "fade_pct": -3, "curve": CURVE,
+        "steady_curve": CURVE}
+LIVE = {"index": 3, "elapsed_s": 72, "strokes": 25, "power_w": 154, "length_cm": 112, "cue": "finish",
+        "curve": CURVE, "steady_curve": CURVE}
+
+
+def coached(live=None, last=None, show_summary=False, age=0.0):
+    st = status(rowing=True, age=age)
+    st["coach"] = {"mode": "interval" if live else "steady", "steady_power_w": 111, "intervals": 2 if last else 0,
+                   "live": live, "last": last, "show_summary": show_summary}
+    return st
+
+
 @unittest.skipIf(screens is None, "Pillow not installed")
 class ScreensTest(unittest.TestCase):
     def test_bridge_state(self):
@@ -38,6 +53,12 @@ class ScreensTest(unittest.TestCase):
             screens.rowing_screen(status(rowing=True), NOW, UPTIME),
             screens.rowing_screen(None, NOW, UPTIME),
             screens.hold_screen(0.5), screens.switching_off_screen(), screens.final_screen("poweroff"),
+            screens.interval_screen(coached(live=LIVE), NOW, UPTIME),
+            screens.interval_screen(coached(live={**LIVE, "cue": None, "curve": [], "steady_curve": []}), NOW,
+                                    UPTIME),
+            screens.summary_screen(coached(last=LAST, show_summary=True), NOW, UPTIME),
+            screens.summary_screen(coached(last={**LAST, "rating": "short", "finish_pct": -15}), NOW, UPTIME),
+            screens.rowing_screen(coached(last=LAST), NOW, UPTIME),
         ]
         for image in images:
             self.assertEqual(image.size, (320, 240))
@@ -47,6 +68,32 @@ class ScreensTest(unittest.TestCase):
 class ControllerTest(unittest.TestCase):
     def step(self, c, st, t, **buttons):
         return c.step(st, NOW + t, UPTIME, {**NO_BUTTONS, **buttons})
+
+    def test_interval_coach_screens(self):
+        c = app.Controller()
+        self.step(c, coached(), 0)
+        self.assertEqual(c.screen, "rowing")
+        self.step(c, coached(live=LIVE), 1)
+        self.assertEqual(c.screen, "interval")
+        self.step(c, coached(last=LAST, show_summary=True), 2)
+        self.assertEqual(c.screen, "summary")
+        self.step(c, coached(last=LAST, show_summary=False), 3)
+        self.assertEqual(c.screen, "rowing")
+
+    def test_x_recalls_and_closes_the_summary(self):
+        c = app.Controller()
+
+        def at(t, show_summary=False, **buttons):
+            self.step(c, coached(last=LAST, show_summary=show_summary, age=-t), t, **buttons)  # fresh status
+            return c.screen
+
+        self.assertEqual(at(0), "rowing")
+        self.assertEqual(at(1, X=True), "summary")
+        self.assertEqual(at(2, X=True), "summary")  # still held: no change
+        self.assertEqual(at(3 + app.RECALL_S), "rowing")  # recall times out
+        self.assertEqual(at(30, show_summary=True), "summary")
+        self.assertEqual(at(31, show_summary=True, X=True), "rowing")  # closed early
+        self.assertEqual(at(32, show_summary=True), "rowing")
 
     def test_rowing_switches_view_and_back_after_a_minute(self):
         c = app.Controller()

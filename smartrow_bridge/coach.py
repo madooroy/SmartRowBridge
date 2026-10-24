@@ -1,0 +1,318 @@
+# SPDX-License-Identifier: GPL-3.0-only
+"""Interval coach: finds harder efforts automatically and judges their force curves.
+
+Fed one StrokeCurve per completed stroke (see protocol.SmartRowParser.on_stroke).
+
+- Steady state: a rolling reference of your normal rowing (power, stroke length and
+  the average force curve), learned from the last STEADY_WINDOW steady strokes.
+- Interval detection: an effort starts when the median power of the last few strokes
+  rises well above the steady reference, and ends when it falls back. Short bursts
+  are ignored, and the strokes just after an effort (recovery) never teach the
+  steady reference.
+- Live cue, during an effort: compares the last few strokes' curve shape with your
+  steady curve. "finish" when too little of the force comes in the back half of the
+  drive (a short, leg-only stroke), "length" when strokes get clearly shorter,
+  otherwise "good".
+- Summary, after each effort: its average curve, peak force, stroke length and finish
+  share against the steady reference. Also logged, so it lands in the session record.
+
+Stroke power is work x rate / 60 for that stroke. The pulley's own instantaneous
+power lags a stroke behind, which would blur where an effort starts and ends.
+
+Calibrated on a 45-minute session with seven efforts at ~150 W over ~111 W steady:
+the back-half share of the curve was 0.29 steady, 0.29-0.35 in the efforts that kept
+their shape and 0.23-0.24 in the ones that went short and leg-heavy, with about 0.02
+stroke-to-stroke scatter.
+"""
+
+from __future__ import annotations
+
+import logging
+import statistics
+from collections import deque
+from dataclasses import dataclass, field
+
+from .protocol import FORCE_SAMPLES, StrokeCurve
+
+log = logging.getLogger(__name__)
+
+STEADY_WINDOW = 60  # strokes in the steady reference
+STEADY_MIN = 30  # steady strokes needed before efforts are detected
+POWER_RECENT = 30  # the steady power reference is the median of this many recent steady strokes,
+#                    so it keeps up with a warm-up that ramps over the first minute or two
+MAX_EFFORT_S = 300.0  # a harder "effort" this long is a new steady pace, not an interval
+SMOOTH = 5  # median of this many strokes decides start and end
+START_RATIO, START_MIN_W = 1.20, 15  # effort: >= 20 % and >= 15 W above steady
+END_RATIO = 1.10  # effort over: back below +10 %
+MIN_EFFORT_STROKES = 8  # anything shorter is a burst, not an interval
+RECOVERY_STROKES = 12  # after an effort, not used for the steady reference
+EASY_RATIO = 0.80  # strokes this far below steady (easy paddling) are ignored too
+GAP_S = 10.0  # no stroke for this long ends an effort
+NEW_SESSION_S = 300.0  # no stroke for this long starts over
+
+CUE_WINDOW = 8  # strokes in the live cue
+CUE_MIN = 6  # strokes into an effort before the first cue
+FINISH_CUE, FINISH_CLEAR = 0.88, 0.92  # back-half share vs steady: cue below, clear above
+LENGTH_CUE_CM, LENGTH_CLEAR_CM = 3.0, 2.0  # shorter than steady by this much
+GOOD_FINISH, OK_FINISH = 0.95, 0.88  # summary colours
+SUMMARY_SHOW_S = 45.0  # how long the summary is shown after an effort
+
+
+def back_share(force: list[int] | list[float]) -> float:
+    """Fraction of the stroke's force in the back half of the drive (samples 12-23)."""
+    total = sum(force)
+    return sum(force[FORCE_SAMPLES // 2:]) / total if total else 0.0
+
+
+def stroke_power(s: StrokeCurve) -> float:
+    return s.work_j * s.stroke_rate_spm / 60.0 if s.work_j and s.stroke_rate_spm else float(s.power_w)
+
+
+def mean_curve(strokes) -> list[float]:
+    strokes = list(strokes)
+    if not strokes:
+        return [0.0] * FORCE_SAMPLES
+    return [sum(s.force_n[i] for s in strokes) / len(strokes) for i in range(FORCE_SAMPLES)]
+
+
+@dataclass
+class IntervalSummary:
+    index: int
+    duration_s: float
+    strokes: int
+    power_w: float
+    stroke_rate_spm: float
+    length_cm: float
+    peak_n: float
+    back_share: float
+    steady_back_share: float
+    steady_length_cm: float
+    curve: list[float]
+    steady_curve: list[float]
+    first_third_back_share: float
+    last_third_back_share: float
+    ended_at: float = 0.0
+
+    @property
+    def finish_ratio(self) -> float:
+        return self.back_share / self.steady_back_share if self.steady_back_share else 1.0
+
+    @property
+    def finish_pct(self) -> int:
+        return round((self.finish_ratio - 1) * 100)
+
+    @property
+    def length_delta_cm(self) -> float:
+        return self.length_cm - self.steady_length_cm
+
+    @property
+    def rating(self) -> str:
+        r = self.finish_ratio
+        return "good" if r >= GOOD_FINISH else "ok" if r >= OK_FINISH else "short"
+
+    def as_dict(self) -> dict:
+        return {
+            "index": self.index,
+            "duration_s": round(self.duration_s),
+            "strokes": self.strokes,
+            "power_w": round(self.power_w),
+            "stroke_rate_spm": round(self.stroke_rate_spm, 1),
+            "length_cm": round(self.length_cm, 1),
+            "length_delta_cm": round(self.length_delta_cm, 1),
+            "peak_n": round(self.peak_n),
+            "finish_pct": self.finish_pct,
+            "rating": self.rating,
+            "fade_pct": round((self.last_third_back_share / self.first_third_back_share - 1) * 100)
+            if self.first_third_back_share else 0,
+            "curve": [round(v) for v in self.curve],
+            "steady_curve": [round(v) for v in self.steady_curve],
+        }
+
+    def log_line(self) -> str:
+        m, s = divmod(round(self.duration_s), 60)
+        return (f"Interval {self.index}: {m}:{s:02d}, {self.strokes} strokes, {self.power_w:.0f} W, "
+                f"{self.stroke_rate_spm:.1f} spm, length {self.length_cm:.0f} cm ({self.length_delta_cm:+.0f}), "
+                f"peak {self.peak_n:.0f} N, finish {self.finish_pct:+d}% vs steady ({self.rating})")
+
+
+@dataclass
+class _Effort:
+    strokes: list[StrokeCurve] = field(default_factory=list)
+    cue: str | None = None
+
+
+class IntervalCoach:
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.steady: deque[StrokeCurve] = deque(maxlen=STEADY_WINDOW)
+        self.recent: deque[StrokeCurve] = deque(maxlen=SMOOTH)
+        self.effort: _Effort | None = None
+        self.recovery_left = 0
+        self.intervals: list[IntervalSummary] = []
+        self.last_time: float | None = None
+        self.last_count = 0
+
+    # ------------------------------------------------------------ reference
+
+    @property
+    def ready(self) -> bool:
+        return len(self.steady) >= STEADY_MIN
+
+    def steady_power(self) -> float:
+        recent = list(self.steady)[-POWER_RECENT:]
+        return statistics.median(stroke_power(s) for s in recent) if recent else 0.0
+
+    def steady_length(self) -> float:
+        return statistics.fmean(s.stroke_length_cm for s in self.steady) if self.steady else 0.0
+
+    def steady_back_share(self) -> float:
+        return back_share(mean_curve(self.steady))
+
+    # ------------------------------------------------------------ input
+
+    def add(self, s: StrokeCurve) -> IntervalSummary | None:
+        """Take one stroke. Returns the summary if this stroke ended an effort."""
+        finished = None
+        if self.last_time is not None:
+            gap = s.time - self.last_time
+            if gap > NEW_SESSION_S or s.stroke_count < self.last_count:
+                self.reset()
+            elif gap > GAP_S:
+                finished = self._finish(self.last_time)
+                self.recent.clear()
+        self.last_time, self.last_count = s.time, s.stroke_count
+        self.recent.append(s)
+        smoothed = statistics.median(stroke_power(r) for r in self.recent)
+
+        if self.effort is None:
+            base = self.steady_power()
+            start_at = max(base * START_RATIO, base + START_MIN_W)
+            if self.ready and len(self.recent) >= 3 and smoothed >= start_at:
+                # Back-date to the first hard stroke among the recent ones.
+                recent = list(self.recent)
+                first = next(i for i, r in enumerate(recent) if stroke_power(r) >= start_at)
+                self.effort = _Effort(strokes=recent[first:])
+                self._drop_from_steady(self.effort.strokes)
+                log.debug("Effort started (%.0f W vs %.0f W steady)", smoothed, base)
+            else:
+                self._learn(s, base)
+        else:
+            self.effort.strokes.append(s)
+            if s.time - self.effort.strokes[0].time > MAX_EFFORT_S:
+                self._rebaseline()
+            elif smoothed < self.steady_power() * END_RATIO:
+                finished = self._finish(s.time) or finished
+            else:
+                self._update_cue()
+        return finished
+
+    def _learn(self, s: StrokeCurve, base: float) -> None:
+        if self.recovery_left > 0:
+            self.recovery_left -= 1
+            return
+        if self.ready and stroke_power(s) < base * EASY_RATIO:
+            return
+        self.steady.append(s)
+
+    def _rebaseline(self) -> None:
+        """Rowing has settled at a higher pace: make it the steady reference, no interval."""
+        log.info("Steady pace moved up to about %.0f W; no interval recorded",
+                 statistics.median(stroke_power(s) for s in self.effort.strokes))
+        self.steady.extend(self.effort.strokes)
+        self.effort = None
+
+    def _drop_from_steady(self, strokes: list[StrokeCurve]) -> None:
+        ids = {id(s) for s in strokes}
+        kept = [s for s in self.steady if id(s) not in ids]
+        self.steady.clear()
+        self.steady.extend(kept)
+
+    def _finish(self, now: float) -> IntervalSummary | None:
+        effort, self.effort = self.effort, None
+        if effort is None:
+            return None
+        end_at = self.steady_power() * END_RATIO
+        strokes = list(effort.strokes)
+        while strokes and stroke_power(strokes[-1]) < end_at:  # the easy strokes that ended it
+            strokes.pop()
+        self.recovery_left = RECOVERY_STROKES
+        if len(strokes) < MIN_EFFORT_STROKES:
+            return None
+        summary = self._summarise(strokes, now)
+        self.intervals.append(summary)
+        log.info(summary.log_line())
+        return summary
+
+    def _summarise(self, strokes: list[StrokeCurve], now: float) -> IntervalSummary:
+        n = len(strokes)
+        period = 60.0 / statistics.fmean(s.stroke_rate_spm for s in strokes)
+        third = max(1, n // 3)
+        return IntervalSummary(
+            index=len(self.intervals) + 1,
+            duration_s=strokes[-1].time - strokes[0].time + period,
+            strokes=n,
+            power_w=statistics.fmean(stroke_power(s) for s in strokes),
+            stroke_rate_spm=statistics.fmean(s.stroke_rate_spm for s in strokes),
+            length_cm=statistics.fmean(s.stroke_length_cm for s in strokes),
+            peak_n=statistics.fmean(max(s.force_n) for s in strokes),
+            back_share=back_share(mean_curve(strokes)),
+            steady_back_share=self.steady_back_share(),
+            steady_length_cm=self.steady_length(),
+            curve=mean_curve(strokes),
+            steady_curve=mean_curve(self.steady),
+            first_third_back_share=back_share(mean_curve(strokes[:third])),
+            last_third_back_share=back_share(mean_curve(strokes[-third:])),
+            ended_at=now,
+        )
+
+    # ------------------------------------------------------------ live cue
+
+    def _window(self) -> list[StrokeCurve]:
+        return self.effort.strokes[-CUE_WINDOW:] if self.effort else []
+
+    def _update_cue(self) -> None:
+        e = self.effort
+        if len(e.strokes) < CUE_MIN:
+            e.cue = None
+            return
+        window = self._window()
+        ratio = back_share(mean_curve(window)) / (self.steady_back_share() or 1)
+        short_by = self.steady_length() - statistics.fmean(s.stroke_length_cm for s in window)
+        if ratio < FINISH_CUE or (e.cue == "finish" and ratio < FINISH_CLEAR):
+            e.cue = "finish"
+        elif short_by > LENGTH_CUE_CM or (e.cue == "length" and short_by > LENGTH_CLEAR_CM):
+            e.cue = "length"
+        else:
+            e.cue = "good"
+
+    # ------------------------------------------------------------ status
+
+    def state(self, now: float) -> dict:
+        """What the screen needs, for status.json."""
+        if self.effort is not None and self.last_time is not None and now - self.last_time > GAP_S:
+            self._finish(self.last_time)
+        last = self.intervals[-1] if self.intervals else None
+        out: dict = {
+            "mode": "warmup" if not self.ready else "interval" if self.effort else "steady",
+            "steady_power_w": round(self.steady_power()),
+            "intervals": len(self.intervals),
+            "last": last.as_dict() if last else None,
+            "show_summary": bool(last and self.effort is None and now - last.ended_at < SUMMARY_SHOW_S),
+        }
+        if self.effort is not None:
+            strokes = self.effort.strokes
+            window = self._window()
+            first = strokes[0]
+            out["live"] = {
+                "index": len(self.intervals) + 1,
+                "elapsed_s": round(max(0.0, now - first.time)),
+                "strokes": len(strokes),
+                "power_w": round(statistics.fmean(stroke_power(s) for s in strokes[-3:])),
+                "length_cm": round(statistics.fmean(s.stroke_length_cm for s in window)),
+                "cue": self.effort.cue,
+                "curve": [round(v) for v in mean_curve(window)],
+                "steady_curve": [round(v) for v in mean_curve(self.steady)],
+            }
+        return out

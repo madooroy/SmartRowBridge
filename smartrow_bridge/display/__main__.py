@@ -160,6 +160,29 @@ def preview(directory: str) -> None:
     addr = "raspberrypi  192.168.1.23"
     rowing = dict(distance_m=1834, power_w=168, stroke_rate_spm=24.5, stroke_count=212,
                   pace_s_per_500m=118, elapsed_s=455)
+    # Interval coach, with average curves from a real 45-minute session.
+    steady = [131, 210, 286, 344, 389, 422, 445, 465, 467, 455, 430, 401, 375, 340, 295, 246, 196, 148, 104, 68, 32,
+              7, 0, 0]
+    short = [176, 295, 414, 512, 593, 656, 696, 714, 701, 666, 613, 550, 492, 416, 339, 269, 203, 146, 95, 51, 14, 2,
+             0, 0]
+    full = [143, 232, 325, 401, 467, 520, 566, 593, 612, 604, 575, 537, 502, 461, 402, 337, 272, 211, 153, 100, 63,
+            28, 0, 0]
+
+    def coached(live=None, last=None, show_summary=False):
+        status = st("connected", "SmartRow-34", True, True, True, **rowing)
+        status["coach"] = {"mode": "interval" if live else "steady", "steady_power_w": 111, "intervals": 2,
+                           "live": live, "last": last, "show_summary": show_summary}
+        return status
+
+    def live(cue, curve):
+        return {"index": 3, "elapsed_s": 72, "strokes": 25, "power_w": 154, "length_cm": 112, "cue": cue,
+                "curve": curve, "steady_curve": steady}
+
+    good_last = {"index": 2, "duration_s": 62, "strokes": 22, "power_w": 150, "stroke_rate_spm": 21.5,
+                 "length_cm": 118.7, "length_delta_cm": 4.6, "peak_n": 623, "finish_pct": 0, "rating": "good",
+                 "fade_pct": -3, "curve": full, "steady_curve": steady}
+    short_last = {**good_last, "index": 7, "duration_s": 182, "strokes": 64, "power_w": 156, "length_cm": 112.5,
+                  "length_delta_cm": -3.6, "peak_n": 719, "finish_pct": -15, "rating": "short", "curve": short}
     shots = {
         "01-starting-up": screens.status_screen(None, now, 12.0, addr),
         "02-preparing": screens.status_screen(st("starting"), now, up, addr),
@@ -171,6 +194,13 @@ def preview(directory: str) -> None:
         "08-paused": screens.rowing_screen(
             st("connected", "SmartRow-34", True, True, False, **{**rowing, "power_w": 0, "stroke_rate_spm": 0,
                                                                 "pace_s_per_500m": 0}), now, up),
+        "07a-interval-starting": screens.interval_screen(coached(live(None, full)), now, up),
+        "07b-interval-good": screens.interval_screen(coached(live("good", full)), now, up),
+        "07c-interval-finish-cue": screens.interval_screen(coached(live("finish", short)), now, up),
+        "07d-interval-length-cue": screens.interval_screen(coached(live("length", full)), now, up),
+        "07e-summary-good": screens.summary_screen(coached(last=good_last, show_summary=True), now, up),
+        "07f-summary-short": screens.summary_screen(coached(last=short_last, show_summary=True), now, up),
+        "07g-rowing-with-last": screens.rowing_screen(coached(last=short_last), now, up),
         "09-hold-to-switch-off": screens.hold_screen(0.6),
         "10-switching-off": screens.switching_off_screen(),
         "11-safe-to-unplug": screens.final_screen("poweroff"),

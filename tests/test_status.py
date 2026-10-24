@@ -24,7 +24,14 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(s["metrics"]["power_w"], 151)
         self.assertNotIn("last_stroke_time", s["metrics"])
         self.assertNotIn("stopped", s["metrics"])
+        self.assertIsNone(s["coach"])
         json.dumps(s)  # must be plain JSON
+
+    def test_build_carries_coach_state(self):
+        coach = {"mode": "steady", "steady_power_w": 110, "intervals": 0, "last": None, "show_summary": False}
+        s = status.build(status.CONNECTED, None, False, False, None, "PiRower", RowingMetrics(), rowing=True,
+                         now=1.0, coach=coach)
+        self.assertEqual(s["coach"], coach)
 
     def test_write_then_read(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -45,6 +52,8 @@ class StatusTest(unittest.TestCase):
     def test_setting(self):
         self.assertEqual(config.parse([]).status_file, status.DEFAULT_PATH)
         self.assertEqual(config.parse(["--status-file", "off"]).status_file, "off")
+        self.assertTrue(config.parse([]).coach)
+        self.assertFalse(config.parse(["--no-coach"]).coach)
 
 
 if __name__ == "__main__":

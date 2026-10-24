@@ -25,6 +25,7 @@ MILESTONES = (
     "Rower Data subscribed",
     "Central disconnected",
     "Data flow",
+    "Interval ",
 )
 
 

@@ -111,6 +111,64 @@ class ParserTest(unittest.TestCase):
         self.assertEqual((idle.power_w, idle.stroke_rate_spm, idle.pace_s_per_500m), (0, 0.0, 0))
         self.assertEqual((idle.distance_m, idle.stroke_count, idle.avg_power_w), (472, 44, 148))
 
+    def test_force_curve_decoding(self):
+        self.assertEqual(protocol.decode_force(b"!$%(+.MU"), [0, 48, 64, 112, 160, 208, 704, 832])
+
+    def test_force_curve_assembled_per_stroke(self):
+        p = SmartRowParser()
+        strokes = []
+        p.on_stroke = strokes.append
+        for raw in (real("x@@AAI,18=BFIMB3"), real("y@@AAINNMLJIFB14"), real("z@@AAI>:50,'!!37")):
+            p.feed(raw, now=32.7)
+        self.assertEqual(strokes, [])  # waits for the stroke's 'b' record
+        p.feed(real("b@@ABA 54341232C"), now=32.9)
+        self.assertEqual(len(strokes), 1)
+        s = strokes[0]
+        self.assertEqual(len(s.force_n), protocol.FORCE_SAMPLES)
+        self.assertEqual(s.force_n[:3], [176, 256, 368])
+        self.assertEqual(max(s.force_n), 720)
+        self.assertEqual(s.force_n[-2:], [0, 0])
+        self.assertEqual((s.work_j, s.stroke_length_cm, s.time), (543.4, 123, 32.9))
+        p.feed(real("b@@ABB 54341232D"), now=33.4)  # repeats of the same 'b' add nothing
+        self.assertEqual(len(strokes), 1)
+
+    def test_incomplete_curve_is_dropped(self):
+        p = SmartRowParser()
+        strokes = []
+        p.on_stroke = strokes.append
+        p.feed(real("y@@AAINNMLJIFB14"))
+        p.feed(real("z@@AAI>:50,'!!37"))
+        p.feed(real("b@@ABA 54341232C"))
+        self.assertEqual(strokes, [])
+
+    def test_stroke_handler_errors_do_not_break_parsing(self):
+        p = SmartRowParser()
+
+        def boom(_):
+            raise RuntimeError("screen bug")
+
+        p.on_stroke = boom
+        for raw in (real("x@@AAI,18=BFIMB3"), real("y@@AAINNMLJIFB14"), real("z@@AAI>:50,'!!37")):
+            p.feed(raw)
+        with self.assertLogs("smartrow_bridge.protocol", "ERROR"):
+            self.assertTrue(p.feed(real("b@@ABA 54341232C")))
+        self.assertEqual(p.metrics.stroke_length_cm, 123)
+
+    @unittest.skipUnless(CAPTURE_2.exists(), "captures/sniff2.log not present")
+    def test_force_curves_in_capture(self):
+        """Every stroke of the captured session yields a curve whose integral is within ~10 % of its work."""
+        p = SmartRowParser()
+        strokes = []
+        p.on_stroke = strokes.append
+        for t, raw in load_capture(CAPTURE_2):
+            p.feed(raw, now=t)
+        self.assertEqual(len(strokes), 43)
+        hard = [s for s in strokes if s.work_j > 500]
+        self.assertGreater(len(hard), 5)
+        for s in hard:
+            integral = sum(s.force_n) * s.stroke_length_cm / 100 / protocol.FORCE_SAMPLES
+            self.assertAlmostEqual(integral / s.work_j, 1.0, delta=0.12)
+
     def test_stop_marker(self):
         p = SmartRowParser()
         p.feed(D_230, now=1.0)

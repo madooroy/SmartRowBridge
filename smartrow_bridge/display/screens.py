@@ -81,7 +81,13 @@ def _icon_status(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, colour) ->
         draw.line((cx - r + 7, y, cx + r, y), fill=colour, width=2)
 
 
-_ICONS = {"power": _icon_power, "rowing": _icon_rowing, "status": _icon_status}
+def _icon_curve(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, colour) -> None:
+    """Force curve: a single hump."""
+    draw.arc((cx - r, cy - r + 2, cx + r, cy + r + 8), start=200, end=340, fill=colour, width=2)
+    draw.line((cx - r, cy + r, cx + r, cy + r), fill=colour, width=1)
+
+
+_ICONS = {"power": _icon_power, "rowing": _icon_rowing, "status": _icon_status, "curve": _icon_curve}
 
 
 def _button(draw: ImageDraw.ImageDraw, corner: str, icon: str, label: str) -> None:
@@ -100,13 +106,15 @@ def _button(draw: ImageDraw.ImageDraw, corner: str, icon: str, label: str) -> No
     draw.text((x0 + 8 + 2 * r + 6, y0 + tab_h // 2), label, font=f, fill=FG, anchor="lm")
 
 
-def _hints(draw: ImageDraw.ImageDraw, view: str) -> None:
-    """A: hold to switch off. B: go to the other screen."""
+def _hints(draw: ImageDraw.ImageDraw, view: str, x_label: str | None = None) -> None:
+    """A: hold to switch off. B: go to the other screen. X (optional): the last interval."""
     _button(draw, "A", "power", "Hold: off")
     if view == "status":
         _button(draw, "B", "rowing", "Rowing")
     else:
         _button(draw, "B", "status", "Status")
+    if x_label:
+        _button(draw, "X", "curve", x_label)
 
 
 def _centered(draw: ImageDraw.ImageDraw, lines: list[tuple[str, int, bool, tuple]], centre_y: int = HEIGHT // 2):
@@ -187,7 +195,8 @@ def status_screen(status: dict | None, now: float, uptime: float, address: str =
 
 def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image:
     image, draw = _canvas()
-    _hints(draw, "rowing")
+    coach = (status or {}).get("coach") or {}
+    _hints(draw, "rowing", "Last" if coach.get("last") else None)
     if bridge_state(status, now, uptime) != "ok":
         _centered(draw, [("No data", 28, True, DIM), ("B shows the status", 16, False, DIM)])
         return image
@@ -216,6 +225,101 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
         footer += "   ·   paused"
     draw.text((WIDTH // 2, top + 2 * tile_h + gap + 14), footer, font=font(16), fill=FG if rowing else DIM,
               anchor="mm")
+    return image
+
+
+# ---------------------------------------------------------------- interval coach
+
+CUES = {
+    "finish": ("FINISH THE STROKE", AMBER),
+    "length": ("LONGER STROKES", AMBER),
+    "good": ("GOOD", GREEN),
+}
+RATING_COLOURS = {"good": GREEN, "ok": AMBER, "short": RED}
+
+
+def _shade(colour: tuple, amount: float = 0.35) -> tuple:
+    return tuple(int(c * amount) for c in colour)
+
+
+def _plot_curves(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], curve: list, steady: list,
+                 colour: tuple) -> None:
+    """The effort's force curve, filled, over the steady curve as a thin grey line.
+
+    The steady curve is scaled to the same total force, so the picture compares shape
+    (where in the drive the force comes), not size: a weak finish shows as the
+    coloured curve dropping below the grey line in the back half.
+    """
+    if curve and steady and sum(steady):
+        scale = sum(curve) / sum(steady)
+        steady = [v * scale for v in steady]
+    x0, y0, x1, y1 = box
+    draw.rounded_rectangle(box, radius=8, fill=TILE)
+    x0, y0, x1, y1 = x0 + 8, y0 + 8, x1 - 8, y1 - 4
+    top = max([*curve, *steady, 1])
+
+    def points(values: list) -> list[tuple[float, float]]:
+        values = [0, *values]  # the curve starts at the catch with no force
+        step = (x1 - x0) / (len(values) - 1)
+        return [(x0 + i * step, y1 - (y1 - y0) * v / top) for i, v in enumerate(values)]
+
+    if curve:
+        pts = points(curve)
+        draw.polygon([(x0, y1), *pts, (x1, y1)], fill=_shade(colour))
+        draw.line(pts, fill=colour, width=3, joint="curve")
+    if steady:
+        draw.line(points(steady), fill=DIM, width=2, joint="curve")
+        draw.text((x1, y0), "steady shape", font=font(12), fill=DIM, anchor="rt")
+
+
+def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
+    """During an effort: time and watts, the live curve against steady, and one cue."""
+    image, draw = _canvas()
+    _hints(draw, "rowing")
+    live = status["coach"]["live"]
+    draw.text((WIDTH - 6, 4), f"INTERVAL {live['index']}", font=font(15, True), fill=DIM, anchor="rt")
+    draw.text((8, 58), format_time(live["elapsed_s"]), font=font(50, True), fill=FG, anchor="lm")
+    draw.text((WIDTH - 8, 58), f"{live['power_w']} W", font=font(40, True), fill=FG, anchor="rm")
+
+    text, colour = CUES.get(live.get("cue"), ("…", DIM))
+    _plot_curves(draw, (4, 90, WIDTH - 4, 176), live.get("curve") or [], live.get("steady_curve") or [],
+                 colour if colour != DIM else FG)
+    banner = (4, 181, WIDTH - 4, 215)
+    if colour == DIM:
+        draw.rounded_rectangle(banner, radius=8, fill=TILE)
+        draw.text((WIDTH // 2, 198), text, font=font(24, True), fill=DIM, anchor="mm")
+    else:
+        draw.rounded_rectangle(banner, radius=8, fill=colour)
+        draw.text((WIDTH // 2, 198), text, font=_fit(draw, text, 26, WIDTH - 24, True), fill=BG, anchor="mm")
+    return image
+
+
+def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
+    """After an effort: its average curve against steady, and three numbers."""
+    image, draw = _canvas()
+    _hints(draw, "rowing", "Close")
+    last = status["coach"]["last"]
+    colour = RATING_COLOURS.get(last.get("rating"), FG)
+    draw.text((8, 28), f"INTERVAL {last['index']}", font=font(15, True), fill=DIM, anchor="lt")
+    headline = f"{format_time(last['duration_s'])}  ·  {last['power_w']} W"
+    draw.text((WIDTH // 2, 62), headline, font=_fit(draw, headline, 34, WIDTH - 16, True), fill=FG, anchor="mm")
+    _plot_curves(draw, (4, 84, WIDTH - 4, 160), last.get("curve") or [], last.get("steady_curve") or [], colour)
+
+    delta = last.get("length_delta_cm", 0)
+    tiles = [
+        ("FINISH", f"{last['finish_pct']:+d}%", colour),
+        ("LENGTH", f"{round(last['length_cm'])} cm", FG),
+        ("PEAK", f"{last['peak_n']} N", FG),
+    ]
+    tile_w, gap, y0, y1 = 100, 6, 165, 215
+    for i, (label, value, value_colour) in enumerate(tiles):
+        x0 = 5 + i * (tile_w + gap)
+        draw.rounded_rectangle((x0, y0, x0 + tile_w, y1), radius=8, fill=TILE)
+        draw.text((x0 + 8, y0 + 5), label, font=font(12), fill=DIM)
+        draw.text((x0 + tile_w // 2, y0 + 32), value, font=_fit(draw, value, 24, tile_w - 10, True),
+                  fill=value_colour, anchor="mm")
+    note = f"{delta:+.0f} cm vs steady"
+    draw.text((WIDTH - 6, HEIGHT - 4), note, font=font(12), fill=DIM, anchor="rd")
     return image
 
 
