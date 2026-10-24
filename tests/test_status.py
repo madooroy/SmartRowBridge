@@ -52,8 +52,10 @@ class StatusTest(unittest.TestCase):
     def test_setting(self):
         self.assertEqual(config.parse([]).status_file, status.DEFAULT_PATH)
         self.assertEqual(config.parse(["--status-file", "off"]).status_file, "off")
-        self.assertTrue(config.parse([]).coach)
-        self.assertFalse(config.parse(["--no-coach"]).coach)
+        self.assertFalse(config.parse([]).coach)  # experimental: off unless asked for
+        self.assertTrue(config.parse(["--coach"]).coach)
+        cfg = config.parse(["--coach-start-pct", "12", "--coach-max-min", "12", "--coach-sensitivity", "high"])
+        self.assertEqual((cfg.coach_start_pct, cfg.coach_max_min, cfg.coach_sensitivity), (12.0, 12.0, "high"))
 
 
 if __name__ == "__main__":

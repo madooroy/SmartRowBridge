@@ -29,6 +29,9 @@ class Config:
     status_file: str
     gatt_log: bool
     coach: bool
+    coach_start_pct: float
+    coach_max_min: float
+    coach_sensitivity: str
     log_level: str
 
 
@@ -79,8 +82,16 @@ def parse(argv: list[str] | None = None) -> Config:
     p.add_argument("--gatt-log", action="store_true",
                    default=_env("SRB_GATT_LOG", "0") in ("1", "true", "yes"),
                    help="debugging: log every GATT request the apps make to the virtual devices")
-    p.add_argument("--no-coach", dest="coach", action="store_false",
-                   default=_env("SRB_COACH", "1") not in ("0", "false", "no"),
-                   help="turn off the interval coach (force-curve feedback on the screen)")
+    p.add_argument("--coach", dest="coach", action="store_true",
+                   default=_env("SRB_COACH", "0") in ("1", "true", "yes"),
+                   help="experimental: interval coach, force-curve feedback on the screen and web page")
+    p.add_argument("--no-coach", dest="coach", action="store_false", help="turn the interval coach off")
+    p.add_argument("--coach-start-pct", type=float, default=float(_env("SRB_COACH_START_PCT", "20")),
+                   help="coach: an interval is at least this %% above your steady power (default 20)")
+    p.add_argument("--coach-max-min", type=float, default=float(_env("SRB_COACH_MAX_MIN", "5")),
+                   help="coach: longest effort, in minutes, to count as an interval (default 5)")
+    p.add_argument("--coach-sensitivity", choices=("low", "normal", "high"),
+                   default=_env("SRB_COACH_SENSITIVITY", "normal"),
+                   help="coach: how readily the technique cues speak up (default normal)")
     p.add_argument("--log-level", default=_env("SRB_LOG_LEVEL", "INFO"))
     return Config(**vars(p.parse_args(argv)))

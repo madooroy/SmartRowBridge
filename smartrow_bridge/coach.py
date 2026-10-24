@@ -26,12 +26,17 @@ their shape and 0.23-0.24 in the ones that went short and leg-heavy, with about 
 stroke-to-stroke scatter.
 
 The "legs" cue measures where the curve's centre of force sits (in samples, 0-23)
-against the steady curve, minus what a longer or shorter stroke explains by itself
-(LATE_PER_CM, longer strokes only): longer strokes push the centre later without any
-loss of leg drive.
+against the steady curve, minus what a longer stroke explains by itself (LATE_PER_PCT
+per % of extra length, longer strokes only): longer strokes push the centre later
+without any loss of leg drive.
 Over 15 real intervals the length-corrected shift never exceeded +0.34 samples; a
 weak leg drive (peak force moving from about sample 8 to 11) shifts it by 1.5 or
 more. The cue threshold sits between, untested on a real weak-leg stroke so far.
+
+Stroke length is judged as a percentage of the steady stroke, so tall and short rowers
+are treated alike. CoachSettings holds what a rower may want to change (how much harder
+an effort must be, the longest effort to count, and how readily the cues speak up);
+its defaults are the calibrated values. These all came from one rower's sessions.
 """
 
 from __future__ import annotations
@@ -49,11 +54,7 @@ STEADY_WINDOW = 60  # strokes in the steady reference
 STEADY_MIN = 30  # steady strokes needed before efforts are detected
 POWER_RECENT = 30  # the steady power reference is the median of this many recent steady strokes,
 #                    so it keeps up with a warm-up that ramps over the first minute or two
-MAX_EFFORT_S = 300.0  # a harder "effort" this long is a new steady pace, not an interval
 SMOOTH = 5  # median of this many strokes decides start and end
-START_RATIO, START_MIN_W = 1.20, 15  # effort: >= 20 % and >= 15 W above steady
-END_RATIO = 1.10  # effort over: back below +10 %
-MIN_EFFORT_STROKES = 8  # anything shorter is a burst, not an interval
 RECOVERY_STROKES = 12  # after an effort, not used for the steady reference
 EASY_RATIO = 0.80  # strokes this far below steady (easy paddling) are ignored too
 GAP_S = 10.0  # no stroke for this long ends an effort
@@ -61,12 +62,60 @@ NEW_SESSION_S = 300.0  # no stroke for this long starts over
 
 CUE_WINDOW = 8  # strokes in the live cue
 CUE_MIN = 6  # strokes into an effort before the first cue
-FINISH_CUE, FINISH_CLEAR = 0.88, 0.92  # back-half share vs steady: cue below, clear above
-LENGTH_CUE_CM, LENGTH_CLEAR_CM = 3.0, 2.0  # shorter than steady by this much
-LEGS_CUE, LEGS_CLEAR = 0.6, 0.45  # centre of force later than steady (samples, length-corrected)
-LATE_PER_CM = 0.1  # how much later the centre sits per cm of extra stroke length, from real sessions
-GOOD_FINISH, OK_FINISH = 0.95, 0.88  # summary colours
+LATE_PER_PCT = 0.115  # centre of force moves this much later per % of extra stroke length
+#                       (0.1 sample per cm at ~115 cm, from real sessions)
+GOOD_FINISH, OK_FINISH = 0.95, 0.88  # summary colours (fixed, so screens agree across settings)
 SUMMARY_SHOW_S = 45.0  # how long the summary is shown after an effort
+
+
+@dataclass(frozen=True)
+class CueThresholds:
+    finish_cue: float  # back-half share vs steady: cue below ...
+    finish_clear: float  # ... clear above
+    legs_cue: float  # centre of force later than steady, samples (length-corrected)
+    legs_clear: float
+    length_cue_pct: float  # strokes shorter than steady by this %
+    length_clear_pct: float
+
+
+SENSITIVITY = {
+    "low": CueThresholds(0.84, 0.88, 0.80, 0.60, 3.5, 2.5),
+    "normal": CueThresholds(0.88, 0.92, 0.60, 0.45, 2.6, 1.7),  # calibrated
+    "high": CueThresholds(0.91, 0.94, 0.45, 0.35, 2.0, 1.3),
+}
+
+
+@dataclass(frozen=True)
+class CoachSettings:
+    start_pct: float = 20.0  # an effort is at least this % above steady ...
+    start_min_w: float = 15.0  # ... and at least this many watts
+    end_pct: float = 10.0  # it ends when power falls back below steady + this %
+    min_effort_strokes: int = 8  # shorter is a burst, not an interval
+    max_effort_s: float = 300.0  # longer is a new steady pace, not an interval
+    sensitivity: str = "normal"  # how readily the cues speak up: low, normal or high
+
+    def __post_init__(self) -> None:
+        if self.sensitivity not in SENSITIVITY:
+            raise ValueError(f"sensitivity must be one of {', '.join(SENSITIVITY)}, not {self.sensitivity!r}")
+
+    @property
+    def cues(self) -> CueThresholds:
+        return SENSITIVITY[self.sensitivity]
+
+    @property
+    def start_ratio(self) -> float:
+        return 1 + self.start_pct / 100
+
+    @property
+    def end_ratio(self) -> float:
+        return 1 + self.end_pct / 100
+
+
+DEFAULT_SETTINGS = CoachSettings()
+# The calibrated values, under their old names (kept for the screens and tests).
+FINISH_CUE = DEFAULT_SETTINGS.cues.finish_cue
+LEGS_CUE = DEFAULT_SETTINGS.cues.legs_cue
+MAX_EFFORT_S = DEFAULT_SETTINGS.max_effort_s
 
 
 def back_share(force: list[int] | list[float]) -> float:
@@ -81,13 +130,13 @@ def centre_of_force(force: list[int] | list[float]) -> float:
     return sum(i * f for i, f in enumerate(force)) / total if total else 0.0
 
 
-def drive_lateness(curve: list[float], steady_curve: list[float], length_delta_cm: float) -> float:
+def drive_lateness(curve: list[float], steady_curve: list[float], length_delta_pct: float) -> float:
     """How much later than steady the force comes, beyond what the stroke length explains.
 
     Only extra length is credited: a longer stroke moves the centre later by itself, but
     a shorter one is never taken as a reason for the force to come late.
     """
-    return centre_of_force(curve) - centre_of_force(steady_curve) - LATE_PER_CM * max(0.0, length_delta_cm)
+    return centre_of_force(curve) - centre_of_force(steady_curve) - LATE_PER_PCT * max(0.0, length_delta_pct)
 
 
 def stroke_power(s: StrokeCurve) -> float:
@@ -118,14 +167,15 @@ class IntervalSummary:
     first_third_back_share: float
     last_third_back_share: float
     ended_at: float = 0.0
+    legs_threshold: float = LEGS_CUE
 
     @property
     def lateness(self) -> float:
-        return drive_lateness(self.curve, self.steady_curve, self.length_delta_cm)
+        return drive_lateness(self.curve, self.steady_curve, self.length_delta_pct)
 
     @property
     def legs_late(self) -> bool:
-        return self.lateness > LEGS_CUE
+        return self.lateness > self.legs_threshold
 
     @property
     def finish_ratio(self) -> float:
@@ -138,6 +188,10 @@ class IntervalSummary:
     @property
     def length_delta_cm(self) -> float:
         return self.length_cm - self.steady_length_cm
+
+    @property
+    def length_delta_pct(self) -> float:
+        return self.length_delta_cm / self.steady_length_cm * 100 if self.steady_length_cm else 0.0
 
     @property
     def rating(self) -> str:
@@ -179,7 +233,8 @@ class _Effort:
 
 
 class IntervalCoach:
-    def __init__(self) -> None:
+    def __init__(self, settings: CoachSettings = DEFAULT_SETTINGS) -> None:
+        self.settings = settings
         self.reset()
 
     def reset(self) -> None:
@@ -225,7 +280,7 @@ class IntervalCoach:
 
         if self.effort is None:
             base = self.steady_power()
-            start_at = max(base * START_RATIO, base + START_MIN_W)
+            start_at = max(base * self.settings.start_ratio, base + self.settings.start_min_w)
             if self.ready and len(self.recent) >= 3 and smoothed >= start_at:
                 # Back-date to the first hard stroke among the recent ones.
                 recent = list(self.recent)
@@ -237,9 +292,9 @@ class IntervalCoach:
                 self._learn(s, base)
         else:
             self.effort.strokes.append(s)
-            if s.time - self.effort.strokes[0].time > MAX_EFFORT_S:
+            if s.time - self.effort.strokes[0].time > self.settings.max_effort_s:
                 self._rebaseline()
-            elif smoothed < self.steady_power() * END_RATIO:
+            elif smoothed < self.steady_power() * self.settings.end_ratio:
                 finished = self._finish(s.time) or finished
             else:
                 self._update_cue()
@@ -270,12 +325,12 @@ class IntervalCoach:
         effort, self.effort = self.effort, None
         if effort is None:
             return None
-        end_at = self.steady_power() * END_RATIO
+        end_at = self.steady_power() * self.settings.end_ratio
         strokes = list(effort.strokes)
         while strokes and stroke_power(strokes[-1]) < end_at:  # the easy strokes that ended it
             strokes.pop()
         self.recovery_left = RECOVERY_STROKES
-        if len(strokes) < MIN_EFFORT_STROKES:
+        if len(strokes) < self.settings.min_effort_strokes:
             return None
         summary = self._summarise(strokes, now)
         self.intervals.append(summary)
@@ -302,6 +357,7 @@ class IntervalCoach:
             first_third_back_share=back_share(mean_curve(strokes[:third])),
             last_third_back_share=back_share(mean_curve(strokes[-third:])),
             ended_at=now,
+            legs_threshold=self.settings.cues.legs_cue,
         )
 
     # ------------------------------------------------------------ live cue
@@ -314,16 +370,18 @@ class IntervalCoach:
         if len(e.strokes) < CUE_MIN:
             e.cue = None
             return
+        t = self.settings.cues
         window = self._window()
         curve = mean_curve(window)
         ratio = back_share(curve) / (self.steady_back_share() or 1)
-        short_by = self.steady_length() - statistics.fmean(s.stroke_length_cm for s in window)
-        late = drive_lateness(curve, mean_curve(self.steady), -short_by)
-        if ratio < FINISH_CUE or (e.cue == "finish" and ratio < FINISH_CLEAR):
+        steady_len = self.steady_length() or 1
+        short_by_pct = (steady_len - statistics.fmean(s.stroke_length_cm for s in window)) / steady_len * 100
+        late = drive_lateness(curve, mean_curve(self.steady), -short_by_pct)
+        if ratio < t.finish_cue or (e.cue == "finish" and ratio < t.finish_clear):
             e.cue = "finish"
-        elif late > LEGS_CUE or (e.cue == "legs" and late > LEGS_CLEAR):
+        elif late > t.legs_cue or (e.cue == "legs" and late > t.legs_clear):
             e.cue = "legs"
-        elif short_by > LENGTH_CUE_CM or (e.cue == "length" and short_by > LENGTH_CLEAR_CM):
+        elif short_by_pct > t.length_cue_pct or (e.cue == "length" and short_by_pct > t.length_clear_pct):
             e.cue = "length"
         else:
             e.cue = "good"
@@ -340,6 +398,8 @@ class IntervalCoach:
             "steady_power_w": round(self.steady_power()),
             "intervals": len(self.intervals),
             "last": last.as_dict() if last else None,
+            "history": [{k: v for k, v in i.as_dict().items() if k not in ("curve", "steady_curve")}
+                        for i in self.intervals[-20:]],
             "show_summary": bool(last and self.effort is None and now - last.ended_at < SUMMARY_SHOW_S),
         }
         if self.effort is not None:

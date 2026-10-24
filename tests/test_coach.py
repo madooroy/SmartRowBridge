@@ -22,8 +22,8 @@ PERIOD = 60 / RATE
 class Rower:
     """Feeds strokes to a coach, 21 spm."""
 
-    def __init__(self) -> None:
-        self.coach = IntervalCoach()
+    def __init__(self, settings: coach.CoachSettings = coach.DEFAULT_SETTINGS) -> None:
+        self.coach = IntervalCoach(settings)
         self.t = 0.0
         self.count = 0
         self.summaries = []
@@ -148,9 +148,9 @@ class CoachTest(unittest.TestCase):
 
     def test_longer_stroke_is_not_weak_legs(self):
         """A longer stroke moves the centre of force later by itself; that is not a weak leg drive."""
-        self.assertLess(coach.drive_lateness(FULL, STEADY, 7), coach.LEGS_CUE)
+        self.assertLess(coach.drive_lateness(FULL, STEADY, 6.1), coach.LEGS_CUE)
         self.assertGreater(coach.drive_lateness(LATE, STEADY, 0), coach.LEGS_CUE + 1)
-        self.assertLess(coach.drive_lateness(SHORT, STEADY, -3), 0)  # leg-heavy: early, the opposite
+        self.assertLess(coach.drive_lateness(SHORT, STEADY, -2.6), 0)  # leg-heavy: early, the opposite
 
     def test_live_cue_good_and_length(self):
         r = Rower()
@@ -177,6 +177,69 @@ class CoachTest(unittest.TestCase):
         r.row(1, 110)
         st = r.state()
         self.assertEqual((st["mode"], st["intervals"], st["last"]), ("warmup", 0, None))
+
+
+class SettingsTest(unittest.TestCase):
+    def test_defaults_are_the_calibrated_values(self):
+        d = coach.CoachSettings()
+        self.assertEqual((d.start_ratio, d.end_ratio, d.max_effort_s), (1.2, 1.1, 300.0))
+        self.assertEqual(d.cues, coach.SENSITIVITY["normal"])
+        self.assertEqual(d.cues.finish_cue, 0.88)
+
+    def test_bad_sensitivity_is_refused(self):
+        with self.assertRaises(ValueError):
+            coach.CoachSettings(sensitivity="extreme")
+
+    def test_sensitivity_levels_are_ordered(self):
+        low, normal, high = (coach.SENSITIVITY[k] for k in ("low", "normal", "high"))
+        self.assertLess(low.finish_cue, normal.finish_cue)
+        self.assertLess(normal.finish_cue, high.finish_cue)
+        self.assertGreater(low.legs_cue, normal.legs_cue)
+        self.assertGreater(normal.legs_cue, high.legs_cue)
+        self.assertGreater(low.length_cue_pct, high.length_cue_pct)
+        for t in (low, normal, high):  # hysteresis: clearing is always easier than cueing
+            self.assertLess(t.finish_cue, t.finish_clear)
+            self.assertGreater(t.legs_cue, t.legs_clear)
+            self.assertGreater(t.length_cue_pct, t.length_clear_pct)
+
+    def test_smaller_surges_with_a_lower_start(self):
+        """+12 % surges: missed at the default 20 %, found at 10 %."""
+        for start, found in ((20.0, 0), (10.0, 1)):
+            r = Rower(coach.CoachSettings(start_pct=start, start_min_w=10))
+            r.row(60, 110)
+            r.row(21, 123, FULL)
+            r.row(15, 110)
+            self.assertEqual(len(r.summaries), found, start)
+
+    def test_longer_pieces_with_a_higher_limit(self):
+        """A 6-minute piece: a new steady pace by default, an interval with a 10-minute limit."""
+        for limit, found in ((300.0, 0), (600.0, 1)):
+            r = Rower(coach.CoachSettings(max_effort_s=limit))
+            r.row(60, 110)
+            r.row(126, 150, FULL)  # 6 minutes at 21 spm
+            r.row(15, 110)
+            self.assertEqual(len(r.summaries), found, limit)
+
+    def test_high_sensitivity_speaks_up_sooner(self):
+        """A mildly short finish (-10 %): no cue at normal, a cue at high."""
+        mild = [round(a * 0.35 + b * 0.65) for a, b in zip(FULL, SHORT)]
+        ratio = back_share(mild) / back_share(STEADY)
+        self.assertTrue(0.88 < ratio < 0.91, ratio)
+        for sensitivity, cue in (("normal", "good"), ("high", "finish")):
+            r = Rower(coach.CoachSettings(sensitivity=sensitivity))
+            r.row(60, 110)
+            r.row(12, 152, mild)
+            self.assertEqual(r.state()["live"]["cue"], cue, sensitivity)
+
+    def test_session_history_in_state(self):
+        r = Rower()
+        r.row(60, 110)
+        for _ in range(3):
+            r.row(21, 152, FULL)
+            r.row(25, 110)
+        history = r.state()["history"]
+        self.assertEqual([h["index"] for h in history], [1, 2, 3])
+        self.assertNotIn("curve", history[0])  # the list stays small: no curves
 
 
 if __name__ == "__main__":

@@ -37,7 +37,9 @@ class Bridge:
         self.parser = protocol.SmartRowParser()
         self.coach: coach.IntervalCoach | None = None
         if cfg.coach and cfg.status_file.lower() != "off":
-            self.coach = coach.IntervalCoach()
+            self.coach = coach.IntervalCoach(coach.CoachSettings(
+                start_pct=cfg.coach_start_pct, max_effort_s=cfg.coach_max_min * 60,
+                sensitivity=cfg.coach_sensitivity))
             self.parser.on_stroke = self.coach.add
         self.peripheral: BridgePeripheral | None = None
         self.link: PulleyLink | None = None
