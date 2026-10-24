@@ -50,6 +50,13 @@ if [[ -f /etc/systemd/system/smartrow-display.service ]]; then
     systemctl restart smartrow-display.service
 fi
 
+# Optional web page (tools/setup_web.sh): keep its service file up to date.
+if [[ -f /etc/systemd/system/smartrow-web.service ]]; then
+    install -m 644 deploy/smartrow-web.service /etc/systemd/system/smartrow-web.service
+    systemctl daemon-reload
+    systemctl restart smartrow-web.service
+fi
+
 echo
 echo "Installed. Wake the pulley (pull the handle), then check with:"
 echo "  sudo bash tools/health_check.sh"

@@ -1,0 +1,24 @@
+[Unit]
+Description=SmartRow bridge web page (coach and rowing data for phones and tablets)
+# Optional: installed by tools/setup_web.sh. It only reads the bridge's status file,
+# so the bridge runs the same whether or not this is running.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/smartrow-bridge
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/opt/smartrow-bridge
+ExecStart=/opt/smartrow-bridge/venv/bin/python -m smartrow_bridge.web
+Restart=always
+RestartSec=10
+TimeoutStopSec=5
+# Read-only page on an unprivileged port: no root needed.
+DynamicUser=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

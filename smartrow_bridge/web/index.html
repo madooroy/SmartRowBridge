@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/manifest.webmanifest">
+<title>Row Coach</title>
+<style>
+  /* Same palette as the Display HAT Mini screens (smartrow_bridge/display/screens.py). */
+  :root {
+    --bg: #000; --fg: #f0f0f0; --dim: #878787; --faint: #464646; --tile: #1a1a1a;
+    --green: #46cd5f; --amber: #f5af2d; --red: #eb4b41; --gap: #d7d7d7;
+    --pad: clamp(8px, 1.6vmin, 18px);
+    --big: clamp(40px, 13vmin, 150px);
+    --mid: clamp(28px, 8vmin, 96px);
+    --label: clamp(12px, 2.2vmin, 18px);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font-family: "DejaVu Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-user-select: none; user-select: none; }
+  body { display: flex; flex-direction: column; padding: var(--pad);
+    padding-top: max(var(--pad), env(safe-area-inset-top)); gap: var(--pad); }
+  button { font: inherit; color: var(--fg); background: var(--tile); border: 1px solid var(--faint);
+    border-radius: 10px; padding: 6px 12px; cursor: pointer; }
+  button:active { background: var(--faint); }
+
+  header { display: flex; align-items: center; gap: 10px; font-size: var(--label); color: var(--dim); }
+  header .dot { width: .8em; height: .8em; border-radius: 50%; background: var(--faint); flex: none; }
+  header .dot.ok { background: var(--green); } header .dot.warn { background: var(--amber); }
+  header .dot.bad { background: var(--red); }
+  header #where { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  #layout { flex: 1; display: grid; gap: var(--pad); min-height: 0; grid-template-columns: 1fr; }
+  @media (min-width: 900px) and (min-aspect-ratio: 4/3) {
+    #layout.with-history { grid-template-columns: minmax(0, 1fr) clamp(240px, 26vw, 360px); }
+  }
+  main { display: flex; flex-direction: column; gap: var(--pad); min-height: 0; }
+  section { display: none; flex: 1; flex-direction: column; gap: var(--pad); min-height: 0; }
+  section.on { display: flex; }
+
+  .tile { background: var(--tile); border-radius: 12px; padding: var(--pad); min-width: 0; }
+  .label { font-size: var(--label); color: var(--dim); letter-spacing: .04em; }
+  .value { font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.05; }
+
+  /* Rowing */
+  .grid4 { flex: 1; display: grid; gap: var(--pad); grid-template-columns: 1fr 1fr; }
+  .grid4 .tile { display: flex; flex-direction: column; justify-content: space-between; }
+  .grid4 .value { font-size: var(--big); text-align: center; }
+  .grid4 .value.idle { color: var(--faint); }
+  .footer { text-align: center; font-size: calc(var(--label) * 1.2); }
+  .footer.idle { color: var(--dim); }
+
+  /* Interval */
+  .clockrow { display: flex; justify-content: space-between; align-items: baseline; gap: var(--pad); }
+  .clockrow .value { font-size: var(--big); }
+  .clockrow .watts { font-size: var(--mid); }
+  .meter .top { display: flex; justify-content: space-between; align-items: center; }
+  .meter .pct { font-size: var(--mid); }
+  .bar { position: relative; height: clamp(20px, 4.5vmin, 44px); margin: 14px 0 4px; }
+  .bar .zone { position: absolute; top: 0; bottom: 0; opacity: .3; }
+  .bar .fill { position: absolute; left: 0; top: 18%; bottom: 18%; border-radius: 3px; }
+  .bar .tick { position: absolute; top: -6px; bottom: -6px; width: 3px; background: var(--fg); margin-left: -1px; }
+  .bar .needle { position: absolute; top: -12px; width: 0; height: 0; margin-left: -8px;
+    border-left: 8px solid transparent; border-right: 8px solid transparent; border-top: 10px solid var(--fg); }
+  .meter .under { display: flex; justify-content: space-between; font-size: var(--label); color: var(--dim); }
+  .cue { border-radius: 12px; padding: var(--pad); text-align: center; font-weight: 700;
+    font-size: clamp(24px, 7vmin, 72px); color: var(--bg); }
+  .cue.none { background: var(--tile); color: var(--dim); }
+  .curve { flex: 1; min-height: 90px; position: relative; padding: 0; }
+  .curve canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  @media (max-height: 420px) { #interval .curve { display: none; } }
+
+  /* Summary */
+  .sumhead { display: flex; justify-content: space-between; align-items: center; gap: var(--pad); }
+  .sumhead .value { font-size: var(--mid); }
+  .tiles3 { display: grid; gap: var(--pad); grid-template-columns: repeat(3, 1fr); }
+  .tiles3 .value { font-size: clamp(22px, 6vmin, 64px); text-align: center; margin-top: 6px; }
+  .mini { height: 6px; background: var(--faint); position: relative; margin-top: 8px; border-radius: 3px; }
+  .mini .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; }
+  .mini .tick { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--fg); }
+  .note { text-align: right; font-size: var(--label); color: var(--dim); }
+  .note.warn { color: var(--amber); font-weight: 700; }
+
+  /* Messages */
+  .message { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center;
+    text-align: center; gap: 10px; }
+  .message .value { font-size: var(--mid); }
+  .message .label { font-size: calc(var(--label) * 1.2); }
+
+  /* Session list */
+  aside { display: none; flex-direction: column; gap: 6px; min-height: 0; overflow: auto; }
+  #layout.with-history aside { display: flex; }
+  @media not all and (min-width: 900px) and (min-aspect-ratio: 4/3) {
+    #layout.with-history aside { max-height: 30vh; }
+    #layout.with-history.busy aside { display: none; } /* narrow screen during an interval: just the coach */
+  }
+  aside .row { display: grid; grid-template-columns: 2.2em 1fr auto; gap: 8px; align-items: center;
+    background: var(--tile); border-radius: 10px; padding: 8px 10px; font-size: var(--label); }
+  aside .row .n { color: var(--dim); font-weight: 700; }
+  aside .row .pct { font-weight: 700; font-variant-numeric: tabular-nums; }
+  aside .row .sub { color: var(--dim); font-size: .85em; }
+
+  #pipVideo { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; bottom: 0; right: 0; }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <span id="where">Connecting…</span>
+  <button id="close" hidden>Close</button>
+  <button id="float" hidden title="Keep the coach in a floating window over other apps">Float</button>
+</header>
+
+<div id="layout">
+  <main>
+    <section id="message" class="on">
+      <div class="message"><div class="value" id="msgTitle">Connecting…</div>
+        <div class="label" id="msgText">Looking for the bridge on this network</div></div>
+    </section>
+
+    <section id="rowing">
+      <div class="grid4">
+        <div class="tile"><div class="label">WATTS</div><div class="value" id="rWatts">–</div></div>
+        <div class="tile"><div class="label">STROKES / MIN</div><div class="value" id="rSpm">–</div></div>
+        <div class="tile"><div class="label">PACE / 500 M</div><div class="value" id="rPace">–</div></div>
+        <div class="tile"><div class="label">METRES</div><div class="value" id="rDist">0</div></div>
+      </div>
+      <div class="footer" id="rFooter"></div>
+    </section>
+
+    <section id="interval">
+      <div class="label" id="iTitle">INTERVAL</div>
+      <div class="clockrow"><div class="value" id="iClock">0:00</div><div class="value watts" id="iWatts">0 W</div></div>
+      <div class="tile meter">
+        <div class="top"><div class="label">FINISH vs STEADY</div><div class="value pct" id="iPct">…</div></div>
+        <div class="bar" id="iBar"></div>
+        <div class="under"><span id="iLen"></span><span>tick = steady</span></div>
+      </div>
+      <div class="cue none" id="iCue">…</div>
+      <div class="tile curve"><canvas id="iCurve"></canvas></div>
+    </section>
+
+    <section id="summary">
+      <div class="sumhead"><div class="label" id="sTitle">INTERVAL</div><div class="value" id="sHead"></div></div>
+      <div class="tile curve"><canvas id="sCurve"></canvas></div>
+      <div class="tiles3">
+        <div class="tile"><div class="label">FINISH</div><div class="value" id="sFinish"></div>
+          <div class="mini" id="sMini"><div class="fill"></div><div class="tick"></div></div></div>
+        <div class="tile"><div class="label">LENGTH</div><div class="value" id="sLength"></div></div>
+        <div class="tile"><div class="label">PEAK</div><div class="value" id="sPeak"></div></div>
+      </div>
+      <div class="note" id="sNote"></div>
+    </section>
+  </main>
+  <aside id="history"></aside>
+</div>
+
+<video id="pipVideo" muted playsinline></video>
+
+<script>
+"use strict";
+// Mirrors smartrow_bridge/display/screens.py: same bands, cues and curve drawing.
+const C = { bg: "#000", fg: "#f0f0f0", dim: "#878787", faint: "#464646", tile: "#1a1a1a",
+            green: "#46cd5f", amber: "#f5af2d", red: "#eb4b41", gap: "#d7d7d7" };
+const GOOD_PCT = -5, OK_PCT = -12, METER_MIN = -30, METER_MAX = 15, FORCE_HALF = 12;
+const STALE_S = 5, RECALL_S = 20, POLL_MS = 1000;
+const CUES = { finish: ["FINISH THE STROKE", C.amber], legs: ["DRIVE WITH THE LEGS", C.amber],
+               length: ["LONGER STROKES", C.amber], good: ["GOOD", C.green] };
+const RATING = { good: C.green, ok: C.amber, short: C.red };
+
+const $ = (id) => document.getElementById(id);
+let state = null, recallUntil = 0, closedIndex = null, failures = 0;
+
+function finishColour(pct) {
+  if (pct === null || pct === undefined) return C.dim;
+  return pct >= GOOD_PCT ? C.green : pct >= OK_PCT ? C.amber : C.red;
+}
+const meterPos = (p) => (Math.max(METER_MIN, Math.min(METER_MAX, p)) - METER_MIN) / (METER_MAX - METER_MIN) * 100;
+const fmtPace = (s) => s > 0 ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : "–";
+function fmtTime(s) {
+  s = Math.max(0, Math.round(s || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${r}` : `${m}:${r}`;
+}
+const signed = (n, unit = "") => `${n > 0 ? "+" : n < 0 ? "−" : "±"}${Math.abs(n)}${unit}`;
+
+function show(id) {
+  for (const s of document.querySelectorAll("main section")) s.classList.toggle("on", s.id === id);
+}
+
+// ------------------------------------------------------------------ curve
+
+function drawCurve(canvas, curve, steady, colour, gapHalf = "back") {
+  const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!w || !h) return;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  const g = canvas.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  curve = curve || []; steady = steady || [];
+  const sumC = curve.reduce((a, b) => a + b, 0), sumS = steady.reduce((a, b) => a + b, 0);
+  if (sumC && sumS) steady = steady.map((v) => v * sumC / sumS);  // compare shape, not size
+  const x0 = 14, x1 = w - 14, y0 = 26, y1 = h - 22;
+  const top = Math.max(1, ...curve, ...steady);
+  const pts = (vals) => [0, ...vals].map((v, i, a) => [x0 + i * (x1 - x0) / (a.length - 1), y1 - (y1 - y0) * v / top]);
+  const mid = x0 + (x1 - x0) * (FORCE_HALF + 1) / ((curve.length || steady.length || 24) + 1);
+  const line = (p, col, width) => {
+    g.beginPath(); p.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y));
+    g.strokeStyle = col; g.lineWidth = width; g.lineJoin = "round"; g.stroke();
+  };
+  const area = (p) => { g.beginPath(); g.moveTo(p[0][0], y1); p.forEach(([x, y]) => g.lineTo(x, y));
+                        g.lineTo(p[p.length - 1][0], y1); g.closePath(); };
+  const pc = curve.length ? pts(curve) : null;
+  if (pc && steady.length) {
+    // Force missing against the steady shape, in the half that matters: the steady area
+    // minus the effort's area, clipped to that half (one shape, so no seams).
+    g.save();
+    g.beginPath();
+    if (gapHalf === "back") g.rect(mid, 0, w - mid, h); else g.rect(0, 0, mid, h);
+    g.clip();
+    area(pts(steady)); g.fillStyle = C.gap; g.fill();
+    g.globalCompositeOperation = "destination-out"; area(pc); g.fill();
+    g.restore();
+  }
+  if (pc) { area(pc); g.globalAlpha = .35; g.fillStyle = colour; g.fill(); g.globalAlpha = 1; }
+  if (pc) line(pc, colour, 3);
+  if (steady.length) line(pts(steady), C.dim, 2);
+  g.font = "12px system-ui, sans-serif"; g.fillStyle = C.dim;
+  if (steady.length) { g.textAlign = "right"; g.fillText("steady shape", x1, 16); }
+  if (pc) {
+    g.strokeStyle = C.faint; g.setLineDash([3, 5]); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(mid, y0); g.lineTo(mid, y1); g.stroke(); g.setLineDash([]);
+    g.textAlign = "right"; g.fillText("legs", mid - 5, h - 6);
+    g.textAlign = "left"; g.fillText("finish", mid + 5, h - 6);
+  }
+}
+
+// ------------------------------------------------------------------ views
+
+function renderMeter(pct, colour) {
+  const bar = $("iBar");
+  const zones = [[METER_MIN, OK_PCT, C.red], [OK_PCT, GOOD_PCT, C.amber], [GOOD_PCT, METER_MAX, C.green]];
+  let html = zones.map(([lo, hi, c]) =>
+    `<div class="zone" style="left:${meterPos(lo)}%;width:${meterPos(hi) - meterPos(lo)}%;background:${c}"></div>`).join("");
+  if (pct !== null && pct !== undefined) {
+    html += `<div class="fill" style="width:${meterPos(pct)}%;background:${colour}"></div>`;
+    html += `<div class="needle" style="left:${meterPos(pct)}%"></div>`;
+  }
+  html += `<div class="tick" style="left:${meterPos(0)}%"></div>`;
+  bar.innerHTML = html;
+}
+
+function renderInterval(live) {
+  show("interval");
+  $("iTitle").textContent = `INTERVAL ${live.index}`;
+  $("iClock").textContent = fmtTime(live.elapsed_s);
+  $("iWatts").textContent = `${live.power_w} W`;
+  const legs = live.cue === "legs";
+  const pct = live.finish_pct;
+  const colour = legs ? C.amber : finishColour(pct);
+  $("iPct").textContent = pct === null || pct === undefined ? "…" : signed(pct, "%");
+  $("iPct").style.color = colour;
+  renderMeter(pct, colour);
+  $("iLen").textContent = live.length_delta_cm === undefined ? "" : `length ${signed(live.length_delta_cm, " cm")}`;
+  const cue = $("iCue"), [text, cueColour] = CUES[live.cue] || ["…", null];
+  cue.textContent = text;
+  cue.className = cueColour ? "cue" : "cue none";
+  cue.style.background = cueColour || "";
+  drawCurve($("iCurve"), live.curve, live.steady_curve, cueColour || C.fg);
+}
+
+function renderSummary(last) {
+  show("summary");
+  const legs = !!last.legs_late;
+  const colour = legs ? C.amber : (RATING[last.rating] || C.fg);
+  $("sTitle").textContent = `INTERVAL ${last.index}`;
+  $("sHead").textContent = `${fmtTime(last.duration_s)} · ${last.power_w} W`;
+  $("sFinish").textContent = signed(last.finish_pct, "%");
+  $("sFinish").style.color = colour;
+  const mini = $("sMini");
+  mini.querySelector(".fill").style.cssText = `width:${meterPos(last.finish_pct)}%;background:${legs ? C.amber : finishColour(last.finish_pct)}`;
+  mini.querySelector(".tick").style.left = `${meterPos(0)}%`;
+  $("sLength").textContent = `${Math.round(last.length_cm)} cm`;
+  $("sPeak").textContent = `${last.peak_n} N`;
+  const note = $("sNote");
+  note.textContent = legs ? "LEG DRIVE LATE" : `${signed(Math.round(last.length_delta_cm), " cm")} vs steady · ${last.strokes} strokes · ${last.stroke_rate_spm} spm`;
+  note.className = legs ? "note warn" : "note";
+  drawCurve($("sCurve"), last.curve, last.steady_curve, colour, legs ? "front" : "back");
+}
+
+function renderRowing(st) {
+  show("rowing");
+  const m = st.metrics || {}, rowing = !!st.rowing, live = (v) => rowing ? v : "–";
+  const set = (id, v) => { $(id).textContent = v; $(id).classList.toggle("idle", v === "–"); };
+  set("rWatts", live(String(m.power_w ?? 0)));
+  set("rSpm", live(String(Math.round(m.stroke_rate_spm ?? 0))));
+  set("rPace", live(fmtPace(m.pace_s_per_500m ?? 0)));
+  set("rDist", String(m.distance_m ?? 0));
+  const coach = st.coach;
+  let footer = `${fmtTime(m.elapsed_s)} · ${m.stroke_count ?? 0} strokes`;
+  if (!rowing) footer += " · paused";
+  if (coach) footer += coach.mode === "warmup" ? " · coach learning your steady rowing"
+                                               : ` · steady ${coach.steady_power_w} W`;
+  $("rFooter").textContent = footer;
+  $("rFooter").className = rowing ? "footer" : "footer idle";
+}
+
+function renderHistory(coach) {
+  const items = (coach && coach.history) || [];
+  const layout = $("layout");
+  layout.classList.toggle("with-history", items.length > 0);
+  $("history").innerHTML = items.slice().reverse().map((i) => {
+    const colour = i.legs_late ? C.amber : (RATING[i.rating] || C.fg);
+    const flag = i.legs_late ? " · legs late" : "";
+    return `<div class="row"><span class="n">${i.index}</span>
+      <span>${fmtTime(i.duration_s)} · ${i.power_w} W<div class="sub">${signed(Math.round(i.length_delta_cm), " cm")}${flag}</div></span>
+      <span class="pct" style="color:${colour}">${signed(i.finish_pct, "%")}</span></div>`;
+  }).join("");
+}
+
+function message(title, text, dot) {
+  show("message");
+  $("msgTitle").textContent = title;
+  $("msgText").textContent = text;
+  $("dot").className = `dot ${dot}`;
+}
+
+function render() {
+  const st = state, now = Date.now() / 1000;
+  $("close").hidden = true;
+  if (!st) return;
+  if (st.stage === null || st.age_s === null || st.age_s > STALE_S) {
+    $("where").textContent = "Bridge not running";
+    renderHistory(null);
+    return message("Bridge not running", "It restarts by itself; if this stays, run tools/health_check.sh on the Pi", "bad");
+  }
+  const connected = st.stage === "connected";
+  $("dot").className = `dot ${connected ? "ok" : "warn"}`;
+  $("where").textContent = connected ? `${st.pulley || "Pulley"} connected` +
+    (st.coach ? "" : " · coach off (SRB_COACH=1 turns it on)") : "Waiting for the pulley – pull the handle";
+  const coach = st.coach;
+  renderHistory(coach);
+  $("layout").classList.toggle("busy", !!(coach && coach.live));
+  if (!connected && !st.rowing) return message("Waiting for the pulley", "Pull the handle to wake it", "warn");
+  if (coach && coach.live) { recallUntil = 0; return renderInterval(coach.live); }
+  const last = coach && coach.last;
+  if (last && ((coach.show_summary && closedIndex !== last.index) || now < recallUntil)) {
+    $("close").hidden = false;
+    return renderSummary(last);
+  }
+  renderRowing(st);
+}
+
+$("close").addEventListener("click", () => {
+  if (state && state.coach && state.coach.last) closedIndex = state.coach.last.index;
+  recallUntil = 0; render(); drawPip();
+});
+$("history").addEventListener("click", () => {  // tap the list: the last interval's summary again
+  if (state && state.coach && state.coach.last && !state.coach.live) {
+    closedIndex = null; recallUntil = Date.now() / 1000 + RECALL_S; render(); drawPip();
+  }
+});
+window.addEventListener("resize", render);
+
+async function poll() {
+  try {
+    const r = await fetch("/status.json", { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    state = await r.json();
+    failures = 0;
+    render();
+  } catch (e) {
+    if (++failures >= 3) {
+      $("where").textContent = "Can't reach the Pi";
+      message("Can't reach the Pi", "Check that this device is on the same Wi-Fi as the Pi", "bad");
+    }
+  }
+  drawPip();
+}
+
+// ------------------------------------------------------------------ floating window (Picture-in-Picture)
+// The coach is drawn onto a canvas, and the canvas is played as a live video in the
+// browser's Picture-in-Picture window, which stays on top of other apps. Whether it keeps
+// updating while another app is in front depends on the browser: worth a test.
+
+const pipCanvas = document.createElement("canvas");
+pipCanvas.width = 480; pipCanvas.height = 270;
+const pipVideo = $("pipVideo");
+const pipSupported = !!pipCanvas.captureStream &&
+  ((document.pictureInPictureEnabled && pipVideo.requestPictureInPicture) || pipVideo.webkitSetPresentationMode);
+let pipOn = false;
+
+function drawPip() {
+  if (!pipOn) return;
+  const g = pipCanvas.getContext("2d"), W = 480, H = 270, st = state;
+  g.fillStyle = C.bg; g.fillRect(0, 0, W, H);
+  const text = (t, x, y, size, colour, align = "left", bold = true) => {
+    g.font = `${bold ? "700 " : ""}${size}px system-ui, sans-serif`; g.fillStyle = colour; g.textAlign = align;
+    g.textBaseline = "middle"; g.fillText(t, x, y);
+  };
+  if (!st || st.stage === null || st.age_s > STALE_S) { text("Bridge not running", W / 2, H / 2, 36, C.red, "center"); return; }
+  const coach = st.coach, live = coach && coach.live, last = coach && coach.last;
+  if (live) {
+    const legs = live.cue === "legs", pct = live.finish_pct, colour = legs ? C.amber : finishColour(pct);
+    text(fmtTime(live.elapsed_s), 16, 50, 64, C.fg);
+    text(`${live.power_w} W`, W - 16, 50, 52, C.fg, "right");
+    text("FINISH", 16, 120, 22, C.dim, "left", false);
+    text(pct === null || pct === undefined ? "…" : signed(pct, "%"), W - 16, 120, 48, colour, "right");
+    const [label, cueColour] = CUES[live.cue] || ["…", C.tile];
+    g.fillStyle = cueColour; g.beginPath(); g.roundRect(10, 175, W - 20, 80, 14); g.fill();
+    text(label, W / 2, 216, label.length > 14 ? 34 : 44, live.cue ? C.bg : C.dim, "center");
+  } else if (last && ((coach.show_summary && closedIndex !== last.index) || Date.now() / 1000 < recallUntil)) {
+    const colour = last.legs_late ? C.amber : (RATING[last.rating] || C.fg);
+    text(`INTERVAL ${last.index}`, 16, 34, 22, C.dim);
+    text(`${fmtTime(last.duration_s)} · ${last.power_w} W`, W / 2, 95, 50, C.fg, "center");
+    text("FINISH", 16, 175, 22, C.dim, "left", false);
+    text(signed(last.finish_pct, "%"), W - 16, 175, 56, colour, "right");
+    text(last.legs_late ? "LEG DRIVE LATE" : `length ${signed(Math.round(last.length_delta_cm), " cm")}`,
+         W / 2, 240, 26, last.legs_late ? C.amber : C.dim, "center", !!last.legs_late);
+  } else {
+    const m = st.metrics || {}, rowing = !!st.rowing;
+    text(rowing ? `${m.power_w} W` : "–", W / 2, 80, 80, rowing ? C.fg : C.faint, "center");
+    text(rowing ? `${fmtPace(m.pace_s_per_500m)} /500m · ${Math.round(m.stroke_rate_spm)} spm` : "paused",
+         W / 2, 170, 32, rowing ? C.fg : C.dim, "center", false);
+    text(coach ? (coach.mode === "warmup" ? "coach: learning steady" : `coach ready · steady ${coach.steady_power_w} W`)
+               : "coach off", W / 2, 235, 22, C.dim, "center", false);
+  }
+}
+
+async function togglePip() {
+  try {
+    if (document.pictureInPictureElement || pipVideo.webkitPresentationMode === "picture-in-picture") {
+      if (document.exitPictureInPicture && document.pictureInPictureElement) await document.exitPictureInPicture();
+      else pipVideo.webkitSetPresentationMode("inline");
+      return;
+    }
+    pipOn = true; drawPip();
+    if (!pipVideo.srcObject) pipVideo.srcObject = pipCanvas.captureStream(2);
+    await pipVideo.play();
+    if (pipVideo.requestPictureInPicture) await pipVideo.requestPictureInPicture();
+    else pipVideo.webkitSetPresentationMode("picture-in-picture");
+  } catch (e) {
+    alert(`This browser would not open a floating window (${e.message || e}).`);
+  }
+}
+if (pipSupported) {
+  $("float").hidden = false;
+  $("float").addEventListener("click", togglePip);
+  pipVideo.addEventListener("leavepictureinpicture", () => { pipOn = false; });
+}
+// A still canvas can stall the stream: redraw a little more often than the data changes.
+setInterval(drawPip, 500);
+
+poll();
+setInterval(poll, POLL_MS);
+</script>
+</body>
+</html>

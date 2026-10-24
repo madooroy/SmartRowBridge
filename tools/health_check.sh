@@ -195,6 +195,25 @@ if [[ -f /etc/systemd/system/smartrow-display.service ]]; then
     fi
 fi
 
+if [[ -f /etc/systemd/system/smartrow-web.service ]]; then
+    section "Web page"
+    WEB_PORT=$(sed -n 's/^SRB_WEB_PORT=//p' "$ENV_FILE" 2>/dev/null | tail -n 1)
+    WEB_PORT=${WEB_PORT:-8080}
+    if [[ $(systemctl is-active smartrow-web 2>/dev/null) == active ]]; then
+        ok "web page service running (port $WEB_PORT)"
+    else
+        bad "web page service not running - see: journalctl -u smartrow-web -b"
+    fi
+    if command -v curl >/dev/null && curl -fsS -m 3 "http://127.0.0.1:$WEB_PORT/status.json" >/dev/null 2>&1; then
+        ok "page answers: http://$(hostname).local:$WEB_PORT"
+    else
+        warn "no answer on port $WEB_PORT"
+    fi
+fi
+if grep -qE '^SRB_COACH=(1|true|yes)' "$ENV_FILE" 2>/dev/null; then
+    info "interval coach: on"
+fi
+
 section "SD card and system"
 root_dev=$(findmnt -no SOURCE /)
 if findmnt -no OPTIONS / | grep -qE '(^|,)rw(,|$)'; then
