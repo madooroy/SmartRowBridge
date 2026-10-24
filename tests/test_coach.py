@@ -12,6 +12,9 @@ FULL = [143, 232, 325, 401, 467, 520, 566, 593, 612, 604, 575, 537, 502, 461, 40
         0, 0]
 SHORT = [176, 295, 414, 512, 593, 656, 696, 714, 701, 666, 613, 550, 492, 416, 339, 269, 203, 146, 95, 51, 14, 2,
          0, 0]
+# Steady shape pushed 3 samples later: a slow push off the catch, force from back and arms.
+LATE = [40, 80, 131, 210, 286, 344, 389, 422, 445, 465, 467, 455, 430, 401, 375, 340, 295, 246, 196, 148, 104, 68,
+        32, 7]
 RATE = 21.0
 PERIOD = 60 / RATE
 
@@ -129,6 +132,25 @@ class CoachTest(unittest.TestCase):
         r.row(15, 110)
         self.assertEqual(r.summaries[0].rating, "short")
         self.assertLess(r.summaries[0].finish_pct, -12)
+
+    def test_live_cue_legs(self):
+        r = Rower()
+        r.row(60, 110)
+        r.row(12, 150, LATE)
+        self.assertEqual(r.state()["live"]["cue"], "legs")
+        with self.assertLogs("smartrow_bridge.coach", "INFO") as logs:
+            r.row(10, 150, LATE)
+            r.row(15, 110)
+        s = r.summaries[0]
+        self.assertTrue(s.legs_late)
+        self.assertTrue(s.as_dict()["legs_late"])
+        self.assertIn("leg drive late", logs.output[0])
+
+    def test_longer_stroke_is_not_weak_legs(self):
+        """A longer stroke moves the centre of force later by itself; that is not a weak leg drive."""
+        self.assertLess(coach.drive_lateness(FULL, STEADY, 7), coach.LEGS_CUE)
+        self.assertGreater(coach.drive_lateness(LATE, STEADY, 0), coach.LEGS_CUE + 1)
+        self.assertLess(coach.drive_lateness(SHORT, STEADY, -3), 0)  # leg-heavy: early, the opposite
 
     def test_live_cue_good_and_length(self):
         r = Rower()

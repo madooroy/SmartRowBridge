@@ -68,6 +68,8 @@ class ScreensTest(unittest.TestCase):
             screens.interval_screen(coached(live={**LIVE, "finish_pct": -60}), NOW, UPTIME),  # off the scale
             screens.summary_screen(coached(last=LAST, show_summary=True), NOW, UPTIME),
             screens.summary_screen(coached(last={**LAST, "rating": "short", "finish_pct": -15}), NOW, UPTIME),
+            screens.summary_screen(coached(last={**LAST, "legs_late": True, "finish_pct": 14}), NOW, UPTIME),
+            screens.interval_screen(coached(live={**LIVE, "cue": "legs", "finish_pct": 14}), NOW, UPTIME),
             screens.rowing_screen(coached(last=LAST), NOW, UPTIME),
         ]
         for image in images:

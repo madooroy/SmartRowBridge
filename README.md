@@ -338,9 +338,14 @@ strokes) as an interval.
   - **GOOD** (green): the curve keeps your steady shape.
   - **FINISH THE STROKE** (amber): too little force in the back half of the drive; the stroke has gone short
     and leg-heavy (back swing and arm draw cut short).
+  - **DRIVE WITH THE LEGS** (amber): the force comes late in the drive, a slow push off the catch with back
+    and arms doing the work. Measured as where the curve's centre of force sits against steady, after
+    allowing for a longer stroke (which moves it later by itself). The finish figures turn amber too: a big
+    finish is no good when the legs came in late.
   - **LONGER STROKES** (amber): strokes are more than 3 cm shorter than your steady ones.
 - **After an interval:** for 45 seconds, its duration and watts, its average force curve against your steady
-  shape (the force missing in the finish half filled in light grey), and three numbers: **finish** (back-half force against steady: green within 5 %, amber to 12 %, red
+  shape (the force missing in the finish half filled in light grey, or in the leg-drive half when the legs
+  came in late, with *LEG DRIVE LATE* in the corner), and three numbers: **finish** (back-half force against steady: green within 5 %, amber to 12 %, red
   beyond), **length** and **peak** force. The same summary goes into the session record, one line per
   interval. **X** brings it back any time, or closes it early.
 
@@ -349,7 +354,7 @@ where in the drive the force comes, not how much there is. The difference is rea
 which is why the live screen shows the meter instead of the curve. The strokes just after an interval (recovery) and easy paddling
 never count towards your steady reference, a rise in pace that lasts more than 5 minutes becomes the new
 steady instead of an interval, and a new SmartRow app session starts over. The thresholds were set from real
-sessions (in `smartrow_bridge/coach.py`); `SRB_COACH=0` turns the coach off.
+sessions (in `smartrow_bridge/coach.py`; the leg-drive one sits well clear of anything in them, as none had a weak leg drive); `SRB_COACH=0` turns the coach off.
 
 1. Shut the Pi down, unplug it, and fit the HAT (a 2x20 riser header between the Pi and the HAT keeps it
    clear of the processor). The screen faces up, buttons A and B on the left.

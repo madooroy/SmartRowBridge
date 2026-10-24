@@ -168,6 +168,9 @@ def preview(directory: str) -> None:
     full = [143, 232, 325, 401, 467, 520, 566, 593, 612, 604, 575, 537, 502, 461, 402, 337, 272, 211, 153, 100, 63,
             28, 0, 0]
 
+    late = [40, 80, 131, 210, 286, 344, 389, 422, 445, 465, 467, 455, 430, 401, 375, 340, 295, 246, 196, 148, 104,
+            68, 32, 7]  # steady shape, pushed 3 samples later: a slow push off the catch
+
     def coached(live=None, last=None, show_summary=False):
         status = st("connected", "SmartRow-34", True, True, True, **rowing)
         status["coach"] = {"mode": "interval" if live else "steady", "steady_power_w": 111, "intervals": 2,
@@ -183,6 +186,8 @@ def preview(directory: str) -> None:
                  "fade_pct": -3, "curve": full, "steady_curve": steady}
     short_last = {**good_last, "index": 7, "duration_s": 182, "strokes": 64, "power_w": 156, "length_cm": 112.5,
                   "length_delta_cm": -3.6, "peak_n": 719, "finish_pct": -15, "rating": "short", "curve": short}
+    legs_last = {**good_last, "index": 4, "finish_pct": 14, "curve": late, "length_delta_cm": 0.0,
+                 "drive_late": 2.1, "legs_late": True}
     shots = {
         "01-starting-up": screens.status_screen(None, now, 12.0, addr),
         "02-preparing": screens.status_screen(st("starting"), now, up, addr),
@@ -197,6 +202,8 @@ def preview(directory: str) -> None:
         "07a-interval-starting": screens.interval_screen(coached(live(None, full)), now, up),
         "07b-interval-good": screens.interval_screen(coached(live("good", full, 2, 4)), now, up),
         "07c-interval-finish-cue": screens.interval_screen(coached(live("finish", short, -15, -3)), now, up),
+        "07h-interval-legs-cue": screens.interval_screen(coached(live("legs", late, 14, 0)), now, up),
+        "07i-summary-legs-late": screens.summary_screen(coached(last=legs_last, show_summary=True), now, up),
         "07d-interval-length-cue": screens.interval_screen(coached(live("length", full, -7, -5)), now, up),
         "07e-summary-good": screens.summary_screen(coached(last=good_last, show_summary=True), now, up),
         "07f-summary-short": screens.summary_screen(coached(last=short_last, show_summary=True), now, up),

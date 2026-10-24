@@ -11,8 +11,9 @@ Fed one StrokeCurve per completed stroke (see protocol.SmartRowParser.on_stroke)
   steady reference.
 - Live cue, during an effort: compares the last few strokes' curve shape with your
   steady curve. "finish" when too little of the force comes in the back half of the
-  drive (a short, leg-only stroke), "length" when strokes get clearly shorter,
-  otherwise "good".
+  drive (a short, leg-only stroke), "legs" when the force comes late in the drive
+  (a weak push off the catch, pulling with back and arms), "length" when strokes get
+  clearly shorter, otherwise "good".
 - Summary, after each effort: its average curve, peak force, stroke length and finish
   share against the steady reference. Also logged, so it lands in the session record.
 
@@ -23,6 +24,14 @@ Calibrated on a 45-minute session with seven efforts at ~150 W over ~111 W stead
 the back-half share of the curve was 0.29 steady, 0.29-0.35 in the efforts that kept
 their shape and 0.23-0.24 in the ones that went short and leg-heavy, with about 0.02
 stroke-to-stroke scatter.
+
+The "legs" cue measures where the curve's centre of force sits (in samples, 0-23)
+against the steady curve, minus what a longer or shorter stroke explains by itself
+(LATE_PER_CM, longer strokes only): longer strokes push the centre later without any
+loss of leg drive.
+Over 15 real intervals the length-corrected shift never exceeded +0.34 samples; a
+weak leg drive (peak force moving from about sample 8 to 11) shifts it by 1.5 or
+more. The cue threshold sits between, untested on a real weak-leg stroke so far.
 """
 
 from __future__ import annotations
@@ -54,6 +63,8 @@ CUE_WINDOW = 8  # strokes in the live cue
 CUE_MIN = 6  # strokes into an effort before the first cue
 FINISH_CUE, FINISH_CLEAR = 0.88, 0.92  # back-half share vs steady: cue below, clear above
 LENGTH_CUE_CM, LENGTH_CLEAR_CM = 3.0, 2.0  # shorter than steady by this much
+LEGS_CUE, LEGS_CLEAR = 0.6, 0.45  # centre of force later than steady (samples, length-corrected)
+LATE_PER_CM = 0.1  # how much later the centre sits per cm of extra stroke length, from real sessions
 GOOD_FINISH, OK_FINISH = 0.95, 0.88  # summary colours
 SUMMARY_SHOW_S = 45.0  # how long the summary is shown after an effort
 
@@ -62,6 +73,21 @@ def back_share(force: list[int] | list[float]) -> float:
     """Fraction of the stroke's force in the back half of the drive (samples 12-23)."""
     total = sum(force)
     return sum(force[FORCE_SAMPLES // 2:]) / total if total else 0.0
+
+
+def centre_of_force(force: list[int] | list[float]) -> float:
+    """Where in the drive the force is centred, in samples from the catch (0-23)."""
+    total = sum(force)
+    return sum(i * f for i, f in enumerate(force)) / total if total else 0.0
+
+
+def drive_lateness(curve: list[float], steady_curve: list[float], length_delta_cm: float) -> float:
+    """How much later than steady the force comes, beyond what the stroke length explains.
+
+    Only extra length is credited: a longer stroke moves the centre later by itself, but
+    a shorter one is never taken as a reason for the force to come late.
+    """
+    return centre_of_force(curve) - centre_of_force(steady_curve) - LATE_PER_CM * max(0.0, length_delta_cm)
 
 
 def stroke_power(s: StrokeCurve) -> float:
@@ -94,6 +120,14 @@ class IntervalSummary:
     ended_at: float = 0.0
 
     @property
+    def lateness(self) -> float:
+        return drive_lateness(self.curve, self.steady_curve, self.length_delta_cm)
+
+    @property
+    def legs_late(self) -> bool:
+        return self.lateness > LEGS_CUE
+
+    @property
     def finish_ratio(self) -> float:
         return self.back_share / self.steady_back_share if self.steady_back_share else 1.0
 
@@ -122,6 +156,8 @@ class IntervalSummary:
             "peak_n": round(self.peak_n),
             "finish_pct": self.finish_pct,
             "rating": self.rating,
+            "drive_late": round(self.lateness, 2),
+            "legs_late": self.legs_late,
             "fade_pct": round((self.last_third_back_share / self.first_third_back_share - 1) * 100)
             if self.first_third_back_share else 0,
             "curve": [round(v) for v in self.curve],
@@ -132,7 +168,8 @@ class IntervalSummary:
         m, s = divmod(round(self.duration_s), 60)
         return (f"Interval {self.index}: {m}:{s:02d}, {self.strokes} strokes, {self.power_w:.0f} W, "
                 f"{self.stroke_rate_spm:.1f} spm, length {self.length_cm:.0f} cm ({self.length_delta_cm:+.0f}), "
-                f"peak {self.peak_n:.0f} N, finish {self.finish_pct:+d}% vs steady ({self.rating})")
+                f"peak {self.peak_n:.0f} N, finish {self.finish_pct:+d}% vs steady ({self.rating})"
+                + (f", leg drive late ({self.lateness:+.1f})" if self.legs_late else ""))
 
 
 @dataclass
@@ -278,10 +315,14 @@ class IntervalCoach:
             e.cue = None
             return
         window = self._window()
-        ratio = back_share(mean_curve(window)) / (self.steady_back_share() or 1)
+        curve = mean_curve(window)
+        ratio = back_share(curve) / (self.steady_back_share() or 1)
         short_by = self.steady_length() - statistics.fmean(s.stroke_length_cm for s in window)
+        late = drive_lateness(curve, mean_curve(self.steady), -short_by)
         if ratio < FINISH_CUE or (e.cue == "finish" and ratio < FINISH_CLEAR):
             e.cue = "finish"
+        elif late > LEGS_CUE or (e.cue == "legs" and late > LEGS_CLEAR):
+            e.cue = "legs"
         elif short_by > LENGTH_CUE_CM or (e.cue == "length" and short_by > LENGTH_CLEAR_CM):
             e.cue = "length"
         else:

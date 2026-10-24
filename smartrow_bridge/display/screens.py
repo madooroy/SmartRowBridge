@@ -235,6 +235,7 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
 
 CUES = {
     "finish": ("FINISH THE STROKE", AMBER),
+    "legs": ("DRIVE WITH THE LEGS", AMBER),
     "length": ("LONGER STROKES", AMBER),
     "good": ("GOOD", GREEN),
 }
@@ -254,7 +255,7 @@ def _shade(colour: tuple, amount: float = 0.35) -> tuple:
 
 
 def _plot_curves(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], curve: list, steady: list,
-                 colour: tuple) -> None:
+                 colour: tuple, gap_half: str = "back") -> None:
     """The effort's force curve, filled, over the steady curve as a thin grey line.
 
     The steady curve is scaled to the same total force, so the picture compares shape
@@ -279,9 +280,11 @@ def _plot_curves(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], curv
         pts = points(curve)
         draw.polygon([(x0, y1), *pts, (x1, y1)], fill=_shade(colour))
     if curve and steady:
-        # Back half of the drive: fill the force missing against the steady shape.
+        # Fill the force missing against the steady shape in the half that matters:
+        # the finish (back) half normally, the leg-drive (front) half when legs are late.
         sp = points(steady)
-        for i in range(FORCE_HALF + 1, len(pts) - 1):
+        span = range(FORCE_HALF + 1, len(pts) - 1) if gap_half == "back" else range(0, FORCE_HALF + 1)
+        for i in span:
             a, b, c, d = pts[i], pts[i + 1], sp[i + 1], sp[i]
             if c[1] < b[1] or d[1] < a[1]:  # steady above the effort here (smaller y = higher)
                 draw.polygon([a, b, (b[0], min(b[1], c[1])), (a[0], min(a[1], d[1]))], fill=GAP)
@@ -294,14 +297,19 @@ def _plot_curves(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], curv
         for y in range(y0 + 16, y1, 8):  # dashed line where the finish half starts
             draw.line((mid, y, mid, y + 3), fill=FAINT, width=1)
         draw.text((mid + 4, y1 - 2), "finish", font=font(11), fill=DIM, anchor="lb")
+        draw.text((mid - 4, y1 - 2), "legs", font=font(11), fill=DIM, anchor="rb")
 
 
 def _finish_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct: int | None,
-                  length_delta: int | None) -> None:
-    """Back-half force against steady: a big number and a bar with a tick at steady."""
+                  length_delta: int | None, colour: tuple | None = None) -> None:
+    """Back-half force against steady: a big number and a bar with a tick at steady.
+
+    `colour` overrides the green/amber/red bands: a strong finish is no good when it
+    only comes from a late leg drive.
+    """
     x0, y0, x1, y1 = box
     draw.rounded_rectangle(box, radius=8, fill=TILE)
-    colour = finish_colour(pct)
+    colour = colour or finish_colour(pct)
     draw.text((x0 + 10, y0 + 8), "FINISH vs STEADY", font=font(13), fill=DIM)
     value = "…" if pct is None else f"{pct:+d}%"
     draw.text((x1 - 10, y0 + 22), value, font=font(34, True), fill=colour, anchor="rm")
@@ -324,7 +332,8 @@ def _finish_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct
         draw.text((bx0, by1 + 3), f"length {length_delta:+d} cm", font=font(11), fill=DIM, anchor="lt")
 
 
-def _mini_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct: int) -> None:
+def _mini_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct: int,
+                colour: tuple | None = None) -> None:
     """A thin version of the finish meter's bar, for the summary's FINISH tile."""
     x0, y0, x1, y1 = box
 
@@ -333,7 +342,7 @@ def _mini_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct: 
         return x0 + (x1 - x0) * (p - METER_MIN_PCT) / (METER_MAX_PCT - METER_MIN_PCT)
 
     draw.rectangle(box, fill=FAINT)
-    draw.rectangle((x0, y0, at(pct), y1), fill=finish_colour(pct))
+    draw.rectangle((x0, y0, at(pct), y1), fill=colour or finish_colour(pct))
     draw.line((at(0), y0 - 2, at(0), y1 + 2), fill=FG, width=2)
 
 
@@ -345,7 +354,8 @@ def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
     draw.text((WIDTH - 6, 4), f"INTERVAL {live['index']}", font=font(15, True), fill=DIM, anchor="rt")
     draw.text((8, 58), format_time(live["elapsed_s"]), font=font(50, True), fill=FG, anchor="lm")
     draw.text((WIDTH - 8, 58), f"{live['power_w']} W", font=font(40, True), fill=FG, anchor="rm")
-    _finish_meter(draw, (4, 90, WIDTH - 4, 176), live.get("finish_pct"), live.get("length_delta_cm"))
+    _finish_meter(draw, (4, 90, WIDTH - 4, 176), live.get("finish_pct"), live.get("length_delta_cm"),
+                  AMBER if live.get("cue") == "legs" else None)
 
     text, colour = CUES.get(live.get("cue"), ("…", DIM))
     banner = (4, 181, WIDTH - 4, 215)
@@ -363,11 +373,13 @@ def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
     image, draw = _canvas()
     _hints(draw, "rowing", "Close")
     last = status["coach"]["last"]
-    colour = RATING_COLOURS.get(last.get("rating"), FG)
+    legs_late = bool(last.get("legs_late"))
+    colour = AMBER if legs_late else RATING_COLOURS.get(last.get("rating"), FG)
     draw.text((8, 28), f"INTERVAL {last['index']}", font=font(15, True), fill=DIM, anchor="lt")
     headline = f"{format_time(last['duration_s'])}  ·  {last['power_w']} W"
     draw.text((WIDTH // 2, 62), headline, font=_fit(draw, headline, 34, WIDTH - 16, True), fill=FG, anchor="mm")
-    _plot_curves(draw, (4, 84, WIDTH - 4, 160), last.get("curve") or [], last.get("steady_curve") or [], colour)
+    _plot_curves(draw, (4, 84, WIDTH - 4, 160), last.get("curve") or [], last.get("steady_curve") or [], colour,
+                 "front" if legs_late else "back")
 
     delta = last.get("length_delta_cm", 0)
     tiles = [
@@ -383,9 +395,12 @@ def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
         draw.text((x0 + tile_w // 2, y0 + 30), value, font=_fit(draw, value, 24, tile_w - 10, True),
                   fill=value_colour, anchor="mm")
         if label == "FINISH":
-            _mini_meter(draw, (x0 + 8, y1 - 8, x0 + tile_w - 8, y1 - 4), last["finish_pct"])
-    note = f"{delta:+.0f} cm vs steady"
-    draw.text((WIDTH - 6, HEIGHT - 4), note, font=font(12), fill=DIM, anchor="rd")
+            _mini_meter(draw, (x0 + 8, y1 - 8, x0 + tile_w - 8, y1 - 4), last["finish_pct"],
+                        AMBER if legs_late else None)
+    if legs_late:
+        draw.text((WIDTH - 6, HEIGHT - 4), "LEG DRIVE LATE", font=font(13, True), fill=AMBER, anchor="rd")
+    else:
+        draw.text((WIDTH - 6, HEIGHT - 4), f"{delta:+.0f} cm vs steady", font=font(12), fill=DIM, anchor="rd")
     return image
 
 
