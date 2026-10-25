@@ -154,7 +154,15 @@ def status_screen(status: dict | None, now: float, uptime: float, address: str =
     state = bridge_state(status, now, uptime)
     _hints(draw, "status")
     if address:
-        draw.text((WIDTH - 4, HEIGHT - 4), address, font=_fit(draw, address, 13, 170), fill=DIM, anchor="rd")
+        # One line (host and IP) or two (the web page's address by name and by IP), bottom right,
+        # clear of the B tab: the first line brightest, so it reads at a glance.
+        lines = address.split("\n")
+        widest = max(lines, key=len)
+        f = _fit(draw, widest, 15 if len(lines) > 1 else 13, WIDTH - 104)
+        for i, line in enumerate(reversed(lines)):
+            first = i == len(lines) - 1
+            draw.text((WIDTH - 4, HEIGHT - 4 - i * (f.size + 3)), line, font=f,
+                      fill=FG if first and len(lines) > 1 else DIM, anchor="rd")
 
     if state != "ok":
         if state == "starting":
@@ -186,13 +194,14 @@ def status_screen(status: dict | None, now: float, uptime: float, address: str =
         app_row("SmartRow app", bool(status.get("smartrow_app"))),
         app_row(f"{status.get('fitness_name') or 'PiRower'} (fitness app)", bool(status.get("fitness_app"))),
     ]
-    y = 30
+    two_line_address = "\n" in address
+    y, step = (26, 55) if two_line_address else (30, 60)  # room for the web page's address below
     for label, text, colour in rows:
         draw.ellipse((14, y + 8, 32, y + 26), fill=colour if colour != FAINT else None,
                      outline=colour, width=2)
         draw.text((44, y), label, font=_fit(draw, label, 21, WIDTH - 54, bold=True), fill=FG)
         draw.text((44, y + 28), text, font=_fit(draw, text, 18, WIDTH - 54), fill=colour)
-        y += 60
+        y += step
     return image
 
 

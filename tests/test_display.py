@@ -45,6 +45,16 @@ class ScreensTest(unittest.TestCase):
         self.assertEqual(screens.format_time(455), "7:35")
         self.assertEqual(screens.format_time(3723), "1:02:03")
 
+    def test_address_lines(self):
+        from smartrow_bridge.display.__main__ import address_lines
+        self.assertEqual(address_lines("raspberrypi", "192.168.1.23", "8080"),
+                         "http://raspberrypi.local:8080\nhttp://192.168.1.23:8080")
+        self.assertEqual(address_lines("raspberrypi", None, "8080"), "http://raspberrypi.local:8080")
+        self.assertEqual(address_lines("raspberrypi", "192.168.1.23", None), "raspberrypi  192.168.1.23")
+        self.assertEqual(address_lines("raspberrypi", None, None), "raspberrypi")
+        two = screens.status_screen(status(), NOW, UPTIME, address_lines("raspberrypi", "192.168.1.23", "8080"))
+        self.assertEqual(two.size, (320, 240))
+
     def test_finish_colours_match_the_coach(self):
         from smartrow_bridge import coach
         self.assertEqual(screens.GOOD_FINISH_PCT, round((coach.GOOD_FINISH - 1) * 100))

@@ -40,15 +40,29 @@ def _uptime() -> float:
         return 1e9
 
 
+WEB_UNIT = Path("/etc/systemd/system/smartrow-web.service")
+
+
 def _address() -> str:
-    """Host name and IP address, so you can find the Pi for SSH."""
+    """For the status screen's corner: the web page's address once it is set up
+    (tools/setup_web.sh), by name and by IP address, as Android does not always find
+    .local names; otherwise the host name and IP address, so you can find the Pi for SSH."""
     host = socket.gethostname()
     try:
         ips = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=2).stdout.split()
     except (OSError, subprocess.TimeoutExpired):
         ips = []
     ipv4 = [ip for ip in ips if "." in ip]
-    return f"{host}  {ipv4[0]}" if ipv4 else host
+    return address_lines(host, ipv4[0] if ipv4 else None, _env("SRB_WEB_PORT", "8080") if WEB_UNIT.exists() else None)
+
+
+def address_lines(host: str, ip: str | None, web_port: str | None) -> str:
+    if web_port:
+        lines = [f"http://{host}.local:{web_port}"]
+        if ip:
+            lines.append(f"http://{ip}:{web_port}")
+        return "\n".join(lines)
+    return f"{host}  {ip}" if ip else host
 
 
 def _system_stopping() -> bool:
@@ -157,7 +171,7 @@ def preview(directory: str) -> None:
                 "fitness_app": fitness, "clone_name": "SmartRow", "fitness_name": "PiRower",
                 "rowing": rowing, "metrics": m}
 
-    addr = "raspberrypi  192.168.1.23"
+    addr = address_lines("raspberrypi", "192.168.1.23", "8080")
     rowing = dict(distance_m=1834, power_w=168, stroke_rate_spm=24.5, stroke_count=212,
                   pace_s_per_500m=118, elapsed_s=455)
     # Interval coach, with average curves from a real 45-minute session.
@@ -212,6 +226,8 @@ def preview(directory: str) -> None:
         "10-switching-off": screens.switching_off_screen(),
         "11-safe-to-unplug": screens.final_screen("poweroff"),
         "12-bridge-not-running": screens.status_screen(None, now, up, addr),
+        "13-both-apps-no-web-page": screens.status_screen(st("connected", "SmartRow-34", True, True), now, up,
+                                                          address_lines("raspberrypi", "192.168.1.23", None)),
     }
     for name, image in shots.items():
         image.save(out / f"{name}.png")

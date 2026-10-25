@@ -312,7 +312,9 @@ buttons, an RGB LED) on the Pi's 40-pin header shows what the bridge is doing, a
 without a phone:
 
 - **Status:** the pulley (waiting, connected, lost), and whether the SmartRow app and the fitness app are
-  connected. The Pi's name and IP address are at the bottom.
+  connected. The Pi's name and IP address are at the bottom; once the
+  [web page](#optional-a-web-page-for-phones-and-tablets) is set up, its address instead, by name and by IP
+  address, ready to type into a tablet.
 - **Rowing:** watts, strokes per minute, pace and distance, with time and stroke count. It appears by itself
   when you start rowing and goes back to the status a minute after you stop. Button **B** switches between
   the two.
@@ -442,7 +444,8 @@ tablet, or on a phone on the rower.
    sudo bash ~/smartrow-bridge/tools/setup_web.sh
    ```
 
-2. Open the address it prints, `http://<pi name>.local:8080` (or the Pi's IP address). On Android, Chrome's
+2. Open the address it prints, `http://<pi name>.local:8080`, or the IP address version if that doesn't
+   load (Android does not always find `.local` names). The status screen shows both. On Android, Chrome's
    *Add to Home screen* opens it full-screen without the browser bar.
 
 **Float** (shown where the browser supports it) puts a compact version in a floating Picture-in-Picture window,
