@@ -9,7 +9,10 @@ fitness app as well.
 The strap shares the built-in radio with the pulley. To keep the pulley first:
 - the strap is only looked for once the pulley is connected;
 - scans take turns with the pulley's (a shared lock), in short windows with pauses,
-  so a pulley that drops is found again straight away;
+  so a pulley that drops is found again soon;
+- scanning stops before connecting, and one connection attempt gets 30 s: a strap
+  already serving other receivers is slow to accept, and restarting the attempt
+  cancels it;
 - a lost strap is looked for again, the same way, until it comes back.
 
 The bridge uses the heart rate for the coach and its session summaries, and passes it
@@ -33,7 +36,10 @@ HR_SERVICE_UUID = "0000180d-0000-1000-8000-00805f9b34fb"
 HR_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
 SCAN_WINDOW_S = 8.0  # look for the strap this long ...
 SCAN_PAUSE_S = 20.0  # ... then leave the radio alone this long
-CONNECT_TIMEOUT_S = 10.0
+# A strap already serving other receivers (a watch, the fitness app) can take several
+# seconds to accept another connection; one attempt is given this long and never cut
+# short by a new one (as Android allows ~30 s; the same lesson as Grupetto's COROS fix).
+CONNECT_TIMEOUT_S = 30.0
 STALE_AFTER_S = 5.0  # no reading for this long: heart rate unknown
 
 
@@ -137,7 +143,10 @@ class HeartRateLink:
                 self._lost.clear()
                 client = BleakClient(device, adapter=self.adapter, timeout=CONNECT_TIMEOUT_S,
                                      disconnected_callback=lambda _: self._lost.set())
-                await client.connect()
+                # Scanning stopped before this, and the pulley's scans wait while the attempt is
+                # pending: BlueZ copes badly with a scan and a connection attempt on one radio.
+                async with self.scan_lock:
+                    await client.connect()
                 await client.start_notify(HR_MEASUREMENT_UUID, self._measured)
                 self._client = client
                 self.address = device.address.upper()
