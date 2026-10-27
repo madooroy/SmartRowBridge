@@ -2,10 +2,16 @@
 """Sends finished sessions to intervals.icu and Strava, in the background. Both optional.
 
 The bridge calls Uploader.tick() once a second. Every minute it looks through the saved
-sessions (sessions.py) for one that a set-up destination hasn't had yet, and sends it in
-a background thread, one at a time, so the bridge is never held up. What was sent is noted
-in the session's file ("uploads"), so nothing is sent twice; failures (offline, a service
-down) are retried ten minutes later.
+sessions (sessions.py) for one that a set-up destination hasn't had yet, and sends it, one at a time;
+the looking and the sending both happen in a background thread, so the bridge is never held
+up. What was sent is noted in the session's file ("uploads"), so nothing is sent twice.
+Failures: when a destination can't be reached (offline, a service down, a refused key), it
+is tried again ten minutes later; when one session fails, the others still go, and that one
+is tried again later. A session a service turns down for good (a file it can't read) is
+noted as failed and not tried again by itself (--send tries it again).
+
+A session the Pi was switched off in the middle of (no clean stop, so never saved as
+complete) counts as finished once its file has gone untouched for ABANDONED_AFTER_S.
 
 When a session is sent:
 - an activity upload (intervals.icu "activity" mode, Strava) once the session is over for
@@ -31,10 +37,12 @@ import logging
 import os
 import sys
 import time
+import urllib.error
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
-from . import coach, intervals, sessions, strava
+from . import coach, intervals, sessions, strava, webapi
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +50,9 @@ CHECK_EVERY_S = 60.0
 RETRY_AFTER_S = 600.0
 FINAL_AFTER_S = coach.NEW_SESSION_S + 120.0  # rowing again by then is a new session
 SEND_WITHIN_DAYS = 7
+ABANDONED_AFTER_S = sessions.REFRESH_S + FINAL_AFTER_S  # while rowing, the file is rewritten every REFRESH_S
+GIVE_UP_AFTER = 5  # one session failing this often (for reasons other than the connection): noted as failed
+ACTIVITIES = ("intervals_activity", "strava")
 
 
 @dataclass
@@ -69,8 +80,31 @@ def _mark(record: dict, dest: str) -> dict | None:
     return marks.get(dest)
 
 
+def _ended_at(record: dict) -> float:
+    return record.get("ended_at") or record["started_at"] + record.get("rowing_s", 0)
+
+
 def _over(record: dict, now: float) -> bool:
-    return now - (record["started_at"] + record.get("rowing_s", 0)) >= FINAL_AFTER_S
+    return now - _ended_at(record) >= FINAL_AFTER_S
+
+
+def finished(record: dict, now: float) -> bool:
+    """Saved as complete, or left incomplete by a Pi switched off mid-session."""
+    return bool(record.get("complete")) or now - record.get("saved_at", now) >= ABANDONED_AFTER_S
+
+
+def connection_trouble(exc: BaseException) -> bool:
+    """Trouble with the destination as a whole (not this session): wait before trying it again."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in (401, 403, 408, 429) or exc.code >= 500
+    return isinstance(exc, (urllib.error.URLError, OSError))
+
+
+def turned_down(exc: BaseException) -> bool:
+    """The service won't take this session, however often it is sent."""
+    if isinstance(exc, webapi.Rejected):
+        return True
+    return isinstance(exc, urllib.error.HTTPError) and exc.code in (400, 404, 409, 413, 415, 422)
 
 
 class Destinations:
@@ -96,7 +130,7 @@ class Destinations:
             return float("inf")
 
     def wants(self, dest: str, record: dict, now: float, automatic: bool = True) -> bool:
-        if not record.get("complete"):
+        if not finished(record, now):
             return False
         mark = _mark(record, dest)
         if automatic:
@@ -114,7 +148,7 @@ class Destinations:
             return intervals.send_note(record, intervals.read_key(self.s.intervals_key_file))
         strokes = sessions.read_strokes(self.s.session_dir, record["id"])
         if not strokes:
-            raise RuntimeError("no strokes saved for this session, so there is no activity file to upload")
+            raise webapi.Rejected("no strokes saved for this session, so there is no activity file to upload")
         from . import fitfile  # fit-tool: only needed once there is something to upload
         fit = fitfile.build(record, strokes)
         if dest == "intervals_activity":
@@ -132,15 +166,33 @@ LABELS = {"intervals_activity": "intervals.icu activity", "intervals_note": "int
 
 
 def record_sent(directory: str, record: dict, dest: str, result: dict) -> bool:
-    """Note the result in the session's file, unless the session was rewritten meanwhile."""
+    """Note the result in the session's file (also if it was rewritten meanwhile: sent is sent).
+
+    sent_for is the version that was sent, so a note is sent again for a newer one."""
     current = sessions.read_session(directory, record["id"])
-    if current is None or current.get("saved_at") != record.get("saved_at"):
+    if current is None:
         return False
     uploads = dict(current.get("uploads") or {})
     uploads[dest] = {**result, "sent_at": round(time.time()), "sent_for": record.get("saved_at")}
     current["uploads"] = uploads
     sessions.save(directory, current)
     return True
+
+
+def recent_sessions(directory: str, now: float, days: float = SEND_WITHIN_DAYS + 1) -> list[dict]:
+    """Oldest first: the sessions saved in the last few days (only their files are read)."""
+    oldest = datetime.fromtimestamp(now - days * 86400).strftime("%Y-%m-%dT%H%M")
+    out = []
+    for path in sorted(Path(directory).glob("*.json")):
+        if sessions.ID_PATTERN.match(path.stem) and path.stem >= oldest:
+            record = sessions.read_session(directory, path.stem)
+            if record is not None:
+                out.append(record)
+    return out
+
+
+def has_strokes(directory: str, session: str) -> bool:
+    return (Path(directory) / f"{session}.strokes.json").exists()
 
 
 class Uploader:
@@ -151,23 +203,30 @@ class Uploader:
         self.dests = Destinations(settings)
         self._next_check = 0.0
         self._busy = False
-        self._retry_at: dict[str, float] = {}
+        self._retry_at: dict = {}  # destination, or (destination, session): monotonic time
+        self._failures: dict[tuple[str, str], int] = {}
         self._last_error: dict[str, str] = {}
 
     def pending(self, now: float | None = None) -> list[tuple[str, dict]]:
+        """What to send now, oldest first. Reads files: called in a background thread."""
         now = time.time() if now is None else now
         mono = time.monotonic()
         configured = [d for d in self.dests.configured() if self._retry_at.get(d, 0) <= mono]
         if not configured:
             return []
+        since = {d: self.dests.since(d) for d in configured}
+        directory = self.settings.session_dir
         out = []
-        for entry in reversed(sessions.list_sessions(self.settings.session_dir)):  # oldest first
-            if not entry["complete"]:
-                continue
-            record = sessions.read_session(self.settings.session_dir, entry["id"])
-            if record is None:
-                continue
-            out += [(d, record) for d in configured if self.dests.wants(d, record, now)]
+        for record in recent_sessions(directory, now):
+            for d in configured:
+                if self._retry_at.get((d, record["id"]), 0) > mono:
+                    continue
+                if record["started_at"] < since[d] - 60:
+                    continue
+                if d in ACTIVITIES and not has_strokes(directory, record["id"]):
+                    continue  # saved before activity files existed
+                if self.dests.wants(d, record, now):
+                    out.append((d, record))
         return out
 
     def tick(self, now: float | None = None) -> None:
@@ -175,28 +234,45 @@ class Uploader:
         if self._busy or mono < self._next_check:
             return
         self._next_check = mono + CHECK_EVERY_S
-        work = self.pending()
-        if work:
-            self._busy = True
-            asyncio.get_running_loop().create_task(self._send(*work[0]))
+        self._busy = True
+        asyncio.get_running_loop().create_task(self._run())
+
+    async def _run(self) -> None:
+        try:
+            work = await asyncio.to_thread(self.pending)
+            if work:
+                await self._send(*work[0])
+        except Exception:  # noqa: BLE001 - never stops the bridge
+            log.exception("Uploads failed")
+        finally:
+            self._busy = False
 
     async def _send(self, dest: str, record: dict) -> None:
+        key = (dest, record["id"])
         try:
             result = await asyncio.to_thread(self.dests.send, dest, record)
-        except Exception as exc:  # noqa: BLE001 - offline, a service down, a revoked key: later
+        except Exception as exc:  # noqa: BLE001 - offline, a service down, a revoked key, a bad file
             message = self.dests.describe_error(dest, exc)
             if message != self._last_error.get(dest):
                 log.warning("%s for session %s not sent: %s", LABELS[dest], record["id"], message)
             self._last_error[dest] = message
-            self._retry_at[dest] = time.monotonic() + RETRY_AFTER_S
+            later = time.monotonic() + RETRY_AFTER_S
+            if connection_trouble(exc):
+                self._retry_at[dest] = later  # the whole destination
+                return
+            self._failures[key] = self._failures.get(key, 0) + 1
+            self._retry_at[key] = later  # this session; the others still go
+            if turned_down(exc) or self._failures[key] >= GIVE_UP_AFTER:
+                await asyncio.to_thread(record_sent, self.settings.session_dir, record, dest, {"failed": message})
+            self._next_check = 0.0
         else:
             self._last_error.pop(dest, None)
-            record_sent(self.settings.session_dir, record, dest, result)
+            self._failures.pop(key, None)
+            noted = await asyncio.to_thread(record_sent, self.settings.session_dir, record, dest, result)
             what = "already there" if result.get("duplicate") else "sent"
-            log.info("Upload: %s for session %s %s", LABELS[dest], record["id"], what)
+            log.info("Upload: %s for session %s %s%s", LABELS[dest], record["id"], what,
+                     "" if noted else " (but its file is gone, so this isn't noted)")
             self._next_check = 0.0  # more waiting? next tick
-        finally:
-            self._busy = False
 
 
 def _status(settings: Settings) -> int:
@@ -209,11 +285,15 @@ def _status(settings: Settings) -> int:
         marks = []
         for d in ("intervals_activity", "intervals_note", "strava"):
             m = _mark(record, d)
-            if m:
+            if m and m.get("failed"):
+                marks.append(f"{LABELS[d]}: failed ({m['failed']}; --send to try again)")
+            elif m:
                 marks.append(f"{LABELS[d]}: " + ("already there" if m.get("duplicate") else "sent"))
             elif d in configured:
                 if dests.wants(d, record, time.time()):
                     marks.append(f"{LABELS[d]}: waiting")
+                elif d in ACTIVITIES and not has_strokes(settings.session_dir, entry["id"]):
+                    marks.append(f"{LABELS[d]}: no activity file (saved before uploads existed)")
                 elif record.get("source") == "replay" or record.get("started_at", 0) < dests.since(d) - 60:
                     marks.append(f"{LABELS[d]}: not sent by itself (--send to send)")
         source = " (from a CSV)" if record.get("source") == "replay" else ""
@@ -254,7 +334,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     status = 0
     for dest in targets:
-        if _mark(record, dest) and dest != "intervals_note":
+        mark = _mark(record, dest)
+        if mark and not mark.get("failed") and dest != "intervals_note":
             print(f"{LABELS[dest]}: already sent, not again.")
             continue
         try:

@@ -57,6 +57,8 @@ def _request(method: str, path: str, key: str, body: dict | None = None, params:
 
 
 def describe_error(exc: BaseException) -> str:
+    if isinstance(exc, webapi.Rejected):
+        return str(exc)
     if isinstance(exc, urllib.error.HTTPError):
         if exc.code in (401, 403):
             return f"intervals.icu refused the API key (HTTP {exc.code}); run tools/setup_intervals.sh again"

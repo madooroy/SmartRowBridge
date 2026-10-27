@@ -14,6 +14,24 @@ TIMEOUT_S = 30
 USER_AGENT = "Mozilla/5.0 (X11; Linux aarch64) SmartRowBridge/1.0"
 
 
+class Rejected(Exception):
+    """The service turned the session down for good (trying again won't help)."""
+
+
+class _Redirect(urllib.request.HTTPRedirectHandler):
+    """Follows redirects, but never carries our credentials to another site."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlsplit(newurl).netloc != urllib.parse.urlsplit(req.full_url).netloc:
+            new.headers.pop("Authorization", None)
+            new.unredirected_hdrs.pop("Authorization", None)
+        return new
+
+
+_opener = urllib.request.build_opener(_Redirect())
+
+
 def multipart(fields: dict[str, str], file_field: str, filename: str, data: bytes,
               content_type: str = "application/octet-stream") -> tuple[bytes, str]:
     """A multipart/form-data body and its Content-Type header."""
@@ -42,7 +60,7 @@ def request(method: str, url: str, headers: dict[str, str] | None = None, json_b
         req.add_header("Content-Type", content_type)
     for name, value in (headers or {}).items():
         req.add_header(name, value)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with _opener.open(req, timeout=timeout) as resp:
         raw = resp.read()
     return json.loads(raw) if raw else {}
 

@@ -14,6 +14,8 @@ BSD). Contents:
 
 from __future__ import annotations
 
+import time
+
 from fit_tool.fit_file_builder import FitFileBuilder
 from fit_tool.profile.messages.activity_message import ActivityMessage
 from fit_tool.profile.messages.device_info_message import DeviceInfoMessage
@@ -28,6 +30,7 @@ from fit_tool.profile.profile_type import (
 
 PRODUCT = 0x5352  # "SR": SmartRowBridge, under the "development" manufacturer id
 SOFTWARE_VERSION = 1.0
+FIT_EPOCH = 631065600  # 1989-12-31T00:00:00Z
 
 
 def _ms(epoch_s: float) -> int:
@@ -60,12 +63,29 @@ def laps(record: dict, strokes: list[dict]) -> list[dict]:
     cuts.sort()
     out, cursor = [], 0.0
     for start, stop, _, index in cuts:
-        if start > cursor + 1:
+        start = max(start, cursor)
+        if stop <= start:
+            continue
+        if start > cursor:
             out.append({"start": cursor, "end": start, "interval": None})
-        out.append({"start": max(start, cursor), "end": stop, "interval": index})
+        out.append({"start": start, "end": stop, "interval": index})
         cursor = stop
-    if end > cursor + 1 or not out:
+    if end > cursor or not out:
         out.append({"start": cursor, "end": end, "interval": None})
+    if len(out) > 1 and out[-1]["interval"] is None and out[-1]["end"] - out[-1]["start"] < 1:
+        out[-2]["end"] = out.pop()["end"]  # a sliver at the end belongs to the lap before
+    return out
+
+
+def _lap_strokes(lap_list: list[dict], strokes: list[dict]) -> list[list[dict]]:
+    """Each stroke in exactly one lap: from its start up to (not including) its end; the last lap
+    includes its end."""
+    out = [[] for _ in lap_list]
+    i = 0
+    for s in strokes:
+        while i < len(lap_list) - 1 and s["t"] >= lap_list[i]["end"]:
+            i += 1
+        out[i].append(s)
     return out
 
 
@@ -73,8 +93,10 @@ def build(record: dict, strokes: list[dict]) -> bytes:
     """The FIT file for a saved session with its strokes."""
     if not strokes:
         raise ValueError("no strokes saved for this session")
+    from .sessions import distance_offset
     t0 = float(record["started_at"])  # wall time of the first stroke
     t_end = t0 + strokes[-1]["t"]
+    offset = distance_offset([s["distance_m"] for s in strokes])  # the session starts at 0 m
     b = FitFileBuilder(auto_define=True, min_string_size=50)
 
     fid = FileIdMessage()
@@ -104,7 +126,7 @@ def build(record: dict, strokes: list[dict]) -> bytes:
         r = RecordMessage()
         t = t0 + s["t"]
         r.timestamp = _ms(t)
-        r.distance = float(s["distance_m"])
+        r.distance = float(max(0, s["distance_m"] - offset))
         if prev_t is not None and t > prev_t:
             r.speed = max(0.0, (s["distance_m"] - prev_d) / (t - prev_t))
         r.power = round(s["power_w"])
@@ -117,22 +139,25 @@ def build(record: dict, strokes: list[dict]) -> bytes:
         prev_t, prev_d = t, s["distance_m"]
 
     lap_list = laps(record, strokes)
-    for lap in lap_list:
-        inside = [s for s in strokes if lap["start"] <= s["t"] <= lap["end"]] or strokes[:1]
+    lap_strokes = _lap_strokes(lap_list, strokes)
+    prev_end_d = 0.0
+    for n, (lap, inside) in enumerate(zip(lap_list, lap_strokes)):
         st = _stats(inside)
         m = LapMessage()
-        m.message_index = lap_list.index(lap)
+        m.message_index = n
         m.timestamp = _ms(t0 + lap["end"])
         m.start_time = _ms(t0 + lap["start"])
         m.event = Event.LAP
         m.event_type = EventType.STOP
-        m.lap_trigger = LapTrigger.MANUAL if lap["interval"] else LapTrigger.SESSION_END
+        m.lap_trigger = LapTrigger.SESSION_END if n == len(lap_list) - 1 else LapTrigger.MANUAL
         m.sport = Sport.ROWING
         m.sub_sport = SubSport.INDOOR_ROWING
         m.intensity = Intensity.ACTIVE if lap["interval"] else Intensity.RECOVERY
         m.total_elapsed_time = lap["end"] - lap["start"]
         m.total_timer_time = lap["end"] - lap["start"]
-        m.total_distance = float(inside[-1]["distance_m"] - inside[0]["distance_m"])
+        end_d = float(max(0, inside[-1]["distance_m"] - offset)) if inside else prev_end_d
+        m.total_distance = end_d - prev_end_d  # laps add up to the session's distance
+        prev_end_d = end_d
         m.total_cycles = len(inside)
         _set_averages(m, st)
         b.add(m)
@@ -155,7 +180,7 @@ def build(record: dict, strokes: list[dict]) -> bytes:
     sess.sub_sport = SubSport.INDOOR_ROWING
     sess.total_elapsed_time = t_end - t0
     sess.total_timer_time = t_end - t0
-    sess.total_distance = float(strokes[-1]["distance_m"] - strokes[0]["distance_m"] + _first_stroke_distance(strokes))
+    sess.total_distance = float(max(0, strokes[-1]["distance_m"] - offset))
     sess.total_cycles = len(strokes)
     sess.first_lap_index = 0
     sess.num_laps = len(lap_list)
@@ -166,17 +191,13 @@ def build(record: dict, strokes: list[dict]) -> bytes:
     act.timestamp = _ms(t_end)
     act.total_timer_time = t_end - t0
     act.num_sessions = 1
+    # Local time of day, in FIT's seconds since 1989-12-31 (fit-tool doesn't convert this field).
+    act.local_timestamp = round(t_end + time.localtime(t_end).tm_gmtoff - FIT_EPOCH)
     act.type = Activity.MANUAL
     act.event = Event.ACTIVITY
     act.event_type = EventType.STOP
     b.add(act)
     return b.build().to_bytes()
-
-
-def _first_stroke_distance(strokes: list[dict]) -> float:
-    """The distance of the first stroke itself (the pulley's counter starts at 0 for the session)."""
-    first = strokes[0]["distance_m"]
-    return float(first) if first < 50 else 0.0
 
 
 def _set_averages(m, st: dict) -> None:

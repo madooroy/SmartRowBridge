@@ -15,8 +15,9 @@ session's activity file is made for uploads (fitfile.py). Only the newest KEEP s
 are kept. The files are world-readable, so the web page (a separate, unprivileged
 service) can read them; nothing else about the bridge depends on them.
 
-Heart rate is not here: the strap pairs with the SmartRow app or the fitness app,
-never with the pulley, so the bridge does not see it.
+If the bridge is stopped (shutdown, restart), the session is saved as complete there and
+then (SessionRecorder.close). If the Pi loses power instead, the file keeps what the last
+write had; uploads.py treats it as finished once it has gone untouched long enough.
 """
 
 from __future__ import annotations
@@ -54,6 +55,7 @@ class SessionRecorder:
         self._session: int | None = None  # coach.session being recorded
         self._id: str | None = None
         self._started_at = 0.0
+        self._ended_at = 0.0
         self._written: tuple | None = None  # what the last write contained (intervals, complete)
         self._written_at = 0.0
         self._failed = False
@@ -68,9 +70,12 @@ class SessionRecorder:
             return None
         if c.session != self._session:  # a new session: name it after its first stroke
             self._session = c.session
-            self._started_at = wall_now - (mono_now - c.first_time)
-            self._id = session_id(self._started_at)
+            self._id = session_id(wall_now - (mono_now - c.first_time))
             self._written = None
+        # Wall times from the steady clock at every write, so a clock set mid-session (the Pi has
+        # no clock of its own; the network sets it) puts the session at its real time.
+        self._started_at = wall_now - (mono_now - c.first_time)
+        self._ended_at = wall_now - (mono_now - (c.last_time or c.first_time))
         complete = mono_now - (c.last_time or mono_now) > END_AFTER_S
         if complete and c.effort is not None:
             c.state(mono_now)  # closes an effort that was still open when rowing stopped
@@ -82,11 +87,30 @@ class SessionRecorder:
             self._written, self._written_at = key, wall_now
         return path
 
+    def close(self, metrics: RowingMetrics) -> Path | None:
+        """The bridge is stopping (shutdown, restart): save the session as it is, finished."""
+        c = self.coach
+        if self._id is None or c.session != self._session or c.strokes_total < MIN_STROKES:
+            return None
+        if self._written is not None and self._written[1]:
+            return None  # already saved as complete
+        if c.effort is not None and c.last_time is not None:
+            c.state(c.last_time + END_AFTER_S + 1)  # closes an effort still open
+        path = self._write(metrics, True, time.time())
+        if path is not None:
+            self._written = (len(c.intervals), True)
+        return path
+
     def _write(self, metrics: RowingMetrics, complete: bool, wall_now: float) -> Path | None:
-        record = build_record(self.coach, self._started_at, wall_now, complete, metrics.distance_m,
-                              metrics.elapsed_s)
+        rows = stroke_rows(self.coach)
+        distance = metrics.distance_m - distance_offset([r[1] for r in rows])
+        record = build_record(self.coach, self._started_at, wall_now, complete, max(0, distance),
+                              metrics.elapsed_s, session=self._id, ended_at=self._ended_at)
+        previous = read_session(str(self.directory), self._id)
+        if previous and previous.get("uploads"):
+            record["uploads"] = previous["uploads"]  # what was already sent stays sent
         try:
-            path = save(self.directory, record, stroke_rows(self.coach))
+            path = save(self.directory, record, rows)
         except OSError as exc:
             if not self._failed:
                 log.warning("Could not save the session summary in %s: %s", self.directory, exc)
@@ -99,22 +123,41 @@ class SessionRecorder:
 
 
 def build_record(coach: IntervalCoach, started_at: float, saved_at: float, complete: bool,
-                 distance_m: int, elapsed_s: int, source: str = "bridge") -> dict:
+                 distance_m: int, elapsed_s: int, source: str = "bridge", session: str | None = None,
+                 ended_at: float | None = None) -> dict:
     """What a session file holds: when, the pulley's totals and the coach's session summary.
 
     source: "bridge" (rowed live) or "replay" (from a CSV export; never uploaded by itself).
+    ended_at: wall time of the last stroke (default: started_at plus the time rowed).
     """
+    summary = coach.session_summary()
+    if ended_at is None:
+        ended_at = started_at + summary.get("rowing_s", 0)
     return {
         "version": VERSION,
-        "id": session_id(started_at),
+        "id": session or session_id(started_at),
         "source": source,
         "started_at": round(started_at),
+        "ended_at": round(ended_at),
         "saved_at": round(saved_at),
         "complete": complete,
         "distance_m": distance_m,
         "elapsed_s": elapsed_s,
-        **coach.session_summary(),
+        **summary,
     }
+
+
+def distance_offset(distances: list[int]) -> int:
+    """What to subtract from the pulley's distance so the session starts at 0.
+
+    The pulley's counter starts at 0 when it is connected; a session that starts later on the
+    same connection (after a long pause) starts part-way. The first stroke's own distance is
+    taken to be like the second's.
+    """
+    if not distances or distances[0] < 50:
+        return 0
+    first = distances[1] - distances[0] if len(distances) > 1 else 0
+    return max(0, distances[0] - max(0, first))
 
 
 STROKE_COLUMNS = ["t", "distance_m", "power_w", "spm", "heart_rate", "length_cm"]
@@ -130,7 +173,7 @@ def stroke_rows(coach: IntervalCoach) -> list[list]:
 
 
 def _write(path: Path, data: dict) -> None:
-    tmp = path.with_suffix(".tmp")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")  # the bridge and the command line may both write
     tmp.write_text(json.dumps(data), encoding="utf-8")
     os.chmod(tmp, 0o644)
     os.replace(tmp, path)

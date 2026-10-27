@@ -201,6 +201,11 @@ class Bridge:
         finally:
             if status_task is not None:
                 status_task.cancel()
+            if self.recorder is not None:
+                try:
+                    self.recorder.close(self.parser.metrics)  # stopping: save the session as it is
+                except Exception:  # noqa: BLE001
+                    log.exception("Session summary failed")
 
     async def _run(self) -> None:
         # Bumble is only needed once the pulley is connected, so load it in a thread

@@ -490,7 +490,11 @@ The key and the Strava authorization are kept in `/etc/smartrow-bridge/`, readab
 access is renewed by the Pi itself. A session is uploaded about seven minutes after its last stroke (rowing
 again within five minutes continues the same session, so it waits until that can't happen); an intervals.icu
 note goes two minutes after. Uploads that fail (Pi offline, a service down) are retried every ten minutes,
-for up to a week. Each session is uploaded once; what went where is kept in its file:
+for up to a week; one session that fails doesn't hold up the others, and one a service turns down for good
+(a file it can't read) is marked "failed" in `--status` and only tried again with `--send`. Switching the
+Pi off with the screen's button or `sudo poweroff` saves the session there and then; if the power is
+simply cut, the session is still uploaded, minus at most its last five minutes. Each session is uploaded
+once; what went where is kept in its file:
 
 ```bash
 cd /opt/smartrow-bridge

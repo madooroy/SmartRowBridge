@@ -59,6 +59,8 @@ class FakeServices:
                 if p == "/oauth/token":
                     return self._answer(200, {"access_token": "fresh-token", "refresh_token": "new-refresh",
                                               "expires_at": int(time.time()) + 21600})
+                if p.startswith("/api/v3/activities/"):
+                    return self._answer(200, {"id": 31337})
                 if p == "/api/v3/athlete":
                     return self._answer(200, {"firstname": "Test", "lastname": "Rower"})
                 if p == "/api/v3/uploads":
@@ -120,12 +122,14 @@ class UploadsTest(unittest.TestCase):
                                                 "refresh_token": "refresh-1", "expires_at": expires_at,
                                                 "since": since}))
 
-    def saved(self, minutes_ago=30, complete=True, source="bridge", rowing_s=1800):
+    def saved(self, minutes_ago=30, complete=True, source="bridge", rowing_s=1800, saved_ago=None, strokes=True):
         r = saturday()
         started = time.time() - minutes_ago * 60 - rowing_s
-        record = sessions.build_record(r.coach, started, started + rowing_s, complete, 6000, rowing_s, source)
+        saved_at = started + rowing_s if saved_ago is None else time.time() - saved_ago
+        record = sessions.build_record(r.coach, started, saved_at, complete, 6000, rowing_s, source,
+                                       ended_at=started + rowing_s)
         record["rowing_s"] = rowing_s
-        sessions.save(self.dir, record, sessions.stroke_rows(r.coach))
+        sessions.save(self.dir, record, sessions.stroke_rows(r.coach) if strokes else None)
         return record
 
     def run_ticks(self, up, n=1):
@@ -183,12 +187,21 @@ class UploadsTest(unittest.TestCase):
         self.assertEqual(self.strava_file.stat().st_mode & 0o777, 0o600)
         upload = self.fake.posts("/api/v3/uploads")[0]
         self.assertEqual(upload[2]["Authorization"], "Bearer fresh-token")
-        for field in (b'name="data_type"\r\n\r\nfit', b'name="sport_type"\r\n\r\nRowing', b'name="trainer"\r\n\r\n1',
+        self.assertNotIn(b'name="sport_type"', upload[3])  # not an upload field: Rowing comes from the file
+        self.assertEqual([r for r in self.fake.requests if r[0] == "PUT"], [])
+        for field in (b'name="data_type"\r\n\r\nfit', b'name="trainer"\r\n\r\n1',
                       b'name="external_id"\r\n\r\nsmartrowbridge-x', b'name="description"\r\n\r\nsummary'):
             self.assertIn(field, upload[3])
         # A still-valid token is not refreshed again.
         account.upload(b"FITDATA", "smartrowbridge-y", "Morning Row", "summary", poll_s=0.01)
         self.assertEqual(len(self.fake.posts("/oauth/token")), 1)
+
+    def test_strava_other_sport_type_set_afterwards(self):
+        self.set_up_strava(expires_at=int(time.time()) + 9999)
+        strava.StravaAccount(str(self.strava_file)).upload(b"F", "e", "n", "d", sport_type="VirtualRow", poll_s=0.01)
+        put = [r for r in self.fake.requests if r[0] == "PUT"]
+        self.assertEqual(put[0][1], "/api/v3/activities/31337")
+        self.assertEqual(json.loads(put[0][3]), {"sport_type": "VirtualRow"})
 
     def test_strava_duplicate_counts_as_done(self):
         self.set_up_strava(expires_at=int(time.time()) + 9999)
@@ -229,11 +242,66 @@ class UploadsTest(unittest.TestCase):
         self.set_up_strava(since=time.time() - 3600, expires_at=int(time.time()) + 9999)
         self.saved(minutes_ago=30, source="replay")  # from a CSV
         self.saved(minutes_ago=200)  # rowed before Strava was set up (intervals.icu: yes)
-        self.saved(minutes_ago=30, complete=False)  # never completed
+        self.saved(minutes_ago=30, complete=False, saved_ago=60)  # not complete, saved a minute ago: rowing
         self.saved(minutes_ago=60 * 24 * 10)  # ten days ago
         up = uploads.Uploader(self.settings)
         pending = up.pending()
         self.assertEqual([d for d, _ in pending], ["intervals_activity"])
+
+    def test_switched_off_mid_session_still_sent(self):
+        self.set_up_intervals(when=time.time() - 86400)
+        record = self.saved(minutes_ago=30, complete=False, saved_ago=uploads.ABANDONED_AFTER_S + 60)
+        self.assertEqual([(d, r["id"]) for d, r in uploads.Uploader(self.settings).pending()],
+                         [("intervals_activity", record["id"])])
+
+    @unittest.skipIf(fitfile is None, "fit-tool not installed")
+    def test_one_failing_session_does_not_hold_up_the_rest(self):
+        self.set_up_intervals(when=time.time() - 86400)
+        bad = self.saved(minutes_ago=300)
+        good = self.saved(minutes_ago=30)
+        (self.dir / f"{bad['id']}.strokes.json").write_text('{"rows": [[0, 0, "x", 0, 0, 0]]}')  # a broken file
+        up = uploads.Uploader(self.settings)
+        with self.assertLogs("smartrow_bridge.uploads", "INFO"):
+            self.run_ticks(up, 4)
+        self.assertEqual(len(self.fake.posts("/api/v1/athlete/0/activities")), 1)
+        self.assertIn("intervals_activity", sessions.read_session(str(self.dir), good["id"])["uploads"])
+        self.assertEqual(up.pending(), [])  # the broken one waits before it is tried again
+
+    def test_turned_down_is_noted_and_not_retried(self):
+        self.set_up_intervals(when=time.time() - 86400)
+        record = self.saved(minutes_ago=30)
+        self.fake.fail = ("/api/v1/athlete/0/activities", 422)
+        up = uploads.Uploader(self.settings)
+        if fitfile is None:
+            self.skipTest("fit-tool not installed")
+        with self.assertLogs("smartrow_bridge.uploads", "WARNING"):
+            self.run_ticks(up, 1)
+        mark = sessions.read_session(str(self.dir), record["id"])["uploads"]["intervals_activity"]
+        self.assertIn("HTTP 422", mark["failed"])
+        up._retry_at.clear()
+        self.assertEqual(up.pending(), [])
+
+    def test_sessions_from_before_uploads_are_skipped(self):
+        self.set_up_intervals(when=time.time() - 86400)
+        self.saved(minutes_ago=30, strokes=False)  # saved by an older version: no strokes file
+        self.assertEqual(uploads.Uploader(self.settings).pending(), [])
+
+    def test_mark_kept_when_session_rewritten(self):
+        record = self.saved(minutes_ago=30)
+        sessions.save(self.dir, {**record, "saved_at": record["saved_at"] + 5})
+        self.assertTrue(uploads.record_sent(str(self.dir), record, "strava", {"activity_id": 1}))
+        self.assertEqual(sessions.read_session(str(self.dir), record["id"])["uploads"]["strava"]["activity_id"], 1)
+
+    def test_credentials_not_sent_to_another_site(self):
+        from smartrow_bridge import webapi
+        import urllib.request
+        handler = webapi._Redirect()
+        req = urllib.request.Request("https://www.strava.com/api/v3/uploads")
+        req.add_header("Authorization", "Bearer secret")
+        other = handler.redirect_request(req, None, 302, "Found", {}, "https://elsewhere.example/x")
+        same = handler.redirect_request(req, None, 302, "Found", {}, "https://www.strava.com/api/v3/y")
+        self.assertNotIn("Authorization", other.headers)
+        self.assertEqual(same.headers.get("Authorization"), "Bearer secret")
 
     def test_nothing_set_up_nothing_sent(self):
         self.saved()
@@ -311,8 +379,32 @@ class FitFileTest(unittest.TestCase):
         active = [lap for lap in laps if lap["intensity"] == "active"]
         self.assertEqual(len(active), len(record["intervals"]))  # one lap per interval ...
         self.assertEqual(len(laps), 2 * len(record["intervals"]) + 1)  # ... with steady rowing around them
-        self.assertAlmostEqual(sum(lap["total_elapsed_time"] for lap in laps), session["total_elapsed_time"], delta=2)
+        self.assertAlmostEqual(sum(lap["total_elapsed_time"] for lap in laps), session["total_elapsed_time"], delta=0.01)
+        self.assertEqual(sum(lap["total_strokes"] for lap in laps), len(strokes))  # each stroke in one lap
+        self.assertAlmostEqual(sum(lap["total_distance"] for lap in laps), session["total_distance"], delta=0.01)
+        for a, b in zip(laps, laps[1:]):
+            self.assertEqual(a["timestamp"], b["start_time"])  # back to back
+        self.assertEqual(laps[-1]["lap_trigger"], "session_end")
+        self.assertEqual(laps[0]["lap_trigger"], "manual")
         self.assertEqual(found["record"][100]["power"], round(strokes[100]["power_w"]))
+
+    def test_distance_starts_at_zero(self):
+        # A session that started part-way through the pulley's count (a long pause, same connection).
+        r = saturday()
+        record = sessions.build_record(r.coach, 1_800_000_000.0, 1_800_001_000.0, True, 0, 1000)
+        strokes = [dict(zip(sessions.STROKE_COLUMNS, row)) for row in sessions.stroke_rows(r.coach)]
+        base = [s["distance_m"] for s in strokes]
+        for s in strokes:
+            s["distance_m"] += 5000
+        data = fitfile.build(record, strokes)
+        found = {}
+        with fitdecode.FitReader(io.BytesIO(data)) as fr:
+            for fm in fr:
+                if isinstance(fm, fitdecode.FitDataMessage):
+                    found.setdefault(fm.name, []).append({f.name: f.value for f in fm.fields})
+        self.assertLess(found["record"][0]["distance"], 50)
+        self.assertAlmostEqual(found["record"][-1]["distance"], found["session"][0]["total_distance"], delta=0.01)
+        self.assertAlmostEqual(found["session"][0]["total_distance"], base[-1], delta=base[1] - base[0] + 1)
 
     def test_no_strokes(self):
         with self.assertRaises(ValueError):

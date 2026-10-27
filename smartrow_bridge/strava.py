@@ -16,9 +16,10 @@ Set up once with tools/setup_strava.sh (python -m smartrow_bridge.strava --setup
 The Client Secret and the tokens are kept in /etc/smartrow-bridge/strava.json, readable by
 root only. Strava's access tokens last six hours; the Pi renews them itself.
 
-Uploads go through Strava's upload API: the session's FIT file (fitfile.py), activity type
-SRB_STRAVA_SPORT_TYPE (Rowing), marked as indoor (trainer). Strava itself turns away an
-exact duplicate; that counts as done.
+Uploads go through Strava's upload API: the session's FIT file (fitfile.py), marked as indoor
+(trainer). Strava makes it a Rowing activity from the file; a different SRB_STRAVA_SPORT_TYPE
+(e.g. VirtualRow) is set on the activity afterwards. Strava itself turns away an exact
+duplicate; that counts as done.
 """
 
 from __future__ import annotations
@@ -59,9 +60,9 @@ def read_credentials(path: str) -> dict | None:
 
 def _save(path: str, data: dict) -> None:
     target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(target.parent, 0o700)
-    tmp = target.with_suffix(".tmp")
+    if not target.parent.exists():
+        target.parent.mkdir(parents=True, mode=0o700)  # an existing folder keeps its permissions
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(data, f)
@@ -69,6 +70,8 @@ def _save(path: str, data: dict) -> None:
 
 
 def describe_error(exc: BaseException) -> str:
+    if isinstance(exc, webapi.Rejected):
+        return str(exc)
     if isinstance(exc, urllib.error.HTTPError):
         if exc.code == 401:
             return "Strava refused the authorization (HTTP 401); run tools/setup_strava.sh again"
@@ -142,17 +145,25 @@ class StravaAccount:
                sport_type: str = "Rowing", poll_s: float = POLL_S) -> dict:
         """Upload a FIT file and wait for Strava to process it. Returns the result for the session's record."""
         fields = {"data_type": "fit", "external_id": external_id, "name": name, "description": description,
-                  "trainer": "1", "sport_type": sport_type}
+                  "trainer": "1"}
         body, content_type = webapi.multipart(fields, "file", f"{external_id}.fit", fit)
         status = webapi.request("POST", f"{API}/uploads", self._auth(), body=body, content_type=content_type)
         for _ in range(POLL_TRIES):
             if status.get("activity_id"):
-                return {"activity_id": status["activity_id"]}
+                activity_id = status["activity_id"]
+                if sport_type and sport_type != "Rowing":  # the upload itself can't set it
+                    try:
+                        webapi.request("PUT", f"{API}/activities/{activity_id}", self._auth(),
+                                       json_body={"sport_type": sport_type})
+                    except Exception as exc:  # noqa: BLE001 - the activity is there; only its type is off
+                        log.warning("Strava activity %s uploaded, but its type wasn't set to %s: %s",
+                                    activity_id, sport_type, describe_error(exc))
+                return {"activity_id": activity_id}
             error = status.get("error")
             if error:
                 if "duplicate" in error.lower():
                     return {"duplicate": error}  # already on Strava: nothing more to do
-                raise RuntimeError(f"Strava couldn't process the file: {error}")
+                raise webapi.Rejected(f"Strava couldn't process the file: {error}")
             time.sleep(poll_s)
             status = webapi.request("GET", f"{API}/uploads/{status['id']}", self._auth())
         raise RuntimeError("Strava is still processing the upload; trying again later")

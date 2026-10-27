@@ -104,6 +104,35 @@ class RecorderTest(unittest.TestCase):
         self.assertEqual(done, path)  # same file
         self.assertIsNone(rec.update(RowingMetrics(), mono_now=r.t + 999, wall_now=wall0 + 999))
 
+    def test_close_saves_complete_and_keeps_upload_marks(self):
+        r = saturday()
+        rec = self.recorder(r)
+        wall0 = 1_800_000_000.0
+        path = rec.update(RowingMetrics(distance_m=6000), mono_now=r.t, wall_now=wall0)
+        record = json.loads(path.read_text())
+        sessions.save(self.dir, {**record, "uploads": {"strava": {"activity_id": 1}}})
+        rec.close(RowingMetrics(distance_m=6100))
+        record = json.loads(path.read_text())
+        self.assertTrue(record["complete"])
+        self.assertEqual(record["uploads"], {"strava": {"activity_id": 1}})
+        self.assertEqual(record["ended_at"] - record["started_at"], round(r.coach.last_time - r.coach.first_time))
+        self.assertIsNone(rec.close(RowingMetrics()))  # once is enough
+
+    def test_clock_set_mid_session_keeps_the_file(self):
+        r = saturday()
+        rec = self.recorder(r)
+        first = rec.update(RowingMetrics(), mono_now=r.t, wall_now=1_000_000_000.0)  # clock not yet set
+        later = rec.update(RowingMetrics(), mono_now=r.t + sessions.END_AFTER_S + 1,
+                           wall_now=1_800_000_000.0 + sessions.END_AFTER_S + 1)  # the network set it
+        self.assertEqual(first, later)
+        record = json.loads(later.read_text())
+        self.assertEqual(record["started_at"], round(1_800_000_000.0 - (r.t - r.coach.first_time)))
+
+    def test_distance_offset(self):
+        self.assertEqual(sessions.distance_offset([]), 0)
+        self.assertEqual(sessions.distance_offset([9, 18, 27]), 0)
+        self.assertEqual(sessions.distance_offset([5009, 5018, 5027]), 5000)
+
     def test_new_session_new_file_and_listing(self):
         r = saturday()
         rec = self.recorder(r)
