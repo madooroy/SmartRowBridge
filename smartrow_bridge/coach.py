@@ -168,6 +168,8 @@ class IntervalSummary:
     last_third_back_share: float
     ended_at: float = 0.0
     legs_threshold: float = LEGS_CUE
+    steady_power_w: float = 0.0
+    started_at: float = 0.0  # time of its first stroke (same clock as the strokes)
 
     @property
     def lateness(self) -> float:
@@ -210,6 +212,7 @@ class IntervalSummary:
             "peak_n": round(self.peak_n),
             "finish_pct": self.finish_pct,
             "rating": self.rating,
+            "steady_power_w": round(self.steady_power_w),
             "drive_late": round(self.lateness, 2),
             "legs_late": self.legs_late,
             "fade_pct": round((self.last_third_back_share / self.first_third_back_share - 1) * 100)
@@ -235,6 +238,7 @@ class _Effort:
 class IntervalCoach:
     def __init__(self, settings: CoachSettings = DEFAULT_SETTINGS) -> None:
         self.settings = settings
+        self.session = 0
         self.reset()
 
     def reset(self) -> None:
@@ -245,6 +249,11 @@ class IntervalCoach:
         self.intervals: list[IntervalSummary] = []
         self.last_time: float | None = None
         self.last_count = 0
+        self.session += 1  # a new number every time the coach starts over
+        self.first_time: float | None = None
+        self.strokes_total = 0
+        self.power_total = 0.0
+        self.length_total = 0.0
 
     # ------------------------------------------------------------ reference
 
@@ -275,6 +284,11 @@ class IntervalCoach:
                 finished = self._finish(self.last_time)
                 self.recent.clear()
         self.last_time, self.last_count = s.time, s.stroke_count
+        if self.first_time is None:
+            self.first_time = s.time
+        self.strokes_total += 1
+        self.power_total += stroke_power(s)
+        self.length_total += s.stroke_length_cm
         self.recent.append(s)
         smoothed = statistics.median(stroke_power(r) for r in self.recent)
 
@@ -358,6 +372,8 @@ class IntervalCoach:
             last_third_back_share=back_share(mean_curve(strokes[-third:])),
             ended_at=now,
             legs_threshold=self.settings.cues.legs_cue,
+            steady_power_w=self.steady_power(),
+            started_at=strokes[0].time,
         )
 
     # ------------------------------------------------------------ live cue
@@ -385,6 +401,26 @@ class IntervalCoach:
             e.cue = "length"
         else:
             e.cue = "good"
+
+    # ------------------------------------------------------------ session summary
+
+    def session_summary(self) -> dict:
+        """The whole session so far: totals, steady reference, every interval, and findings."""
+        intervals = [i.as_dict() for i in self.intervals]
+        n = self.strokes_total
+        return {
+            "strokes": n,
+            "rowing_s": round((self.last_time or 0) - (self.first_time or 0)),
+            "avg_power_w": round(self.power_total / n) if n else 0,
+            "avg_length_cm": round(self.length_total / n, 1) if n else 0,
+            "steady_power_w": round(self.steady_power()),
+            "steady_length_cm": round(self.steady_length(), 1),
+            "steady_curve": [round(v) for v in mean_curve(self.steady)],
+            "settings": {"start_pct": self.settings.start_pct, "max_effort_min": self.settings.max_effort_s / 60,
+                         "sensitivity": self.settings.sensitivity},
+            "intervals": intervals,
+            "findings": findings(intervals),
+        }
 
     # ------------------------------------------------------------ status
 
@@ -420,3 +456,73 @@ class IntervalCoach:
                 "steady_curve": [round(v) for v in mean_curve(self.steady)],
             }
         return out
+
+
+def _pct(value: int) -> str:
+    """+3%, −15% (a real minus sign, as on the screens)."""
+    return f"{value:+d}%".replace("-", "\u2212")
+
+
+def _clock(seconds: float) -> str:
+    m, s = divmod(round(seconds), 60)
+    return f"{m}:{s:02d}"
+
+
+def _names(items: list[dict]) -> str:
+    names = [f"I{i['index']}" for i in items]
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def findings(intervals: list[dict]) -> list[str]:
+    """A few plain sentences about the session's intervals (summary dicts, as in as_dict()).
+
+    Only says what the numbers show clearly; nothing when there is nothing to say.
+    """
+    if not intervals:
+        return ["No intervals: steady rowing only, or efforts too short or too close to the steady pace to count."]
+    out: list[str] = []
+    good = [i for i in intervals if i["rating"] == "good" and not i.get("legs_late")]
+    short = [i for i in intervals if i["rating"] == "short"]
+    ok = [i for i in intervals if i["rating"] == "ok"]
+    n = len(intervals)
+
+    if len(good) == n:
+        out.append(f"All {n} intervals kept their shape: finish within 5% of steady.")
+    elif good:
+        out.append(f"{len(good)} of {n} kept their shape ({_names(good)}).")
+    if short:
+        lo, hi = min(i["finish_pct"] for i in short), max(i["finish_pct"] for i in short)
+        span = _pct(lo) if lo == hi else f"{_pct(hi)} to {_pct(lo)}"
+        length = sum(i["length_delta_cm"] for i in short) / len(short)
+        extra = f", strokes {abs(length):.0f} cm shorter" if length <= -2 else ""
+        out.append(f"{_names(short)} went short: finish {span} against steady{extra}.")
+    if ok:
+        pcts = ", ".join(_pct(i["finish_pct"]) for i in ok)
+        out.append(f"{_names(ok)} slipped a little (finish {pcts}).")
+
+    # Did the long efforts lose their shape and the short ones keep it?
+    if len(short) >= 2 and len(good) >= 2:
+        d_short = sum(i["duration_s"] for i in short) / len(short)
+        d_good = sum(i["duration_s"] for i in good) / len(good)
+        if d_short > d_good * 1.3:
+            out.append(f"The ones that went short were the longer efforts (about {_clock(d_short)} against "
+                       f"{_clock(d_good)}): keep the finish going in the long pieces.")
+
+    long_fades = [i for i in intervals if i["duration_s"] >= 90 and i.get("fade_pct", 0) <= -5]
+    if long_fades:
+        worst = min(long_fades, key=lambda i: i["fade_pct"])
+        out.append(f"I{worst['index']} faded within itself: finish {_pct(worst['fade_pct'])} from its first third "
+                   f"to its last.")
+
+    legs = [i for i in intervals if i.get("legs_late")]
+    if legs:
+        out.append(f"Leg drive came late in {_names(legs)}: push off the catch with the legs first.")
+
+    steady = [i["steady_power_w"] for i in intervals if i.get("steady_power_w")]
+    if len(steady) >= 2 and min(steady):
+        change = (steady[-1] - steady[0]) / steady[0] * 100
+        if abs(change) <= 5:
+            out.append(f"Steady pace held at about {round(sum(steady) / len(steady))} W between efforts.")
+        else:
+            out.append(f"Steady pace went from {steady[0]} W to {steady[-1]} W over the session.")
+    return out

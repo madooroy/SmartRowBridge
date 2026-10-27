@@ -213,7 +213,8 @@ Common problems:
 | `smartrow_bridge/adapters.py` | Picks the two radios, clears rfkill, hands the dongle to Bumble |
 | `smartrow_bridge/addresses.py`, `advertising.py`, `session_log.py`, `config.py` | Virtual device addresses, advertising payloads, session record, settings |
 | `smartrow_bridge/status.py`, `smartrow_bridge/display/`, `smartrow_bridge/web/` | Status file; the optional screen and web page, separate services that only read it |
-| `tools/coach_replay.py` | Runs SmartRow app CSV exports through the coach |
+| `smartrow_bridge/sessions.py` | Saves each session's summary for the web page |
+| `tools/coach_replay.py` | Runs SmartRow app CSV exports through the coach (and can save their summaries) |
 
 - **Pass-through.** Every pulley notification is forwarded to the clone first, unchanged and in order; parsing
   works on a copy. The SmartRow app's writes go back to the pulley unchanged.
@@ -396,6 +397,22 @@ which is why the live screen shows the meter instead of the curve. The strokes j
 (recovery) and easy paddling never count towards your steady reference, and a new SmartRow app session starts
 over.
 
+**After the session.** When you stop rowing (two minutes without a stroke), the bridge saves the session's
+summary on the Pi, in `/var/lib/smartrow-bridge/sessions/` (the newest 60 are kept). The
+[web page](#optional-a-web-page-for-phones-and-tablets) then shows **Summary ready**: time, distance, average
+and steady watts, a few plain sentences on what the coach saw (which intervals kept their shape, which went
+short and whether those were the longer ones, any fade within an effort, a late leg drive, how steady the
+pace between efforts was), and each interval's average curve against your steady shape. **Sessions** lists
+earlier ones. **Share** turns the summary into a picture for the share sheet (Messages, email, ...), or saves
+it where the browser has no share sheet.
+
+<img src="docs/images/session-summary.png" alt="Shared session summary: totals, what the coach saw, and each interval's force curve against steady" width="360">
+
+Heart rate isn't in it: the strap pairs with the SmartRow app or the fitness app, never with the pulley, so
+the bridge doesn't see it. For a fuller analysis with heart rate, use the SmartRow app's CSV export (it has
+heart rate and every stroke's force curve). A session rowed before the coach was on can be added from its CSV:
+`sudo python3 tools/coach_replay.py --save /var/lib/smartrow-bridge/sessions SESSION.csv`.
+
 **Where it works, and where it doesn't yet.** It was calibrated on one rower's sessions: steady rowing at
 about 21 spm with harder efforts of 1 to 3 minutes at the same rate. In that pattern it found every effort,
 none in steady-only sessions, and cued only the efforts that went short. Expect it to be less reliable with:
@@ -418,6 +435,7 @@ yet been seen on one.
 | `SRB_COACH_START_PCT` | `20` | An interval is at least this % above your steady power (and 15 W) |
 | `SRB_COACH_MAX_MIN` | `5` | Longest effort, in minutes, to count as an interval; longer is a new steady pace |
 | `SRB_COACH_SENSITIVITY` | `normal` | How readily the cues speak up: `low`, `normal` or `high` |
+| `SRB_SESSION_DIR` | `/var/lib/smartrow-bridge/sessions` | Where session summaries are saved; `off` disables |
 
 **Try it on your own rowing first.** Export a session from the SmartRow app as CSV and run it through the
 coach on any computer with Python 3.10 or later (nothing to install):
@@ -434,8 +452,8 @@ showing, so you can see what it would have told you, and pick settings, before r
 
 The screen's information, larger, on any phone or tablet on the same Wi-Fi as the Pi: live watts, pace and
 strokes per minute; with the coach on, the finish meter, the cue, the live force curve, each interval's
-summary and a list of this session's intervals. Put it next to the SmartRow app in split screen on an Android
-tablet, or on a phone on the rower.
+summary, a list of this session's intervals, and afterwards the session summary to look back on or share.
+Put it next to the SmartRow app in split screen on an Android tablet, or on a phone on the rower.
 
 1. Update the bridge, then set the page up:
 

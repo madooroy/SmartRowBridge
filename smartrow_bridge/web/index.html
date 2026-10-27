@@ -110,6 +110,30 @@
   aside .row .pct { font-weight: 700; font-variant-numeric: tabular-nums; }
   aside .row .sub { color: var(--dim); font-size: .85em; }
 
+  /* Saved session summary */
+  #session { overflow-y: auto; -webkit-user-select: text; user-select: text; }
+  #layout.reviewing aside { display: none !important; }
+  .sessbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .sessbar select { flex: 1; min-width: 12em; font: inherit; font-size: var(--label); color: var(--fg);
+    background: var(--tile); border: 1px solid var(--faint); border-radius: 10px; padding: 6px 8px; }
+  .sesstitle { font-size: clamp(20px, 4.5vmin, 40px); font-weight: 700; }
+  .sesssub { color: var(--dim); font-size: var(--label); margin-top: 2px; }
+  .stats { display: grid; gap: var(--pad); grid-template-columns: repeat(auto-fit, minmax(9em, 1fr)); }
+  .stats .value { font-size: clamp(20px, 3.6vmin, 40px); margin-top: 4px; white-space: nowrap; }
+  .stats .sub { color: var(--dim); font-size: var(--label); margin-top: 2px; }
+  .findings { margin: 0; padding-left: 1.2em; font-size: clamp(14px, 2.6vmin, 22px); line-height: 1.4; }
+  .findings li { margin: 4px 0; }
+  .cards { display: grid; gap: var(--pad); grid-template-columns: repeat(auto-fill, minmax(17em, 1fr)); }
+  .card { display: flex; flex-direction: column; gap: 6px; }
+  .card .top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .card .name { font-weight: 700; font-size: clamp(15px, 2.4vmin, 22px); white-space: nowrap; }
+  .card .pct { font-weight: 700; font-size: clamp(20px, 4vmin, 36px); font-variant-numeric: tabular-nums; }
+  .card canvas { width: 100%; height: 90px; }
+  .card .sub { color: var(--dim); font-size: var(--label); }
+  .card .flag { color: var(--amber); font-weight: 700; font-size: var(--label); }
+  .hint { color: var(--dim); font-size: var(--label); }
+  button.accent { border-color: var(--green); color: var(--green); }
+
   #pipVideo { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; bottom: 0; right: 0; }
 </style>
 </head>
@@ -119,6 +143,7 @@
   <span id="where">Connecting…</span>
   <span id="awake" hidden title="This page is keeping the screen on">screen stays on</span>
   <button id="close" hidden>Close</button>
+  <button id="sessBtn" hidden title="Saved summaries of your sessions">Sessions</button>
   <button id="float" hidden title="Keep the coach in a floating window over other apps">Float</button>
 </header>
 
@@ -162,6 +187,19 @@
       </div>
       <div class="note" id="sNote"></div>
     </section>
+
+    <section id="session">
+      <div class="sessbar">
+        <button id="back">‹ Live</button>
+        <select id="sessPick" aria-label="Session"></select>
+        <button id="share">Share</button>
+      </div>
+      <div><div class="sesstitle" id="ssTitle"></div><div class="sesssub" id="ssSub"></div></div>
+      <div class="stats" id="ssStats"></div>
+      <div class="tile"><div class="label">WHAT THE COACH SAW</div><ul class="findings" id="ssFindings"></ul></div>
+      <div class="cards" id="ssCards"></div>
+      <div class="hint" id="ssHint"></div>
+    </section>
   </main>
   <aside id="history"></aside>
 </div>
@@ -181,6 +219,8 @@ const RATING = { good: C.green, ok: C.amber, short: C.red };
 
 const $ = (id) => document.getElementById(id);
 let state = null, recallUntil = 0, closedIndex = null, failures = 0;
+let reviewing = false, sessionList = [], openSession = null, seenSession = null;
+try { seenSession = localStorage.getItem("seenSession"); } catch (e) { /* storage off: fine */ }
 
 function finishColour(pct) {
   if (pct === null || pct === undefined) return C.dim;
@@ -201,17 +241,24 @@ function show(id) {
 
 // ------------------------------------------------------------------ curve
 
-function drawCurve(canvas, curve, steady, colour, gapHalf = "back") {
+function drawCurve(canvas, curve, steady, colour, gapHalf = "back", labels = true) {
   const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
   if (!w || !h) return;
   canvas.width = w * dpr; canvas.height = h * dpr;
   const g = canvas.getContext("2d");
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, w, h);
+  plotCurve(g, 0, 0, w, h, curve, steady, colour, gapHalf, labels);
+}
+
+// The effort's curve (filled) over the steady shape (grey line, scaled to the same total
+// force), with the force missing against steady filled in the half that matters.
+function plotCurve(g, bx, by, w, h, curve, steady, colour, gapHalf = "back", labels = true, scale = 1) {
   curve = curve || []; steady = steady || [];
   const sumC = curve.reduce((a, b) => a + b, 0), sumS = steady.reduce((a, b) => a + b, 0);
   if (sumC && sumS) steady = steady.map((v) => v * sumC / sumS);  // compare shape, not size
-  const x0 = 14, x1 = w - 14, y0 = 26, y1 = h - 22;
+  const x0 = bx + 14 * scale, x1 = bx + w - 14 * scale;
+  const y0 = by + (labels ? 26 : 8) * scale, y1 = by + h - (labels ? 22 : 6) * scale;
   const top = Math.max(1, ...curve, ...steady);
   const pts = (vals) => [0, ...vals].map((v, i, a) => [x0 + i * (x1 - x0) / (a.length - 1), y1 - (y1 - y0) * v / top]);
   const mid = x0 + (x1 - x0) * (FORCE_HALF + 1) / ((curve.length || steady.length || 24) + 1);
@@ -223,26 +270,34 @@ function drawCurve(canvas, curve, steady, colour, gapHalf = "back") {
                         g.lineTo(p[p.length - 1][0], y1); g.closePath(); };
   const pc = curve.length ? pts(curve) : null;
   if (pc && steady.length) {
-    // Force missing against the steady shape, in the half that matters: the steady area
-    // minus the effort's area, clipped to that half (one shape, so no seams).
-    g.save();
-    g.beginPath();
-    if (gapHalf === "back") g.rect(mid, 0, w - mid, h); else g.rect(0, 0, mid, h);
-    g.clip();
-    area(pts(steady)); g.fillStyle = C.gap; g.fill();
-    g.globalCompositeOperation = "destination-out"; area(pc); g.fill();
-    g.restore();
+    // The steady area minus the effort's area, clipped to that half: one shape, no seams.
+    // Drawn on a scratch canvas so cutting it out leaves whatever is underneath alone.
+    const sc = document.createElement("canvas");
+    sc.width = g.canvas.width; sc.height = g.canvas.height;
+    const s2 = sc.getContext("2d");
+    const t = g.getTransform();
+    s2.setTransform(t);
+    const edge = Math.round(mid * t.a + t.e) / t.a - t.e / t.a;  // on a whole device pixel: no hairline
+    s2.beginPath();
+    if (gapHalf === "back") s2.rect(edge, by, bx + w - edge, h); else s2.rect(bx, by, edge - bx, h);
+    s2.clip();
+    const area2 = (p) => { s2.beginPath(); s2.moveTo(p[0][0], y1); p.forEach(([x, y]) => s2.lineTo(x, y));
+                           s2.lineTo(p[p.length - 1][0], y1); s2.closePath(); };
+    area2(pts(steady)); s2.fillStyle = C.gap; s2.fill();
+    s2.globalCompositeOperation = "destination-out"; area2(pc); s2.fill();
+    g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(sc, 0, 0); g.restore();
   }
   if (pc) { area(pc); g.globalAlpha = .35; g.fillStyle = colour; g.fill(); g.globalAlpha = 1; }
-  if (pc) line(pc, colour, 3);
-  if (steady.length) line(pts(steady), C.dim, 2);
-  g.font = "12px system-ui, sans-serif"; g.fillStyle = C.dim;
-  if (steady.length) { g.textAlign = "right"; g.fillText("steady shape", x1, 16); }
+  if (pc) line(pc, colour, 3 * scale);
+  if (steady.length) line(pts(steady), C.dim, 2 * scale);
+  if (!labels) return;
+  g.font = `${12 * scale}px system-ui, sans-serif`; g.fillStyle = C.dim; g.textBaseline = "alphabetic";
+  if (steady.length) { g.textAlign = "right"; g.fillText("steady shape", x1, by + 16 * scale); }
   if (pc) {
-    g.strokeStyle = C.faint; g.setLineDash([3, 5]); g.lineWidth = 1;
+    g.strokeStyle = C.faint; g.setLineDash([3 * scale, 5 * scale]); g.lineWidth = scale;
     g.beginPath(); g.moveTo(mid, y0); g.lineTo(mid, y1); g.stroke(); g.setLineDash([]);
-    g.textAlign = "right"; g.fillText("legs", mid - 5, h - 6);
-    g.textAlign = "left"; g.fillText("finish", mid + 5, h - 6);
+    g.textAlign = "right"; g.fillText("legs", mid - 5 * scale, by + h - 6 * scale);
+    g.textAlign = "left"; g.fillText("finish", mid + 5 * scale, by + h - 6 * scale);
   }
 }
 
@@ -339,6 +394,7 @@ function message(title, text, dot) {
 function render() {
   const st = state, now = Date.now() / 1000;
   $("close").hidden = true;
+  if (reviewing) return;  // a saved session is open: leave it until "Live"
   if (!st) return;
   if (st.stage === null || st.age_s === null || st.age_s > STALE_S) {
     $("where").textContent = "Bridge not running";
@@ -388,6 +444,200 @@ async function poll() {
   }
   drawPip();
 }
+
+// ------------------------------------------------------------------ saved session summaries
+// The bridge saves each session's summary on the Pi (smartrow_bridge/sessions.py).
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function fmtWhen(epoch) {
+  const d = new Date(epoch * 1000);
+  const h = d.getHours(), m = String(d.getMinutes()).padStart(2, "0");
+  return `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}, ${h % 12 || 12}:${m} ${h < 12 ? "am" : "pm"}`;
+}
+const fmtKm = (m) => m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${m} m`;
+const ratingColour = (i) => i.legs_late ? C.amber : (RATING[i.rating] || C.fg);
+
+async function loadSessions() {
+  try {
+    const r = await fetch("/sessions.json", { cache: "no-store" });
+    if (!r.ok) return;
+    sessionList = await r.json();
+  } catch (e) { return; }
+  const btn = $("sessBtn");
+  btn.hidden = sessionList.length === 0;
+  const newest = sessionList[0];
+  // A session that just ended: point at its summary until it has been opened.
+  const fresh = newest && newest.complete && newest.id !== seenSession &&
+                Date.now() / 1000 - (newest.started_at + newest.rowing_s) < 3 * 3600;
+  btn.textContent = fresh ? "Summary ready" : "Sessions";
+  btn.classList.toggle("accent", !!fresh);
+  $("sessPick").innerHTML = sessionList.map((x) =>
+    `<option value="${x.id}">${fmtWhen(x.started_at)} · ${fmtTime(x.rowing_s)} · ${fmtKm(x.distance_m)}` +
+    `${x.intervals ? ` · ${x.intervals} interval${x.intervals > 1 ? "s" : ""}` : ""}${x.complete ? "" : " · in progress"}</option>`
+  ).join("");
+  if (openSession) $("sessPick").value = openSession.id;
+}
+
+async function openSessionView(id) {
+  id = id || (sessionList[0] && sessionList[0].id);
+  if (!id) return;
+  const r = await fetch(`/session/${id}.json`, { cache: "no-store" });
+  if (!r.ok) return;
+  openSession = await r.json();
+  if (sessionList[0] && id === sessionList[0].id) {
+    seenSession = id;
+    try { localStorage.setItem("seenSession", id); } catch (e) { /* storage off: fine */ }
+  }
+  reviewing = true;
+  $("layout").classList.add("reviewing");
+  $("close").hidden = true;
+  show("session");
+  $("sessPick").value = id;
+  renderSession(openSession);
+  loadSessions();
+}
+
+function closeSessionView() {
+  reviewing = false;
+  $("layout").classList.remove("reviewing");
+  render();
+}
+
+function renderSession(s) {
+  const iv = s.intervals || [];
+  $("ssTitle").textContent = fmtWhen(s.started_at);
+  $("ssSub").textContent = s.complete ? "Session summary" :
+    `In progress · saved ${new Date(s.saved_at * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+  const stats = [
+    ["TIME", fmtTime(s.rowing_s), `${s.strokes} strokes`],
+    ["DISTANCE", fmtKm(s.distance_m), `${Math.round(s.rowing_s && s.distance_m ? s.rowing_s * 500 / s.distance_m : 0) ? fmtPace(Math.round(s.rowing_s * 500 / s.distance_m)) + " /500 m" : ""}`],
+    ["AVERAGE", `${s.avg_power_w} W`, `${s.avg_length_cm} cm strokes`],
+    ["STEADY", `${s.steady_power_w} W`, `${s.steady_length_cm} cm strokes`],
+  ];
+  if (iv.length) {
+    const good = iv.filter((i) => i.rating === "good" && !i.legs_late).length;
+    stats.push(["INTERVALS", `${iv.length}`, `${good} kept their shape`]);
+  }
+  $("ssStats").innerHTML = stats.map(([l, v, sub]) =>
+    `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join("");
+  $("ssFindings").innerHTML = (s.findings || []).map((f) => `<li>${f}</li>`).join("");
+  $("ssCards").innerHTML = iv.map((i) => {
+    const flags = [i.legs_late ? "LEG DRIVE LATE" : "", i.duration_s >= 90 && i.fade_pct <= -5 ? `FADED ${signed(i.fade_pct, "%")}` : ""]
+      .filter(Boolean).join(" · ");
+    return `<div class="tile card">
+      <div class="top"><span class="name">I${i.index} · ${fmtTime(i.duration_s)} · ${i.power_w} W</span>
+        <span class="pct" style="color:${ratingColour(i)}">${signed(i.finish_pct, "%")}</span></div>
+      <canvas data-i="${i.index}"></canvas>
+      <div class="sub">${i.stroke_rate_spm} spm · ${Math.round(i.length_cm)} cm (${signed(Math.round(i.length_delta_cm), "")}) · peak ${i.peak_n} N</div>
+      ${flags ? `<div class="flag">${flags}</div>` : ""}</div>`;
+  }).join("");
+  for (const cv of $("ssCards").querySelectorAll("canvas")) {
+    const i = iv.find((x) => x.index === Number(cv.dataset.i));
+    drawCurve(cv, i.curve, i.steady_curve, ratingColour(i), i.legs_late ? "front" : "back", false);
+  }
+  $("ssHint").textContent = "Finish = how much of the stroke's force comes in the back half of the drive, against your " +
+    "steady rowing. Curves: grey line = your steady shape, light grey = force missing. Heart rate isn't seen by the " +
+    "bridge: it is in the SmartRow app and its CSV export.";
+}
+
+$("sessBtn").addEventListener("click", () => openSessionView());
+$("back").addEventListener("click", closeSessionView);
+$("sessPick").addEventListener("change", (e) => openSessionView(e.target.value));
+loadSessions();
+setInterval(loadSessions, 30000);
+
+// ------------------------------------------------------------------ share the summary as an image
+
+function shareImage(s) {
+  const W = 1080, P = 48, iv = s.intervals || [];
+  const cv = document.createElement("canvas");
+  const g = cv.getContext("2d");
+  const font = (size, bold) => { g.font = `${bold ? "700 " : ""}${size}px system-ui, "DejaVu Sans", sans-serif`; };
+  const wrap = (text, width, size) => {  // lines of text that fit the width
+    font(size, false);
+    const words = text.split(" "), lines = [];
+    let line = "";
+    for (const w of words) {
+      const t = line ? `${line} ${w}` : w;
+      if (g.measureText(t).width > width && line) { lines.push(line); line = w; } else line = t;
+    }
+    if (line) lines.push(line);
+    return lines;
+  };
+  const findings = (s.findings || []).map((f) => wrap(f, W - 2 * P - 34, 30));
+  const cols = 2, cardW = (W - 2 * P - 24) / cols, cardH = 250, rows = Math.ceil(iv.length / cols);
+  const H = 300 + 150 + 70 + findings.reduce((a, l) => a + l.length * 42 + 14, 0) + 40 +
+            (iv.length ? 60 + rows * (cardH + 24) : 0) + 90;
+  cv.width = W; cv.height = H;
+  g.fillStyle = C.bg; g.fillRect(0, 0, W, H);
+  const text = (t, x, y, size, colour, bold = false, align = "left") => {
+    font(size, bold); g.fillStyle = colour; g.textAlign = align; g.textBaseline = "alphabetic"; g.fillText(t, x, y);
+  };
+  const tile = (x, y, w, h) => { g.fillStyle = C.tile; g.beginPath(); g.roundRect(x, y, w, h, 18); g.fill(); };
+
+  let y = P + 40;
+  text("ROWING SESSION", P, y, 26, C.dim, true);
+  y += 62; text(fmtWhen(s.started_at), P, y, 52, C.fg, true);
+  y += 50; text(`${fmtTime(s.rowing_s)} · ${fmtKm(s.distance_m)} · ${s.avg_power_w} W average · ${s.strokes} strokes`,
+                P, y, 30, C.dim);
+  y += 46;
+  const stats = [["STEADY", `${s.steady_power_w} W`], ["STROKE", `${s.steady_length_cm} cm`],
+                 ["INTERVALS", `${iv.length}`]];
+  const sw = (W - 2 * P - 2 * 20) / 3;
+  stats.forEach(([l, v], k) => {
+    const x = P + k * (sw + 20);
+    tile(x, y, sw, 120); text(l, x + 22, y + 40, 22, C.dim, true); text(v, x + 22, y + 96, 46, C.fg, true);
+  });
+  y += 120 + 60;
+  text("WHAT THE COACH SAW", P, y, 24, C.dim, true);
+  y += 20;
+  for (const lines of findings) {
+    y += 42;
+    g.fillStyle = C.green; g.beginPath(); g.arc(P + 10, y - 10, 6, 0, Math.PI * 2); g.fill();
+    lines.forEach((l, k) => text(l, P + 34, y + k * 42, 30, C.fg));
+    y += (lines.length - 1) * 42 + 14;
+  }
+  if (iv.length) {
+    y += 50; text("INTERVALS · FINISH vs STEADY", P, y, 24, C.dim, true); y += 24;
+    iv.forEach((i, k) => {
+      const x = P + (k % cols) * (cardW + 24), top = y + Math.floor(k / cols) * (cardH + 24);
+      tile(x, top, cardW, cardH);
+      text(`I${i.index} · ${fmtTime(i.duration_s)} · ${i.power_w} W`, x + 22, top + 46, 30, C.fg, true);
+      text(signed(i.finish_pct, "%"), x + cardW - 22, top + 48, 40, ratingColour(i), true, "right");
+      plotCurve(g, x + 6, top + 62, cardW - 12, 130, i.curve, i.steady_curve, ratingColour(i),
+                i.legs_late ? "front" : "back", false, 2);
+      const note = i.legs_late ? "leg drive late" : `${Math.round(i.length_cm)} cm (${signed(Math.round(i.length_delta_cm), "")}) · ${i.stroke_rate_spm} spm`;
+      text(note, x + 22, top + cardH - 22, 24, i.legs_late ? C.amber : C.dim, !!i.legs_late);
+    });
+    y += rows * (cardH + 24) - 24;
+  }
+  text("Grey line: steady stroke shape · light grey: force missing · SmartRow + SmartRowBridge coach",
+       W / 2, H - 40, 22, C.dim, false, "center");
+  return cv;
+}
+
+async function shareSession() {
+  if (!openSession) return;
+  const cv = shareImage(openSession);
+  const blob = await new Promise((ok) => cv.toBlob(ok, "image/png"));
+  const name = `rowing-${openSession.id}.png`;
+  const file = new File([blob], name, { type: "image/png" });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: `Rowing ${fmtWhen(openSession.started_at)}`,
+                              text: (openSession.findings || []).join(" ") });
+      return;
+    }
+  } catch (e) {
+    if (e.name === "AbortError") return;  // closed the share sheet
+  }
+  const a = document.createElement("a");  // no share sheet here: save the picture instead
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+$("share").addEventListener("click", shareSession);
 
 // ------------------------------------------------------------------ floating window (Picture-in-Picture)
 // The coach is drawn onto a canvas, and the canvas is played as a live video in the

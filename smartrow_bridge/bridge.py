@@ -8,7 +8,7 @@ import logging
 import time
 from typing import IO, TYPE_CHECKING
 
-from . import adapters, addresses, coach, protocol, status
+from . import adapters, addresses, coach, protocol, sessions, status
 from .central import PulleyLink
 from .config import Config
 
@@ -41,6 +41,9 @@ class Bridge:
                 start_pct=cfg.coach_start_pct, max_effort_s=cfg.coach_max_min * 60,
                 sensitivity=cfg.coach_sensitivity))
             self.parser.on_stroke = self.coach.add
+        self.recorder: sessions.SessionRecorder | None = None
+        if self.coach and cfg.session_dir.lower() != "off":
+            self.recorder = sessions.SessionRecorder(cfg.session_dir, self.coach)
         self.peripheral: BridgePeripheral | None = None
         self.link: PulleyLink | None = None
         self._driver_initialized = False
@@ -164,6 +167,11 @@ class Bridge:
                 if not failed:
                     log.warning("Could not write status file %s: %s", path, exc)
                 failed = True
+            if self.recorder is not None:
+                try:
+                    self.recorder.update(self.parser.metrics)
+                except Exception:  # noqa: BLE001 - nor may the session summary
+                    log.exception("Session summary failed")
             await asyncio.sleep(STATUS_INTERVAL_S)
 
     async def run(self) -> None:

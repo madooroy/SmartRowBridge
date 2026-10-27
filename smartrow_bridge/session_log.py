@@ -26,6 +26,7 @@ MILESTONES = (
     "Central disconnected",
     "Data flow",
     "Interval ",
+    "Session summary saved",
 )
 
 

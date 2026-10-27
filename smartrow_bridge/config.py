@@ -6,7 +6,7 @@ import argparse
 import os
 from dataclasses import dataclass
 
-from . import session_log, status
+from . import session_log, sessions, status
 
 
 @dataclass
@@ -32,6 +32,7 @@ class Config:
     coach_start_pct: float
     coach_max_min: float
     coach_sensitivity: str
+    session_dir: str
     log_level: str
 
 
@@ -93,5 +94,7 @@ def parse(argv: list[str] | None = None) -> Config:
     p.add_argument("--coach-sensitivity", choices=("low", "normal", "high"),
                    default=_env("SRB_COACH_SENSITIVITY", "normal"),
                    help="coach: how readily the technique cues speak up (default normal)")
+    p.add_argument("--session-dir", default=_env("SRB_SESSION_DIR", sessions.DEFAULT_DIR),
+                   help="coach: where each session's summary is saved, for the web page ('off' to disable)")
     p.add_argument("--log-level", default=_env("SRB_LOG_LEVEL", "INFO"))
     return Config(**vars(p.parse_args(argv)))

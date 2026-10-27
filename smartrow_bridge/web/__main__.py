@@ -5,9 +5,10 @@
 
 Like the screen, it only reads the bridge's status file, so the bridge runs the same
 with or without it. It serves, read-only: the page (index.html, next to this file),
-its app manifest, icons and service worker, and /status.json, the bridge's status
-file plus its age in seconds as the Pi sees it (so a tablet whose clock differs from
-the Pi's can still tell when the bridge has stopped). Standard library only.
+its app manifest, icons and service worker; /status.json, the bridge's status file
+plus its age in seconds as the Pi sees it (so a tablet whose clock differs from the
+Pi's can still tell when the bridge has stopped); and the saved session summaries,
+/sessions.json (the list) and /session/<id>.json (one). Standard library only.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from .. import sessions
 from .. import status as status_file
 
 log = logging.getLogger("smartrow_bridge.web")
@@ -62,7 +64,7 @@ def status_payload(path: str, now: float | None = None) -> dict:
     return status
 
 
-def make_handler(path: str):
+def make_handler(path: str, session_dir: str = sessions.DEFAULT_DIR):
     class Handler(BaseHTTPRequestHandler):
         server_version = "smartrow-web"
 
@@ -81,6 +83,15 @@ def make_handler(path: str):
                 self._send(HTTPStatus.OK, PAGE.read_bytes(), "text/html; charset=utf-8")
             elif route == "/status.json":
                 self._send(HTTPStatus.OK, json.dumps(status_payload(path)).encode(), "application/json")
+            elif route == "/sessions.json":
+                self._send(HTTPStatus.OK, json.dumps(sessions.list_sessions(session_dir)).encode(),
+                           "application/json")
+            elif route.startswith("/session/") and route.endswith(".json"):
+                record = sessions.read_session(session_dir, route[len("/session/"):-len(".json")])
+                if record is None:
+                    self._send(HTTPStatus.NOT_FOUND, b"Not found\n", "text/plain; charset=utf-8")
+                else:
+                    self._send(HTTPStatus.OK, json.dumps(record).encode(), "application/json")
             elif route in FILES:
                 name, content_type = FILES[route]
                 self._send(HTTPStatus.OK, (HERE / name).read_bytes(), content_type)
@@ -97,8 +108,9 @@ def make_handler(path: str):
     return Handler
 
 
-def serve(port: int, path: str, host: str = "") -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer((host, port), make_handler(path))
+def serve(port: int, path: str, host: str = "",
+          session_dir: str = sessions.DEFAULT_DIR) -> ThreadingHTTPServer:
+    server = ThreadingHTTPServer((host, port), make_handler(path, session_dir))
     server.daemon_threads = True
     return server
 
@@ -107,9 +119,10 @@ def main() -> None:
     p = argparse.ArgumentParser(prog="smartrow-web", description=__doc__.splitlines()[0])
     p.add_argument("--port", type=int, default=int(_env("SRB_WEB_PORT", "8080")))
     p.add_argument("--status-file", default=_env("SRB_STATUS_FILE", status_file.DEFAULT_PATH))
+    p.add_argument("--session-dir", default=_env("SRB_SESSION_DIR", sessions.DEFAULT_DIR))
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
-    server = serve(args.port, args.status_file)
+    server = serve(args.port, args.status_file, session_dir=args.session_dir)
     log.info("Web page on port %d; status file %s", args.port, args.status_file)
     try:
         server.serve_forever()

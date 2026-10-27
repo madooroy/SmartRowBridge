@@ -7,6 +7,7 @@ import unittest
 import urllib.error
 import urllib.request
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from smartrow_bridge import status
@@ -21,7 +22,8 @@ class WebTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.path = str(Path(self.tmp.name) / "status.json")
-        self.server = serve(0, self.path, host="127.0.0.1")
+        self.sessions = Path(self.tmp.name) / "sessions"
+        self.server = serve(0, self.path, host="127.0.0.1", session_dir=str(self.sessions))
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
@@ -52,6 +54,30 @@ class WebTest(unittest.TestCase):
         code, _, body = self.get("/status.json")
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(body)["stage"], "connected")
+
+    def test_saved_sessions(self):
+        _, _, body = self.get("/sessions.json")
+        self.assertEqual(json.loads(body), [])  # nothing saved yet (no directory either)
+        import tools.coach_replay as replay_tool
+        export = Path(self.tmp.name) / "session.csv"
+        write_export(export)
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(replay_tool.main(["--save", str(self.sessions), str(export)]), 0)
+        _, _, body = self.get("/sessions.json")
+        listing = json.loads(body)
+        self.assertEqual(len(listing), 1)
+        self.assertEqual((listing[0]["intervals"], listing[0]["distance_m"], listing[0]["complete"]),
+                         (1, 1010, True))
+        code, _, body = self.get(f"/session/{listing[0]['id']}.json")
+        record = json.loads(body)
+        self.assertEqual(code, 200)
+        self.assertEqual(record["intervals"][0]["power_w"], 152)
+        self.assertEqual(len(record["intervals"][0]["curve"]), 24)
+        self.assertTrue(record["findings"])
+        for bad in ("/session/2026-01-01T0000.json", "/session/..%2Fstatus.json", "/session/x.json"):
+            with self.assertRaises(urllib.error.HTTPError) as err:
+                self.get(bad)
+            self.assertEqual(err.exception.code, 404)
 
     def test_status_when_bridge_is_not_writing(self):
         self.assertEqual(status_payload(self.path), {"stage": None, "age_s": None})
@@ -94,14 +120,17 @@ class WebTest(unittest.TestCase):
 
 def write_export(path: Path) -> None:
     """A SmartRow-app-style CSV: 60 steady strokes, a 1-minute effort, 20 steady strokes."""
-    fields = ["Stroke (#)", "Second (#)", "Work (J)", "Actual power (W)", "Stroke rate (SPM)",
-              "Stroke length (cm)"] + [f"#{i} (N)" for i in range(25)]
+    fields = ["Stroke (#)", "Second (#)", "Timestamp (UTC)", "Distance (m)", "Work (J)", "Actual power (W)",
+              "Stroke rate (SPM)", "Stroke length (cm)"] + [f"#{i} (N)" for i in range(25)]
     rows, t = [], 0.0
     plan = [(60, 110, STEADY, 115), (21, 152, FULL, 119), (20, 110, STEADY, 115)]
+    start = datetime(2026, 10, 27, 11, 2, 0, tzinfo=timezone.utc)
     for n, watts, curve, length in plan:
         for _ in range(n):
             t += 60 / 21
-            rows.append([len(rows) + 1, round(t), round(watts * 60 / 21, 1), watts, 21.0, length, 0, *curve])
+            stamp = (start + timedelta(seconds=round(t))).strftime("%Y-%m-%dT%H:%M:%SZ")
+            rows.append([len(rows) + 1, round(t), stamp, len(rows) * 10 + 10, round(watts * 60 / 21, 1), watts,
+                         21.0, length, 0, *curve])
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(fields)

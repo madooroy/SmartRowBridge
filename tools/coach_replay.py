@@ -9,9 +9,14 @@ the session record) and how much of each interval each live cue was showing.
 Use it to check the coach against your own rowing before relying on it, and to try
 settings: the options are the same as the bridge's SRB_COACH_* settings.
 
+With --save DIR it also writes each session's summary file, as the bridge does on the
+Pi, so the web page can show it: on the Pi, --save /var/lib/smartrow-bridge/sessions
+(with sudo) adds a session rowed before the coach was turned on.
+
 Usage:
     python3 tools/coach_replay.py SESSION.csv [MORE.csv ...]
     python3 tools/coach_replay.py --start-pct 15 --sensitivity high SESSION.csv
+    sudo python3 tools/coach_replay.py --save /var/lib/smartrow-bridge/sessions SESSION.csv
 """
 
 from __future__ import annotations
@@ -21,10 +26,12 @@ import csv
 import logging
 import sys
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from smartrow_bridge import sessions  # noqa: E402
 from smartrow_bridge.coach import CoachSettings, IntervalCoach  # noqa: E402
 from smartrow_bridge.protocol import FORCE_SAMPLES, StrokeCurve  # noqa: E402
 
@@ -46,7 +53,17 @@ def strokes_from_csv(path: Path):
             )
 
 
-def replay(path: Path, settings: CoachSettings) -> dict:
+def export_totals(path: Path) -> dict:
+    """Start time (from the export's UTC timestamps), distance and elapsed time of a session."""
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        rows = list(csv.DictReader(f))
+    first, last = rows[0], rows[-1]
+    started = datetime.strptime(first["Timestamp (UTC)"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    return {"started_at": started.timestamp() - float(first["Second (#)"]),
+            "distance_m": int(float(last["Distance (m)"])), "elapsed_s": int(float(last["Second (#)"]))}
+
+
+def replay(path: Path, settings: CoachSettings, save_dir: Path | None = None) -> dict:
     """Run one export through a fresh coach. Returns its intervals and live-cue counts."""
     coach = IntervalCoach(settings)
     cues: dict[int, Counter] = {}
@@ -56,8 +73,14 @@ def replay(path: Path, settings: CoachSettings) -> dict:
         if live:
             cues.setdefault(live["index"], Counter())[live["cue"]] += 1
     coach.state(float("inf"))  # an effort still running at the end of the file
+    saved = None
+    if save_dir is not None:
+        totals = export_totals(path)
+        record = sessions.build_record(coach, totals["started_at"], totals["started_at"] + totals["elapsed_s"],
+                                       True, totals["distance_m"], totals["elapsed_s"])
+        saved = sessions.save(save_dir, record)
     return {"intervals": coach.intervals, "cues": cues, "steady_power_w": coach.steady_power(),
-            "strokes": coach.last_count}
+            "strokes": coach.last_count, "saved": saved}
 
 
 def describe(path: Path, result: dict) -> str:
@@ -72,6 +95,8 @@ def describe(path: Path, result: dict) -> str:
             shares = ", ".join(f"{CUE_NAMES.get(cue, cue)} {n * 100 // total}%"
                                for cue, n in counts.most_common())
             lines.append(f"      live cue: {shares}")
+    if result.get("saved"):
+        lines.append(f"  summary saved: {result['saved']}")
     return "\n".join(lines)
 
 
@@ -84,6 +109,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="longest effort, in minutes, to count as an interval (default 5)")
     p.add_argument("--sensitivity", choices=("low", "normal", "high"), default="normal",
                    help="how readily the technique cues speak up (default normal)")
+    p.add_argument("--save", type=Path, metavar="DIR",
+                   help="also write each session's summary file into DIR, as the bridge does")
     args = p.parse_args(argv)
     logging.disable(logging.INFO)  # the summary lines are printed below instead
     settings = CoachSettings(start_pct=args.start_pct, max_effort_s=args.max_min * 60,
@@ -91,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     status = 0
     for path in args.csv:
         try:
-            print(describe(path, replay(path, settings)))
+            print(describe(path, replay(path, settings, args.save)))
         except (OSError, KeyError, ValueError) as exc:
             print(f"{path.name}: can't read it as a SmartRow export ({exc})", file=sys.stderr)
             status = 1
