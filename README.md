@@ -480,6 +480,9 @@ itself, so the SmartRow app's own Strava link is no longer needed:
 - **Strava:** the same activity, type Rowing (indoor), with the coach's summary as its description. This
   needs your own Strava API application, which Strava offers to every account with a subscription; it
   stays in "single-player mode" (only your account can use it).
+  Strava gets it as a TCX file naming no device, like the SmartRow app's own uploads, so Strava shows
+  "Rowed using" and your Strava application's name: call the application **SmartRow** to keep
+  "Rowed using SmartRow".
 
 ```bash
 sudo bash ~/smartrow-bridge/tools/setup_intervals.sh     # your intervals.icu API key (Settings, Developer settings)
@@ -500,7 +503,8 @@ once; what went where is kept in its file:
 cd /opt/smartrow-bridge
 sudo venv/bin/python -m smartrow_bridge.uploads --status            # recent sessions and where each went
 sudo venv/bin/python -m smartrow_bridge.uploads --send ID            # send a saved session now
-sudo venv/bin/python -m smartrow_bridge.uploads --fit ID row.fit     # write its FIT file, to look at
+sudo venv/bin/python -m smartrow_bridge.uploads --fit ID row.fit     # write its FIT file (intervals.icu's)
+sudo venv/bin/python -m smartrow_bridge.uploads --tcx ID row.tcx     # write its TCX file (Strava's)
 ```
 
 Only sessions rowed with the bridge after a service was set up are sent by themselves. Sessions added from

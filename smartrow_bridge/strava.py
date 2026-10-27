@@ -16,10 +16,11 @@ Set up once with tools/setup_strava.sh (python -m smartrow_bridge.strava --setup
 The Client Secret and the tokens are kept in /etc/smartrow-bridge/strava.json, readable by
 root only. Strava's access tokens last six hours; the Pi renews them itself.
 
-Uploads go through Strava's upload API: the session's FIT file (fitfile.py), marked as indoor
-(trainer). Strava makes it a Rowing activity from the file; a different SRB_STRAVA_SPORT_TYPE
-(e.g. VirtualRow) is set on the activity afterwards. Strava itself turns away an exact
-duplicate; that counts as done.
+Uploads go through Strava's upload API: the session as a TCX file (tcxfile.py), marked as
+indoor (trainer). Like the SmartRow app's own uploads, the file names no device, so Strava
+shows the activity as "Rowed using <your Strava app's name>": name the app SmartRow to keep
+"Rowed using SmartRow". The activity type (SRB_STRAVA_SPORT_TYPE, Rowing) is set on the
+activity once it is there. Strava itself turns away an exact duplicate; that counts as done.
 """
 
 from __future__ import annotations
@@ -141,17 +142,17 @@ class StravaAccount:
         me = webapi.request("GET", f"{API}/athlete", self._auth())
         return " ".join(x for x in (me.get("firstname"), me.get("lastname")) if x) or str(me.get("id", "?"))
 
-    def upload(self, fit: bytes, external_id: str, name: str, description: str,
-               sport_type: str = "Rowing", poll_s: float = POLL_S) -> dict:
-        """Upload a FIT file and wait for Strava to process it. Returns the result for the session's record."""
-        fields = {"data_type": "fit", "external_id": external_id, "name": name, "description": description,
+    def upload(self, data: bytes, external_id: str, name: str, description: str,
+               sport_type: str = "Rowing", poll_s: float = POLL_S, data_type: str = "tcx") -> dict:
+        """Upload an activity file and wait for Strava to process it. Returns the result for the session's record."""
+        fields = {"data_type": data_type, "external_id": external_id, "name": name, "description": description,
                   "trainer": "1"}
-        body, content_type = webapi.multipart(fields, "file", f"{external_id}.fit", fit)
+        body, content_type = webapi.multipart(fields, "file", f"{external_id}.{data_type}", data)
         status = webapi.request("POST", f"{API}/uploads", self._auth(), body=body, content_type=content_type)
         for _ in range(POLL_TRIES):
             if status.get("activity_id"):
                 activity_id = status["activity_id"]
-                if sport_type and sport_type != "Rowing":  # the upload itself can't set it
+                if sport_type and (data_type != "fit" or sport_type != "Rowing"):  # the upload can't set it
                     try:
                         webapi.request("PUT", f"{API}/activities/{activity_id}", self._auth(),
                                        json_body={"sport_type": sport_type})
@@ -171,7 +172,7 @@ class StravaAccount:
 
 def setup(path: str) -> int:
     print("Strava setup. You need a Strava API application: create one at https://www.strava.com/settings/api")
-    print('(any name and website; "Authorization Callback Domain": localhost).\n')
+    print('(name it SmartRow to keep "Rowed using SmartRow" on Strava; any website; "Authorization Callback Domain": localhost).\n')
     client_id = input("Client ID: ").strip()
     client_secret = getpass.getpass("Client Secret (hidden): ").strip()
     if not client_id or not client_secret:

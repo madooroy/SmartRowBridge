@@ -28,6 +28,8 @@ from fit_tool.profile.profile_type import (
     Activity, Event, EventType, FileType, Intensity, LapTrigger, Manufacturer, SessionTrigger, Sport, SubSport,
 )
 
+from .activity import lap_strokes, laps  # noqa: E402,F401 (laps: also used by tests)
+
 PRODUCT = 0x5352  # "SR": SmartRowBridge, under the "development" manufacturer id
 SOFTWARE_VERSION = 1.0
 FIT_EPOCH = 631065600  # 1989-12-31T00:00:00Z
@@ -49,44 +51,6 @@ def _stats(strokes: list[dict]) -> dict:
         "avg_rate": round(sum(rates) / len(rates)) if rates else None,
         "max_rate": round(max(rates)) if rates else None,
     }
-
-
-def laps(record: dict, strokes: list[dict]) -> list[dict]:
-    """Contiguous laps: steady rowing, each interval, steady rowing... (times from the first stroke)."""
-    end = strokes[-1]["t"]
-    cuts = []  # (start, end, is_interval, index)
-    for i in record.get("intervals") or []:
-        start = i["started_at_s"] if "started_at_s" in i else None
-        if start is None:
-            continue
-        cuts.append((max(0.0, start), min(end, start + i["duration_s"]), True, i["index"]))
-    cuts.sort()
-    out, cursor = [], 0.0
-    for start, stop, _, index in cuts:
-        start = max(start, cursor)
-        if stop <= start:
-            continue
-        if start > cursor:
-            out.append({"start": cursor, "end": start, "interval": None})
-        out.append({"start": start, "end": stop, "interval": index})
-        cursor = stop
-    if end > cursor or not out:
-        out.append({"start": cursor, "end": end, "interval": None})
-    if len(out) > 1 and out[-1]["interval"] is None and out[-1]["end"] - out[-1]["start"] < 1:
-        out[-2]["end"] = out.pop()["end"]  # a sliver at the end belongs to the lap before
-    return out
-
-
-def _lap_strokes(lap_list: list[dict], strokes: list[dict]) -> list[list[dict]]:
-    """Each stroke in exactly one lap: from its start up to (not including) its end; the last lap
-    includes its end."""
-    out = [[] for _ in lap_list]
-    i = 0
-    for s in strokes:
-        while i < len(lap_list) - 1 and s["t"] >= lap_list[i]["end"]:
-            i += 1
-        out[i].append(s)
-    return out
 
 
 def build(record: dict, strokes: list[dict]) -> bytes:
@@ -139,9 +103,9 @@ def build(record: dict, strokes: list[dict]) -> bytes:
         prev_t, prev_d = t, s["distance_m"]
 
     lap_list = laps(record, strokes)
-    lap_strokes = _lap_strokes(lap_list, strokes)
+    per_lap = lap_strokes(lap_list, strokes)
     prev_end_d = 0.0
-    for n, (lap, inside) in enumerate(zip(lap_list, lap_strokes)):
+    for n, (lap, inside) in enumerate(zip(lap_list, per_lap)):
         st = _stats(inside)
         m = LapMessage()
         m.message_index = n

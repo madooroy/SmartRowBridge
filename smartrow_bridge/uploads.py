@@ -26,7 +26,8 @@ and only in the last SEND_WITHIN_DAYS days. Sessions added from CSV exports
     python -m smartrow_bridge.uploads --send ID
 
     python -m smartrow_bridge.uploads --status          recent sessions and where each was sent
-    python -m smartrow_bridge.uploads --fit ID OUT      write a session's FIT file (to look at)
+    python -m smartrow_bridge.uploads --fit ID OUT      write a session's FIT file (intervals.icu's)
+    python -m smartrow_bridge.uploads --tcx ID OUT      write a session's TCX file (Strava's)
 """
 
 from __future__ import annotations
@@ -149,12 +150,14 @@ class Destinations:
         strokes = sessions.read_strokes(self.s.session_dir, record["id"])
         if not strokes:
             raise webapi.Rejected("no strokes saved for this session, so there is no activity file to upload")
-        from . import fitfile  # fit-tool: only needed once there is something to upload
-        fit = fitfile.build(record, strokes)
         if dest == "intervals_activity":
+            from . import fitfile  # fit-tool: only needed once there is something to upload
+            fit = fitfile.build(record, strokes)
             return intervals.upload_activity(record, fit, intervals.read_key(self.s.intervals_key_file))
+        from . import tcxfile  # Strava gets TCX, like the SmartRow app's uploads (see strava.py)
         return strava.StravaAccount(self.s.strava_file).upload(
-            fit, external_id=f"smartrowbridge-{record['id']}", name=intervals.activity_name(record),
+            tcxfile.build(record, strokes), external_id=f"smartrowbridge-{record['id']}",
+            name=intervals.activity_name(record),
             description=intervals.summary_text(record), sport_type=self.s.strava_sport_type)
 
     def describe_error(self, dest: str, exc: BaseException) -> str:
@@ -306,26 +309,31 @@ def main(argv: list[str] | None = None) -> int:
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--status", action="store_true", help="recent sessions and where each was sent")
     group.add_argument("--send", metavar="ID", help="send a saved session now, to every set-up destination")
-    group.add_argument("--fit", nargs=2, metavar=("ID", "OUT"), help="write a session's FIT file")
+    group.add_argument("--fit", nargs=2, metavar=("ID", "OUT"), help="write a session's FIT file (intervals.icu's)")
+    group.add_argument("--tcx", nargs=2, metavar=("ID", "OUT"), help="write a session's TCX file (Strava's)")
     p.add_argument("--to", choices=("intervals", "strava"), help="with --send: only this destination")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     settings = Settings.from_env()
     if args.status:
         return _status(settings)
-    session = args.fit[0] if args.fit else args.send
+    out_file = args.fit or args.tcx
+    session = out_file[0] if out_file else args.send
     record = sessions.read_session(settings.session_dir, session)
     if record is None:
         print(f"No saved session {session} in {settings.session_dir}", file=sys.stderr)
         return 1
-    if args.fit:
+    if out_file:
         strokes = sessions.read_strokes(settings.session_dir, session)
         if not strokes:
             print("No strokes saved for this session.", file=sys.stderr)
             return 1
-        from . import fitfile
-        Path(args.fit[1]).write_bytes(fitfile.build(record, strokes))
-        print(f"Wrote {args.fit[1]}")
+        if args.fit:
+            from . import fitfile as maker
+        else:
+            from . import tcxfile as maker
+        Path(out_file[1]).write_bytes(maker.build(record, strokes))
+        print(f"Wrote {out_file[1]}")
         return 0
     dests = Destinations(settings)
     targets = [d for d in dests.configured() if not args.to or d.startswith(args.to)]

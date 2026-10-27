@@ -177,7 +177,8 @@ class UploadsTest(unittest.TestCase):
     def test_strava_refresh_upload_and_poll(self):
         self.set_up_strava(expires_at=0)
         account = strava.StravaAccount(str(self.strava_file))
-        result = account.upload(b"FITDATA", "smartrowbridge-x", "Morning Row", "summary", poll_s=0.01)
+        result = account.upload(b"FITDATA", "smartrowbridge-x", "Morning Row", "summary", poll_s=0.01,
+                                data_type="fit")
         self.assertEqual(result, {"activity_id": 31337})
         token = self.fake.posts("/oauth/token")[0]
         self.assertIn(b"grant_type=refresh_token", token[3])
@@ -193,7 +194,7 @@ class UploadsTest(unittest.TestCase):
                       b'name="external_id"\r\n\r\nsmartrowbridge-x', b'name="description"\r\n\r\nsummary'):
             self.assertIn(field, upload[3])
         # A still-valid token is not refreshed again.
-        account.upload(b"FITDATA", "smartrowbridge-y", "Morning Row", "summary", poll_s=0.01)
+        account.upload(b"FITDATA", "smartrowbridge-y", "Morning Row", "summary", poll_s=0.01, data_type="fit")
         self.assertEqual(len(self.fake.posts("/oauth/token")), 1)
 
     def test_strava_other_sport_type_set_afterwards(self):
@@ -202,6 +203,15 @@ class UploadsTest(unittest.TestCase):
         put = [r for r in self.fake.requests if r[0] == "PUT"]
         self.assertEqual(put[0][1], "/api/v3/activities/31337")
         self.assertEqual(json.loads(put[0][3]), {"sport_type": "VirtualRow"})
+
+    def test_strava_tcx_gets_its_type_set(self):
+        self.set_up_strava(expires_at=int(time.time()) + 9999)
+        strava.StravaAccount(str(self.strava_file)).upload(b"<x/>", "e", "n", "d", poll_s=0.01)
+        upload = self.fake.posts("/api/v3/uploads")[0]
+        self.assertIn(b'name="data_type"\r\n\r\ntcx', upload[3])
+        self.assertIn(b'filename="e.tcx"', upload[3])
+        put = [r for r in self.fake.requests if r[0] == "PUT"]
+        self.assertEqual(json.loads(put[0][3]), {"sport_type": "Rowing"})
 
     def test_strava_duplicate_counts_as_done(self):
         self.set_up_strava(expires_at=int(time.time()) + 9999)
@@ -405,6 +415,25 @@ class FitFileTest(unittest.TestCase):
         self.assertLess(found["record"][0]["distance"], 50)
         self.assertAlmostEqual(found["record"][-1]["distance"], found["session"][0]["total_distance"], delta=0.01)
         self.assertAlmostEqual(found["session"][0]["total_distance"], base[-1], delta=base[1] - base[0] + 1)
+
+    def test_tcx_for_strava(self):
+        import xml.etree.ElementTree as ET
+        from smartrow_bridge import tcxfile
+        r = saturday()
+        record = sessions.build_record(r.coach, 1_800_000_000.0, 1_800_001_000.0, True, 0, 1000)
+        strokes = [dict(zip(sessions.STROKE_COLUMNS, row)) for row in sessions.stroke_rows(r.coach)]
+        root = ET.fromstring(tcxfile.build(record, strokes))
+        ns = {"t": tcxfile.NS, "x": tcxfile.TPX}
+        self.assertIsNone(root.find(".//t:Creator", ns))  # no device: Strava names the uploading app
+        self.assertEqual(root.find(".//t:Activity", ns).get("Sport"), "Other")
+        points = root.findall(".//t:Trackpoint", ns)
+        self.assertEqual(len(points), len(strokes))
+        self.assertEqual(points[100].find(".//x:Watts", ns).text, str(round(strokes[100]["power_w"])))
+        laps = root.findall(".//t:Lap", ns)
+        self.assertEqual(len(laps), 2 * len(record["intervals"]) + 1)
+        total = sum(int(lap.find("t:DistanceMeters", ns).text) for lap in laps)
+        self.assertEqual(total, int(points[-1].find("t:DistanceMeters", ns).text))
+        self.assertEqual(laps[0].get("StartTime"), "2027-01-15T08:00:00Z")
 
     def test_no_strokes(self):
         with self.assertRaises(ValueError):
