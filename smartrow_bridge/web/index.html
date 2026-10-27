@@ -133,6 +133,15 @@
   .card .flag { color: var(--amber); font-weight: 700; font-size: var(--label); }
   .hint { color: var(--dim); font-size: var(--label); }
   button.accent { border-color: var(--green); color: var(--green); }
+  #progress { overflow-y: auto; }
+  .charts { display: grid; gap: var(--pad); grid-template-columns: repeat(auto-fit, minmax(20em, 1fr)); }
+  .chart canvas { width: 100%; height: 190px; display: block; }
+  .chart .legend { color: var(--dim); font-size: var(--label); margin-top: 4px; }
+  .chart .legend b { font-weight: 700; }
+  .plist .row { display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; align-items: baseline;
+    padding: 10px 4px; border-bottom: 1px solid var(--faint); cursor: pointer; font-size: clamp(14px, 2.4vmin, 20px); }
+  .plist .row:last-child { border-bottom: none; }
+  .plist .row .d { color: var(--dim); font-size: var(--label); }
 
   #pipVideo { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; bottom: 0; right: 0; }
 </style>
@@ -193,12 +202,30 @@
         <button id="back">‹ Live</button>
         <select id="sessPick" aria-label="Session"></select>
         <button id="share">Share</button>
+        <button id="toProgress">Progress</button>
       </div>
       <div><div class="sesstitle" id="ssTitle"></div><div class="sesssub" id="ssSub"></div></div>
       <div class="stats" id="ssStats"></div>
       <div class="tile"><div class="label">WHAT THE COACH SAW</div><ul class="findings" id="ssFindings"></ul></div>
       <div class="cards" id="ssCards"></div>
       <div class="hint" id="ssHint"></div>
+    </section>
+
+    <section id="progress">
+      <div class="sessbar">
+        <button id="pBack">‹ Live</button>
+        <select id="pRange" aria-label="Period">
+          <option value="4">Last 4 weeks</option>
+          <option value="12" selected>Last 12 weeks</option>
+          <option value="26">Last 6 months</option>
+          <option value="">All sessions</option>
+        </select>
+        <button id="toSessions">Sessions</button>
+      </div>
+      <div class="sesstitle">Progress</div>
+      <div class="tile"><div class="label">OVER THIS PERIOD</div><ul class="findings" id="pFindings"></ul></div>
+      <div class="charts" id="pCharts"></div>
+      <div class="tile plist"><div class="label">SESSIONS · tap one for its summary</div><div id="pList"></div></div>
     </section>
   </main>
   <aside id="history"></aside>
@@ -554,6 +581,135 @@ $("back").addEventListener("click", closeSessionView);
 $("sessPick").addEventListener("change", (e) => openSessionView(e.target.value));
 loadSessions();
 setInterval(loadSessions, 30000);
+
+// ------------------------------------------------------------------ progress over weeks
+
+let progressData = null;
+
+async function openProgressView() {
+  const weeks = $("pRange").value;
+  try {
+    const r = await fetch(`/progress.json${weeks ? `?weeks=${weeks}` : ""}`, { cache: "no-store" });
+    if (!r.ok) return;
+    progressData = await r.json();
+  } catch (e) { return; }
+  reviewing = true;
+  $("layout").classList.add("reviewing");
+  $("close").hidden = true;
+  show("progress");
+  renderProgress(progressData);
+}
+
+const shortDate = (epoch) => { const d = new Date(epoch * 1000); return `${d.getDate()} ${MONTHS[d.getMonth()]}`; };
+
+// A small chart: dated points (or weekly bars), optional green band and zero line.
+function drawChart(canvas, { xs, series, bars = false, band = null, zero = null, fmt = (v) => `${v}` }) {
+  const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!w || !h) return;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  const g = canvas.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  const all = series.flatMap((s) => s.values).filter((v) => v !== null && v !== undefined);
+  if (!all.length || !xs.length) {
+    g.fillStyle = C.dim; g.font = "14px system-ui, sans-serif"; g.textAlign = "center";
+    g.fillText("No data yet", w / 2, h / 2); return;
+  }
+  let lo = Math.min(...all, ...(band || []), zero ?? Infinity, bars ? 0 : Infinity);
+  let hi = Math.max(...all, ...(band || []), zero ?? -Infinity);
+  if (hi === lo) { hi += 1; lo -= 1; }
+  // Round the scale to tidy steps (1, 2, 2.5 or 5 times a power of ten), three steps tall.
+  const raw = (hi - lo) / 3, mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((f) => f * mag).find((v) => v >= raw);
+  lo = Math.floor(lo / step) * step; hi = lo + 3 * step;
+  while (hi < Math.max(...all)) hi += step;
+  const ticks = Math.round((hi - lo) / step);
+  const L = 46, R = 10, T = 10, B = 24, x0 = L, x1 = w - R, y0 = T, y1 = h - B;
+  const Y = (v) => y1 - (v - lo) / (hi - lo) * (y1 - y0);
+  const n = xs.length, t0 = Math.min(...xs), t1 = Math.max(...xs);
+  const X = bars ? (i) => x0 + (i + 0.5) * (x1 - x0) / n
+                 : (i) => n === 1 || t1 === t0 ? (x0 + x1) / 2 : x0 + (xs[i] - t0) / (t1 - t0) * (x1 - x0);
+  g.font = "12px system-ui, sans-serif"; g.textBaseline = "middle";
+  if (band) {
+    g.fillStyle = C.green; g.globalAlpha = 0.12;
+    g.fillRect(x0, Y(band[1]), x1 - x0, Y(band[0]) - Y(band[1])); g.globalAlpha = 1;
+  }
+  for (let k = 0; k <= ticks; k++) {  // grid and y labels
+    const v = lo + step * k, y = Y(v);
+    g.strokeStyle = C.faint; g.lineWidth = 1; g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke();
+    g.fillStyle = C.dim; g.textAlign = "right"; g.fillText(fmt(Math.round(v * 100) / 100), x0 - 6, y);
+  }
+  if (zero !== null) {
+    g.strokeStyle = C.dim; g.lineWidth = 1.5; g.beginPath(); g.moveTo(x0, Y(zero)); g.lineTo(x1, Y(zero)); g.stroke();
+  }
+  const labelEvery = Math.max(1, Math.ceil(n / 5));  // x labels
+  g.fillStyle = C.dim; g.textAlign = "center"; g.textBaseline = "alphabetic";
+  for (let i = 0; i < n; i += labelEvery) {
+    const label = shortDate(xs[i]), half = g.measureText(label).width / 2 + 2;
+    g.fillText(label, Math.min(Math.max(X(i), x0 + half), w - half), h - 6);  // keep labels inside
+  }
+  for (const s of series) {
+    const pts = s.values.map((v, i) => v === null || v === undefined ? null : [X(i), Y(v), v]);
+    if (bars) {
+      const bw = Math.max(4, (x1 - x0) / n * 0.6);
+      g.fillStyle = s.colour;
+      for (const p of pts) if (p) g.fillRect(p[0] - bw / 2, p[1], bw, Y(Math.max(lo, 0)) - p[1]);
+      continue;
+    }
+    if (s.line) {
+      g.strokeStyle = s.colour; g.lineWidth = 2.5; g.beginPath();
+      let started = false;
+      for (const p of pts) { if (!p) continue; started ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]); started = true; }
+      g.stroke();
+    }
+    for (const p of pts) {
+      if (!p) continue;
+      const colour = s.colourOf ? s.colourOf(p[2]) : s.colour;
+      g.beginPath(); g.arc(p[0], p[1], s.hollow ? 4.5 : 5, 0, Math.PI * 2);
+      if (s.hollow) { g.strokeStyle = colour; g.lineWidth = 2; g.stroke(); } else { g.fillStyle = colour; g.fill(); }
+    }
+  }
+}
+
+function renderProgress(d) {
+  $("pFindings").innerHTML = (d.findings || []).map((f) => `<li>${f}</li>`).join("");
+  const ss = d.sessions || [], xs = ss.map((p) => p.started_at);
+  const hasHr = ss.some((p) => p.watts_per_beat);
+  const charts = [
+    { id: "cWeek", title: "DISTANCE PER WEEK", legend: "km rowed each week",
+      opts: { xs: (d.by_week || []).map((w) => new Date(`${w.week}T12:00:00`).getTime() / 1000), bars: true,
+              series: [{ values: (d.by_week || []).map((w) => Math.round(w.distance_m / 100) / 10), colour: C.green }],
+              fmt: (v) => `${v}` } },
+    { id: "cPower", title: "POWER", legend: `<b style="color:${C.green}">line</b>: steady · <b>dots</b>: intervals (W)`,
+      opts: { xs, series: [{ values: ss.map((p) => p.steady_power_w), colour: C.green, line: true },
+                           { values: ss.map((p) => p.interval_power_w), colour: C.fg }], fmt: (v) => `${Math.round(v)}` } },
+    { id: "cFinish", title: "FINISH IN INTERVALS vs STEADY",
+      legend: "<b>filled</b>: efforts of 1:30 or more · <b>rings</b>: shorter · green band: within 5%",
+      opts: { xs, band: [-5, 5], zero: 0, fmt: (v) => signed(Math.round(v), "%"),
+              series: [{ values: ss.map((p) => p.finish_long), colourOf: finishColour },
+                       { values: ss.map((p) => p.finish_short), colourOf: finishColour, hollow: true }] } },
+  ];
+  if (hasHr) charts.push({ id: "cBeat", title: "WATTS PER HEARTBEAT (steady)",
+    legend: "higher = more power for the same heart rate (aerobic fitness)",
+    opts: { xs, series: [{ values: ss.map((p) => p.watts_per_beat), colour: C.green, line: true }], fmt: (v) => v.toFixed(2) } });
+  $("pCharts").innerHTML = charts.map((c) =>
+    `<div class="tile chart"><div class="label">${c.title}</div><canvas id="${c.id}"></canvas><div class="legend">${c.legend}</div></div>`).join("");
+  for (const c of charts) drawChart($(c.id), c.opts);
+  $("pList").innerHTML = ss.slice().reverse().map((p) =>
+    `<div class="row" data-id="${p.id}"><span>${fmtWhen(p.started_at)}<div class="d">${fmtTime(p.rowing_s)} · ${p.intervals} interval${p.intervals === 1 ? "" : "s"}</div></span>
+      <span>${fmtKm(p.distance_m)}</span><span>${p.steady_power_w} W</span>
+      <span style="color:${p.finish_long !== null ? finishColour(p.finish_long) : C.dim}">${p.finish_long !== null ? signed(p.finish_long, "%") : "–"}</span></div>`
+  ).join("") || `<div class="hint">No sessions in this period.</div>`;
+}
+
+$("toProgress").addEventListener("click", openProgressView);
+$("pRange").addEventListener("change", openProgressView);
+$("pBack").addEventListener("click", closeSessionView);
+$("toSessions").addEventListener("click", () => openSessionView());
+$("pList").addEventListener("click", (e) => {
+  const row = e.target.closest(".row");
+  if (row) openSessionView(row.dataset.id);
+});
 
 // ------------------------------------------------------------------ share the summary as an image
 

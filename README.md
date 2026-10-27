@@ -213,7 +213,9 @@ Common problems:
 | `smartrow_bridge/adapters.py` | Picks the two radios, clears rfkill, hands the dongle to Bumble |
 | `smartrow_bridge/addresses.py`, `advertising.py`, `session_log.py`, `config.py` | Virtual device addresses, advertising payloads, session record, settings |
 | `smartrow_bridge/status.py`, `smartrow_bridge/display/`, `smartrow_bridge/web/` | Status file; the optional screen and web page, separate services that only read it |
-| `smartrow_bridge/sessions.py` | Saves each session's summary for the web page |
+| `smartrow_bridge/sessions.py` | Saves each session's summary for the web page; progress over weeks |
+| `smartrow_bridge/heartrate.py` | Optional heart rate strap, on the pulley's radio |
+| `smartrow_bridge/intervals.py` | Optional notes on the intervals.icu calendar |
 | `tools/coach_replay.py` | Runs SmartRow app CSV exports through the coach (and can save their summaries) |
 
 - **Pass-through.** Every pulley notification is forwarded to the clone first, unchanged and in order; parsing
@@ -408,10 +410,30 @@ it where the browser has no share sheet.
 
 <img src="docs/images/session-summary.png" alt="Shared session summary: totals, what the coach saw, and each interval's force curve against steady" width="360">
 
-Heart rate isn't in it: the strap pairs with the SmartRow app or the fitness app, never with the pulley, so
-the bridge doesn't see it. For a fuller analysis with heart rate, use the SmartRow app's CSV export (it has
-heart rate and every stroke's force curve). A session rowed before the coach was on can be added from its CSV:
-`sudo python3 tools/coach_replay.py --save /var/lib/smartrow-bridge/sessions SESSION.csv`.
+With a [heart rate strap connected to the bridge](#optional-heart-rate-strap) the summary also has heart rate:
+average and maximum, each interval's peak and how far it dropped in the minute after, and the drift of heart
+rate against power through the steady rowing (more beats for the same watts later in the session: fatigue,
+heat or not enough fuel). A session rowed before the coach was on can be added from its SmartRow CSV export,
+heart rate included: `sudo python3 tools/coach_replay.py --save /var/lib/smartrow-bridge/sessions SESSION.csv`.
+
+**Progress.** From the summary, **Progress** shows the saved sessions over the last 4 or 12 weeks, 6 months or
+all of them, with a few sentences on what changed: distance per week, steady and interval power, the finish
+in intervals (efforts of 1:30 or more apart from shorter ones; within 5% of steady is the aim) and, with a
+strap, **watts per heartbeat** at steady pace, which rises as aerobic fitness does. Tap a session for its
+summary. The newest 500 sessions are kept.
+
+**On your intervals.icu calendar.** Optionally, each finished session's summary goes on that day of your
+[intervals.icu](https://intervals.icu) calendar as a note (its numbers, what the coach saw, each interval):
+
+```bash
+sudo bash ~/smartrow-bridge/tools/setup_intervals.sh      # asks for your API key (Settings, Developer settings)
+```
+
+The key is kept in `/etc/smartrow-bridge/intervals.key`, readable by root only. Notes for sessions finished
+while the Pi was offline follow once it is back (up to a week); a session that resumes after a break updates
+its note rather than adding another. It is a calendar note rather than text on the activity itself because
+activities that reach intervals.icu from Strava can't be changed through its API (Strava's terms), whatever the
+intervals.icu plan. `--undo` deletes the key and stops it.
 
 **Where it works, and where it doesn't yet.** It was calibrated on one rower's sessions: steady rowing at
 about 21 spm with harder efforts of 1 to 3 minutes at the same rate. In that pattern it found every effort,
@@ -436,6 +458,8 @@ yet been seen on one.
 | `SRB_COACH_MAX_MIN` | `5` | Longest effort, in minutes, to count as an interval; longer is a new steady pace |
 | `SRB_COACH_SENSITIVITY` | `normal` | How readily the cues speak up: `low`, `normal` or `high` |
 | `SRB_SESSION_DIR` | `/var/lib/smartrow-bridge/sessions` | Where session summaries are saved; `off` disables |
+| `SRB_HEART_RATE`, `SRB_HEART_RATE_TO_FITNESS` | `off`, `1` | [Heart rate strap](#optional-heart-rate-strap) read by the bridge, and whether it goes to the fitness app |
+| `SRB_INTERVALS_KEY_FILE` | `/etc/smartrow-bridge/intervals.key` | intervals.icu API key (set by `tools/setup_intervals.sh`) |
 
 **Try it on your own rowing first.** Export a session from the SmartRow app as CSV and run it through the
 coach on any computer with Python 3.10 or later (nothing to install):
@@ -448,11 +472,25 @@ python3 tools/coach_replay.py --start-pct 12 --sensitivity high *.csv    # try s
 It prints the intervals it finds, each interval's summary line, and how much of each interval each cue was
 showing, so you can see what it would have told you, and pick settings, before relying on it.
 
+## Optional: heart rate strap
+
+The bridge can read a Bluetooth heart rate strap itself, on the same radio as the pulley: for the coach's
+session summaries and progress (above), on the screen and web page, and passed on to the fitness app with
+the rowing data. Straps that take several connections at once can stay paired with a watch or app as well
+(the COROS heart rate monitor takes three).
+
+In `/etc/default/smartrow-bridge`, set `SRB_HEART_RATE` to `auto` (the first strap found advertising heart
+rate), part of the strap's name (`COROS`), or its MAC address (best where other people's straps are in range),
+then `sudo systemctl restart smartrow-bridge`. The strap is looked for once the pulley is connected, in short
+scans that leave the radio to the pulley in between; put it on (and wet it) to wake it. `SRB_HEART_RATE_TO_FITNESS=0`
+keeps it out of the fitness app's data, if the app is paired with the strap directly. `tools/health_check.sh`
+has a *Heart rate strap* section.
+
 ## Optional: a web page for phones and tablets
 
 The screen's information, larger, on any phone or tablet on the same Wi-Fi as the Pi: live watts, pace and
 strokes per minute; with the coach on, the finish meter, the cue, the live force curve, each interval's
-summary, a list of this session's intervals, and afterwards the session summary to look back on or share.
+summary, a list of this session's intervals, and afterwards the session summary and progress over weeks.
 Put it next to the SmartRow app in split screen on an Android tablet, or on a phone on the rower.
 
 1. Update the bridge, then set the page up:

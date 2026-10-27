@@ -147,3 +147,64 @@ class RecorderTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProgressTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.now = 1_800_000_000.0
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def add(self, days_ago, steady_w, per_beat=None, finish_long=None, complete=True, rowing_s=1800):
+        r = saturday()
+        started = self.now - days_ago * 86400
+        record = sessions.build_record(r.coach, started, started + rowing_s, complete, 6000, rowing_s)
+        record.update(steady_power_w=steady_w, rowing_s=rowing_s)
+        if per_beat is not None:
+            record["heart_rate"] = {"avg": 120, "max": 150, "watts_per_beat": per_beat, "drift_pct": 2.0}
+        if finish_long is not None:
+            for i in record["intervals"]:
+                if i["duration_s"] >= sessions.LONG_EFFORT_S:
+                    i["finish_pct"] = finish_long
+        sessions.save(self.dir, record)
+
+    def test_trends_and_weeks(self):
+        self.add(40, 95, 0.82, -16)
+        self.add(30, 98, 0.85, -14)
+        self.add(20, 102, 0.88, -10)
+        self.add(10, 106, 0.90, -7)
+        self.add(3, 110, 0.93, -4)
+        self.add(1, 110, complete=False)  # still being rowed: left out
+        self.add(2, 110, rowing_s=120)  # two minutes: left out
+        p = sessions.progress(str(self.dir), weeks=12, now=self.now)
+        self.assertEqual(len(p["sessions"]), 5)
+        self.assertEqual(sum(w["sessions"] for w in p["by_week"]), 5)
+        text = " ".join(p["findings"])
+        self.assertIn("5 sessions and 30 km in the last 12 weeks", text)
+        self.assertIn("(0.9 a week)", text)  # over the ~5.7 weeks since the first, not 12
+        self.assertIn("Steady power went from about 95 W to 110 W (+16%)", text)
+        self.assertIn("Watts per heartbeat at steady pace rose from 0.82 to 0.93", text)
+        self.assertIn("Finish in longer efforts improved from −16% to −4%", text)
+        self.assertNotIn("-", text.replace("−", "").replace("1:30", ""))
+        recent = sessions.progress(str(self.dir), weeks=2, now=self.now)
+        self.assertEqual(len(recent["sessions"]), 2)  # 10 and 3 days ago
+
+    def test_one_session_and_none(self):
+        self.assertEqual(sessions.progress(str(self.dir), weeks=4, now=self.now)["findings"],
+                         ["No saved sessions in this period yet."])
+        self.add(3, 110, finish_long=-15)
+        p = sessions.progress(str(self.dir), weeks=4, now=self.now)
+        self.assertEqual(len(p["findings"]), 1)  # nothing to compare yet
+        point = p["sessions"][0]
+        self.assertEqual(point["finish_long"], -15)
+        self.assertEqual(point["intervals"], 4)
+
+    def test_fatigue_reading(self):
+        self.add(10, 110, 0.95)
+        self.add(3, 110, 0.85)
+        text = " ".join(sessions.progress(str(self.dir), weeks=4, now=self.now)["findings"])
+        self.assertIn("fell from 0.95 to 0.85", text)
+        self.assertIn("Steady power held at about 110 W", text)

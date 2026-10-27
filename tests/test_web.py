@@ -74,6 +74,12 @@ class WebTest(unittest.TestCase):
         self.assertEqual(record["intervals"][0]["power_w"], 152)
         self.assertEqual(len(record["intervals"][0]["curve"]), 24)
         self.assertTrue(record["findings"])
+        _, _, body = self.get("/progress.json?weeks=520")
+        progress = json.loads(body)
+        self.assertEqual(progress["weeks"], 520)
+        self.assertEqual(len(progress["sessions"]), 0)  # under 5 minutes: not a progress point
+        _, _, body = self.get("/progress.json?weeks=abc")
+        self.assertIsNone(json.loads(body)["weeks"])  # odd values: all sessions
         for bad in ("/session/2026-01-01T0000.json", "/session/..%2Fstatus.json", "/session/x.json"):
             with self.assertRaises(urllib.error.HTTPError) as err:
                 self.get(bad)

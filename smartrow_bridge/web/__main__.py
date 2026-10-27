@@ -7,8 +7,9 @@ Like the screen, it only reads the bridge's status file, so the bridge runs the 
 with or without it. It serves, read-only: the page (index.html, next to this file),
 its app manifest, icons and service worker; /status.json, the bridge's status file
 plus its age in seconds as the Pi sees it (so a tablet whose clock differs from the
-Pi's can still tell when the bridge has stopped); and the saved session summaries,
-/sessions.json (the list) and /session/<id>.json (one). Standard library only.
+Pi's can still tell when the bridge has stopped); the saved session summaries,
+/sessions.json (the list) and /session/<id>.json (one); and /progress.json?weeks=N,
+their trends. Standard library only.
 """
 
 from __future__ import annotations
@@ -83,6 +84,12 @@ def make_handler(path: str, session_dir: str = sessions.DEFAULT_DIR):
                 self._send(HTTPStatus.OK, PAGE.read_bytes(), "text/html; charset=utf-8")
             elif route == "/status.json":
                 self._send(HTTPStatus.OK, json.dumps(status_payload(path)).encode(), "application/json")
+            elif route == "/progress.json":
+                query = self.path.split("?", 1)[1] if "?" in self.path else ""
+                weeks = dict(kv.split("=", 1) for kv in query.split("&") if "=" in kv).get("weeks", "")
+                weeks = int(weeks) if weeks.isdigit() and 0 < int(weeks) <= 520 else None
+                self._send(HTTPStatus.OK, json.dumps(sessions.progress(session_dir, weeks)).encode(),
+                           "application/json")
             elif route == "/sessions.json":
                 self._send(HTTPStatus.OK, json.dumps(sessions.list_sessions(session_dir)).encode(),
                            "application/json")
