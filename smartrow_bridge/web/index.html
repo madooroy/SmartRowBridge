@@ -7,6 +7,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <title>Row Coach</title>
 <style>
   /* Same palette as the Display HAT Mini screens (smartrow_bridge/display/screens.py). */
@@ -33,6 +35,7 @@
   header .dot.ok { background: var(--green); } header .dot.warn { background: var(--amber); }
   header .dot.bad { background: var(--red); }
   header #where { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  header #awake { color: var(--dim); white-space: nowrap; }
 
   #layout { flex: 1; display: grid; gap: var(--pad); min-height: 0; grid-template-columns: 1fr; }
   @media (min-width: 900px) and (min-aspect-ratio: 4/3) {
@@ -49,7 +52,8 @@
   /* Rowing */
   .grid4 { flex: 1; display: grid; gap: var(--pad); grid-template-columns: 1fr 1fr; }
   .grid4 .tile { display: flex; flex-direction: column; justify-content: space-between; }
-  .grid4 .value { font-size: var(--big); text-align: center; }
+  .grid4 .value { font-size: var(--big); text-align: center; flex: 1; display: flex;
+    align-items: center; justify-content: center; }
   .grid4 .value.idle { color: var(--faint); }
   .footer { text-align: center; font-size: calc(var(--label) * 1.2); }
   .footer.idle { color: var(--dim); }
@@ -111,6 +115,7 @@
 <header>
   <span class="dot" id="dot"></span>
   <span id="where">Connecting…</span>
+  <span id="awake" hidden title="This page is keeping the screen on">screen stays on</span>
   <button id="close" hidden>Close</button>
   <button id="float" hidden title="Keep the coach in a floating window over other apps">Float</button>
 </header>
@@ -454,6 +459,27 @@ if (pipSupported) {
 }
 // A still canvas can stall the stream: redraw a little more often than the data changes.
 setInterval(drawPip, 500);
+
+// ------------------------------------------------------------------ app install and screen awake
+// Both need a secure context: https, or (on a home network) Chrome's
+// "Insecure origins treated as secure" flag listing this page's address. Over plain
+// http without the flag they are simply left out.
+
+if (window.isSecureContext && "serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+
+let wakeLock = null;
+async function keepAwake() {
+  if (!("wakeLock" in navigator) || document.visibilityState !== "visible" || wakeLock) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    $("awake").hidden = false;
+    wakeLock.addEventListener("release", () => { wakeLock = null; $("awake").hidden = true; });
+  } catch (e) { /* not allowed here (battery saver, not secure, ...): the screen times out as usual */ }
+}
+document.addEventListener("visibilitychange", keepAwake);  // the lock is dropped whenever the page is hidden
+keepAwake();
 
 poll();
 setInterval(poll, POLL_MS);

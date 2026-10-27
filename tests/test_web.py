@@ -58,6 +58,17 @@ class WebTest(unittest.TestCase):
         _, _, body = self.get("/status.json")
         self.assertEqual(json.loads(body), {"stage": None, "age_s": None})
 
+    def test_app_files(self):
+        code, headers, body = self.get("/sw.js")
+        self.assertEqual((code, headers["Content-Type"]), (200, "text/javascript; charset=utf-8"))
+        self.assertIn(b"fetch(event.request)", body)
+        _, _, body = self.get("/manifest.webmanifest")
+        icons = json.loads(body)["icons"]
+        self.assertEqual({i["sizes"] for i in icons}, {"192x192", "512x512"})
+        for icon in icons:
+            code, headers, png = self.get(icon["src"])
+            self.assertEqual((code, headers["Content-Type"], png[:4]), (200, "image/png", b"\x89PNG"))
+
     def test_manifest_head_and_unknown(self):
         code, headers, _ = self.get("/manifest.webmanifest")
         self.assertEqual((code, headers["Content-Type"]), (200, "application/manifest+json"))

@@ -445,8 +445,16 @@ tablet, or on a phone on the rower.
    ```
 
 2. Open the address it prints, `http://<pi name>.local:8080`, or the IP address version if that doesn't
-   load (Android does not always find `.local` names). The status screen shows both. On Android, Chrome's
-   *Add to Home screen* opens it full-screen without the browser bar.
+   load (Android does not always find `.local` names). The status screen shows both.
+
+**As an app, with the screen kept on (Chrome on Android).** Over plain `http://` on a home network, Chrome
+won't install the page as an app or let it keep the screen awake. To allow both on your own tablet, open
+`chrome://flags/#unsafely-treat-insecure-origin-as-secure`, type the page's addresses into the box,
+comma-separated (for example `http://raspberrypi.local:8080,http://192.168.1.23:8080`, using the address you
+actually open), set it to **Enabled** and tap **Relaunch**. The page then shows *screen stays on* at the top
+while it holds the screen awake, and Chrome's menu offers to install it (*Install app* or *Add to home
+screen*), after which it opens in its own window without the address bar. Chrome updates can reset flags
+now and then.
 
 **Float** (shown where the browser supports it) puts a compact version in a floating Picture-in-Picture window,
 which stays on top of other apps, Peloton included. Whether it keeps updating while another app is in front

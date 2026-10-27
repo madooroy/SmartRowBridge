@@ -4,10 +4,10 @@
     python -m smartrow_bridge.web --port 9000
 
 Like the screen, it only reads the bridge's status file, so the bridge runs the same
-with or without it. It serves two things, read-only: the page (index.html, next to
-this file) and /status.json, the bridge's status file plus its age in seconds as the
-Pi sees it (so a tablet whose clock differs from the Pi's can still tell when the
-bridge has stopped). Standard library only.
+with or without it. It serves, read-only: the page (index.html, next to this file),
+its app manifest, icons and service worker, and /status.json, the bridge's status
+file plus its age in seconds as the Pi sees it (so a tablet whose clock differs from
+the Pi's can still tell when the bridge has stopped). Standard library only.
 """
 
 from __future__ import annotations
@@ -25,7 +25,14 @@ from .. import status as status_file
 
 log = logging.getLogger("smartrow_bridge.web")
 
-PAGE = Path(__file__).with_name("index.html")
+HERE = Path(__file__).parent
+PAGE = HERE / "index.html"
+# Fixed files next to the page: route -> (file, content type). Nothing else is ever served.
+FILES = {
+    "/sw.js": ("sw.js", "text/javascript; charset=utf-8"),
+    "/icon-192.png": ("icon-192.png", "image/png"),
+    "/icon-512.png": ("icon-512.png", "image/png"),
+}
 MANIFEST = {
     "name": "SmartRow coach",
     "short_name": "Row coach",
@@ -33,6 +40,11 @@ MANIFEST = {
     "background_color": "#000000",
     "theme_color": "#000000",
     "start_url": "/",
+    "scope": "/",
+    "icons": [
+        {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+        {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    ],
 }
 
 
@@ -69,6 +81,9 @@ def make_handler(path: str):
                 self._send(HTTPStatus.OK, PAGE.read_bytes(), "text/html; charset=utf-8")
             elif route == "/status.json":
                 self._send(HTTPStatus.OK, json.dumps(status_payload(path)).encode(), "application/json")
+            elif route in FILES:
+                name, content_type = FILES[route]
+                self._send(HTTPStatus.OK, (HERE / name).read_bytes(), content_type)
             elif route == "/manifest.webmanifest":
                 self._send(HTTPStatus.OK, json.dumps(MANIFEST).encode(), "application/manifest+json")
             else:
