@@ -577,7 +577,7 @@ function shareImage(s) {
   const tile = (x, y, w, h) => { g.fillStyle = C.tile; g.beginPath(); g.roundRect(x, y, w, h, 18); g.fill(); };
 
   let y = P + 40;
-  text("ROWING SESSION", P, y, 26, C.dim, true);
+  text("SESSION SUMMARY", P, y, 26, C.dim, true);
   y += 62; text(fmtWhen(s.started_at), P, y, 52, C.fg, true);
   y += 50; text(`${fmtTime(s.rowing_s)} · ${fmtKm(s.distance_m)} · ${s.avg_power_w} W average · ${s.strokes} strokes`,
                 P, y, 30, C.dim);
