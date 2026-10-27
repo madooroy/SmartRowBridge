@@ -254,6 +254,7 @@ class IntervalCoach:
         self.strokes_total = 0
         self.power_total = 0.0
         self.length_total = 0.0
+        self.trace: list[tuple[float, int, float]] = []  # (time, heart rate, power) per stroke
 
     # ------------------------------------------------------------ reference
 
@@ -289,6 +290,7 @@ class IntervalCoach:
         self.strokes_total += 1
         self.power_total += stroke_power(s)
         self.length_total += s.stroke_length_cm
+        self.trace.append((s.time, s.heart_rate_bpm, stroke_power(s)))
         self.recent.append(s)
         smoothed = statistics.median(stroke_power(r) for r in self.recent)
 
@@ -408,6 +410,10 @@ class IntervalCoach:
         """The whole session so far: totals, steady reference, every interval, and findings."""
         intervals = [i.as_dict() for i in self.intervals]
         n = self.strokes_total
+        hr = heart_rate_summary(self.trace, self.intervals, self.steady_power())
+        if hr:
+            for d, h in zip(intervals, hr.pop("intervals")):
+                d.update(h)
         return {
             "strokes": n,
             "rowing_s": round((self.last_time or 0) - (self.first_time or 0)),
@@ -419,7 +425,8 @@ class IntervalCoach:
             "settings": {"start_pct": self.settings.start_pct, "max_effort_min": self.settings.max_effort_s / 60,
                          "sensitivity": self.settings.sensitivity},
             "intervals": intervals,
-            "findings": findings(intervals),
+            "heart_rate": hr,
+            "findings": findings(intervals) + heart_rate_findings(hr, intervals),
         }
 
     # ------------------------------------------------------------ status
@@ -525,4 +532,89 @@ def findings(intervals: list[dict]) -> list[str]:
             out.append(f"Steady pace held at about {round(sum(steady) / len(steady))} W between efforts.")
         else:
             out.append(f"Steady pace went from {steady[0]} W to {steady[-1]} W over the session.")
+    return out
+
+
+# ---------------------------------------------------------------- heart rate (optional)
+
+HR_PEAK_AFTER_S = 30.0  # heart rate peaks a little after an effort ends
+HR_RECOVERY_S = 60.0  # recovery: the drop this long after the peak
+HR_MIN_COVERAGE = 0.5  # share of strokes with a reading before heart rate is reported
+DRIFT_MIN_POINTS = 40  # steady strokes needed in each half for the drift
+DRIFT_SKIP_S = 600.0  # heart rate is still climbing during the warm-up: left out of the drift
+
+
+def heart_rate_summary(trace: list[tuple[float, int, float]], intervals: list[IntervalSummary],
+                       steady_power: float) -> dict | None:
+    """Heart rate for the session and each interval, or None without a strap (or too few readings).
+
+    Per interval: average during it, peak (up to HR_PEAK_AFTER_S after it), and the drop in the
+    minute after the peak (left out if the next interval started first). For the session:
+    average, maximum, and the drift of heart rate against power over the steady rowing
+    (first half against second, after the warm-up; positive = more beats for the same watts later).
+    """
+    readings = [(t, hr, p) for t, hr, p in trace if hr > 0]
+    if not trace or len(readings) < HR_MIN_COVERAGE * len(trace):
+        return None
+    windows = [(i.started_at, i.started_at + i.duration_s) for i in intervals]
+    per_interval = []
+    for k, (t0, t1) in enumerate(windows):
+        during = [hr for t, hr, _ in readings if t0 <= t <= t1]
+        around = [(hr, t) for t, hr, _ in readings if t0 <= t <= t1 + HR_PEAK_AFTER_S]
+        entry: dict = {"hr_avg": round(sum(during) / len(during)) if during else None,
+                       "hr_peak": max(around)[0] if around else None, "hr_recovery": None}
+        if around:
+            peak, t_peak = max(around)
+            next_start = windows[k + 1][0] if k + 1 < len(windows) else float("inf")
+            target = t_peak + HR_RECOVERY_S
+            later = [(abs(t - target), hr) for t, hr, _ in readings if abs(t - target) <= 6]
+            if later and target < next_start:
+                entry["hr_recovery"] = peak - min(later)[1]
+        per_interval.append(entry)
+
+    # Steady rowing only: away from efforts and their recovery, not easy paddling.
+    steady = [(t, hr, p) for t, hr, p in readings
+              if p >= steady_power * EASY_RATIO
+              and not any(t0 - 5 <= t <= t1 + 90 for t0, t1 in windows)]
+    settled = [x for x in steady if x[0] >= trace[0][0] + DRIFT_SKIP_S]
+    drift = None
+    if len(settled) >= 2 * DRIFT_MIN_POINTS:
+        half = len(settled) // 2
+
+        def per_beat(points):
+            return sum(p for _, _, p in points) / sum(hr for _, hr, _ in points)
+
+        first, second = per_beat(settled[:half]), per_beat(settled[half:])
+        drift = round((first - second) / first * 100, 1)
+    hrs = [hr for _, hr, _ in readings]
+    return {
+        "avg": round(sum(hrs) / len(hrs)),
+        "max": max(hrs),
+        "steady_avg": round(sum(hr for _, hr, _ in steady) / len(steady)) if steady else None,
+        "watts_per_beat": round(sum(p for *_, p in steady) / sum(hr for _, hr, _ in steady), 3) if steady else None,
+        "drift_pct": drift,
+        "intervals": per_interval,
+    }
+
+
+def heart_rate_findings(hr: dict | None, intervals: list[dict]) -> list[str]:
+    if not hr:
+        return []
+    out = []
+    peak_in = [i for i in intervals if i.get("hr_peak") == hr["max"]]
+    where = f" (I{peak_in[0]['index']})" if peak_in else ""
+    out.append(f"Heart rate averaged {hr['avg']} bpm and peaked at {hr['max']}{where}.")
+    recoveries = [(i["hr_recovery"], i["index"]) for i in intervals if i.get("hr_recovery") is not None]
+    if recoveries:
+        mean = sum(r for r, _ in recoveries) / len(recoveries)
+        best, k = max(recoveries)
+        out.append(f"After the efforts it dropped {mean:.0f} bpm in the first minute on average "
+                   f"(most: {best} after I{k}).")
+    if hr.get("drift_pct") is not None:
+        d = hr["drift_pct"]
+        if d <= 5:
+            out.append(f"Heart rate stayed in step with power through the steady rowing (drift {_pct(round(d))}).")
+        else:
+            out.append(f"Steady rowing took {d:.0f}% more heartbeats per watt in the second half than the first "
+                       f"(under 5% is typical): fatigue, heat or not enough fuel.")
     return out

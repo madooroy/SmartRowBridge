@@ -233,6 +233,8 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
                   fill=colour, anchor="mm")
 
     footer = f"{format_time(m.get('elapsed_s', 0))}   ·   {m.get('stroke_count', 0)} strokes"
+    if m.get("heart_rate_bpm"):
+        footer = f"{format_time(m.get('elapsed_s', 0))}  ·  {m.get('stroke_count', 0)} strokes  ·  \u2665 {m['heart_rate_bpm']}"
     if not rowing:
         footer += "   ·   paused"
     draw.text((WIDTH // 2, top + 2 * tile_h + gap + 14), footer, font=font(16), fill=FG if rowing else DIM,

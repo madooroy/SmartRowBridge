@@ -64,6 +64,7 @@ class BridgePeripheral:
         pulley: PulleySnapshot,
         on_clone_write: CloneWriteCallback,
         advertise_pulley_id: bool = True,
+        heart_rate: bool = False,
     ) -> None:
         self.transport_spec = transport
         self.clone_address = clone_address
@@ -72,6 +73,7 @@ class BridgePeripheral:
         self.fitness_name = fitness_name
         self.pulley = pulley
         self.on_clone_write = on_clone_write
+        self.heart_rate = heart_rate  # include the bridge's heart rate in FTMS Rower Data
         # The pulley ID the SmartRow app shows as "SmartRow-<id>". Left out only to test
         # whether the app accepts a clone without it (iOS cannot advertise it).
         self.manufacturer_data = pulley.manufacturer_data if advertise_pulley_id else {}
@@ -175,7 +177,7 @@ class BridgePeripheral:
                         UUID.from_16_bits(ftms.FEATURE_UUID_16),
                         Characteristic.Properties.READ,
                         Characteristic.READABLE,
-                        ftms.encode_features(),
+                        ftms.encode_features(self.heart_rate),
                     ),
                     self._rower_data,
                     Characteristic(
@@ -321,6 +323,6 @@ class BridgePeripheral:
                 log.warning("Forwarding to SmartRow app failed: %s", exc)
 
     async def publish_rower_data(self, metrics: RowingMetrics) -> None:
-        await self.device.notify_subscribers(self._rower_data, ftms.encode_rower_data(metrics))
+        await self.device.notify_subscribers(self._rower_data, ftms.encode_rower_data(metrics, self.heart_rate))
         if self._fitness_connections:
             self.ftms_updates_sent += 1

@@ -38,6 +38,14 @@ from smartrow_bridge.protocol import FORCE_SAMPLES, StrokeCurve  # noqa: E402
 CUE_NAMES = {"good": "good", "finish": "FINISH", "legs": "LEGS", "length": "LENGTH", None: "first strokes"}
 
 
+def _number(text: str | None) -> int:
+    """A whole number from a CSV cell; blank or missing (no heart rate strap) is 0."""
+    try:
+        return int(float(text))
+    except (TypeError, ValueError):
+        return 0
+
+
 def strokes_from_csv(path: Path):
     """StrokeCurve per row of a SmartRow app export. Force column #0 is always 0 and skipped."""
     with open(path, newline="", encoding="utf-8-sig") as f:
@@ -50,6 +58,7 @@ def strokes_from_csv(path: Path):
                 stroke_length_cm=int(float(row["Stroke length (cm)"])),
                 work_j=float(row["Work (J)"]),
                 stroke_count=int(float(row["Stroke (#)"])),
+                heart_rate_bpm=_number(row.get("Heart rate (bpm)")),
             )
 
 

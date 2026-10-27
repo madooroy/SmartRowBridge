@@ -45,6 +45,7 @@ def build(
     rowing: bool,
     now: float | None = None,
     coach: dict | None = None,
+    heart_rate: dict | None = None,
 ) -> dict:
     m = asdict(metrics)
     for key in ("last_stroke_time", "stopped"):
@@ -61,6 +62,7 @@ def build(
         "rowing": rowing,
         "metrics": m,
         "coach": coach,  # smartrow_bridge.coach.IntervalCoach.state(), or None when off
+        "heart_rate": heart_rate,  # {"name", "connected"} of the bridge's strap, or None when off
     }
 
 

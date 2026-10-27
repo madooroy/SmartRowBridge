@@ -41,9 +41,14 @@ class Bridge:
                 start_pct=cfg.coach_start_pct, max_effort_s=cfg.coach_max_min * 60,
                 sensitivity=cfg.coach_sensitivity))
             self.parser.on_stroke = self.coach.add
+        self.hr_link = None  # heartrate.HeartRateLink, created once the pulley's adapter is known
         self.recorder: sessions.SessionRecorder | None = None
         if self.coach and cfg.session_dir.lower() != "off":
             self.recorder = sessions.SessionRecorder(cfg.session_dir, self.coach)
+        self.uploader = None
+        if self.recorder is not None:
+            from .intervals import IntervalsUploader
+            self.uploader = IntervalsUploader(cfg.session_dir, cfg.intervals_key_file)
         self.peripheral: BridgePeripheral | None = None
         self.link: PulleyLink | None = None
         self._driver_initialized = False
@@ -84,6 +89,9 @@ class Bridge:
                 log.info("Answering V3 KEYLOCK challenge")
                 self.link.write_uuid(protocol.WRITE_CHAR_UUID, protocol.keylock_response(data), bytewise=True)
         self.parser.feed(data)
+
+    def _on_heart_rate(self, bpm: int) -> None:
+        self.parser.metrics.heart_rate_bpm = bpm
 
     def _on_pulley_connected(self) -> None:
         """Called once notifications are subscribed, so replies to our commands are seen."""
@@ -153,6 +161,8 @@ class Bridge:
             metrics=snap,
             rowing=snap.stroke_rate_spm > 0 or snap.power_w > 0,
             coach=self.coach.state(time.monotonic()) if self.coach else None,
+            heart_rate=({"name": self.hr_link.name, "connected": self.hr_link.connected}
+                        if self.hr_link else None),
         )
 
     async def _status_loop(self) -> None:
@@ -160,6 +170,8 @@ class Bridge:
         path = self.cfg.status_file
         failed = False
         while True:
+            if self.hr_link is not None and not self.hr_link.fresh():
+                self.parser.metrics.heart_rate_bpm = 0  # strap off or out of range: no reading
             try:
                 status.write(path, self._status())
                 failed = False
@@ -172,6 +184,11 @@ class Bridge:
                     self.recorder.update(self.parser.metrics)
                 except Exception:  # noqa: BLE001 - nor may the session summary
                     log.exception("Session summary failed")
+            if self.uploader is not None:
+                try:
+                    self.uploader.tick()
+                except Exception:  # noqa: BLE001 - nor intervals.icu
+                    log.exception("intervals.icu upload failed")
             await asyncio.sleep(STATUS_INTERVAL_S)
 
     async def run(self) -> None:
@@ -214,6 +231,10 @@ class Bridge:
             on_notify=self._on_notify,
         )
         self.link.on_connected = self._on_pulley_connected
+        if self.cfg.heart_rate.lower() not in ("", "off", "0", "no"):
+            from .heartrate import HeartRateLink
+            self.hr_link = HeartRateLink(central_hci, self.cfg.heart_rate, self.link.scan_lock,
+                                         on_reading=self._on_heart_rate)
         self._stage = status.SEARCHING
         snapshot = await self.link.connect_first()
         self._pulley_label = status.pulley_label(snapshot.name, snapshot.manufacturer_data)
@@ -230,12 +251,14 @@ class Bridge:
                 pulley=snapshot,
                 advertise_pulley_id=self.cfg.advertise_pulley_id,
                 on_clone_write=self.link.write,
+                heart_rate=self.hr_link is not None and self.cfg.heart_rate_to_fitness,
             ) as peripheral:
                 self.peripheral = peripheral
                 self._stage = status.CONNECTED
-                await asyncio.gather(
-                    self.link.run(), self._driver_loop(), self._ftms_loop(), self._stats_loop()
-                )
+                tasks = [self.link.run(), self._driver_loop(), self._ftms_loop(), self._stats_loop()]
+                if self.hr_link is not None:
+                    tasks.append(self.hr_link.run())  # only now: the pulley is connected first
+                await asyncio.gather(*tasks)
         finally:
             if self._sniff is not None:
                 self._sniff.close()

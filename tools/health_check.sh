@@ -213,6 +213,24 @@ fi
 if grep -qE '^SRB_COACH=(1|true|yes)' "$ENV_FILE" 2>/dev/null; then
     info "interval coach: on"
 fi
+HR_SETTING=$(sed -n 's/^SRB_HEART_RATE=//p' "$ENV_FILE" 2>/dev/null | tail -n 1)
+if [[ -n $HR_SETTING && $HR_SETTING != off ]]; then
+    section "Heart rate strap ($HR_SETTING)"
+    hr_line=$(journalctl -u smartrow-bridge -b --no-pager 2>/dev/null | grep -E 'Heart rate strap (connected|disconnected)' | tail -n 1)
+    if [[ $hr_line == *connected:* ]]; then
+        ok "${hr_line#*: }"
+    elif [[ -n $hr_line ]]; then
+        warn "strap disconnected - put it on (a dry strap may not be detected)"
+    else
+        warn "strap not connected yet - it is looked for once the pulley is connected; put the strap on"
+    fi
+fi
+if [[ -f /etc/smartrow-bridge/intervals.key ]]; then
+    section "intervals.icu"
+    ok "API key saved (root only)"
+    last=$(grep -E 'intervals.icu note' /var/lib/smartrow-bridge/sessions.log 2>/dev/null | tail -n 1)
+    [[ -n $last ]] && info "last: ${last#* * }"
+fi
 
 section "SD card and system"
 root_dev=$(findmnt -no SOURCE /)

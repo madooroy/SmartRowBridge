@@ -33,6 +33,9 @@ class Config:
     coach_max_min: float
     coach_sensitivity: str
     session_dir: str
+    heart_rate: str
+    heart_rate_to_fitness: bool
+    intervals_key_file: str
     log_level: str
 
 
@@ -96,5 +99,14 @@ def parse(argv: list[str] | None = None) -> Config:
                    help="coach: how readily the technique cues speak up (default normal)")
     p.add_argument("--session-dir", default=_env("SRB_SESSION_DIR", sessions.DEFAULT_DIR),
                    help="coach: where each session's summary is saved, for the web page ('off' to disable)")
+    p.add_argument("--heart-rate", default=_env("SRB_HEART_RATE", "off"),
+                   help="heart rate strap for the bridge: off, auto (first strap found), a MAC address, "
+                        "or part of its name such as COROS")
+    p.add_argument("--no-heart-rate-to-fitness", dest="heart_rate_to_fitness", action="store_false",
+                   default=_env("SRB_HEART_RATE_TO_FITNESS", "1") not in ("0", "false", "no"),
+                   help="don't pass the strap's heart rate on to the fitness app")
+    p.add_argument("--intervals-key-file", default=_env("SRB_INTERVALS_KEY_FILE", "/etc/smartrow-bridge/intervals.key"),
+                   help="intervals.icu API key (tools/setup_intervals.sh); with it, each session's summary "
+                        "goes on your intervals.icu calendar as a note")
     p.add_argument("--log-level", default=_env("SRB_LOG_LEVEL", "INFO"))
     return Config(**vars(p.parse_args(argv)))

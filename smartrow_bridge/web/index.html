@@ -318,7 +318,8 @@ function renderMeter(pct, colour) {
 
 function renderInterval(live) {
   show("interval");
-  $("iTitle").textContent = `INTERVAL ${live.index}`;
+  const hr = state && state.metrics && state.metrics.heart_rate_bpm;
+  $("iTitle").textContent = `INTERVAL ${live.index}` + (hr ? ` · ♥ ${hr}` : "");
   $("iClock").textContent = fmtTime(live.elapsed_s);
   $("iWatts").textContent = `${live.power_w} W`;
   const legs = live.cue === "legs";
@@ -364,6 +365,7 @@ function renderRowing(st) {
   set("rDist", String(m.distance_m ?? 0));
   const coach = st.coach;
   let footer = `${fmtTime(m.elapsed_s)} · ${m.stroke_count ?? 0} strokes`;
+  if (m.heart_rate_bpm) footer += ` · ♥ ${m.heart_rate_bpm}`;
   if (!rowing) footer += " · paused";
   if (coach) footer += coach.mode === "warmup" ? " · coach learning your steady rowing"
                                                : ` · steady ${coach.steady_power_w} W`;
@@ -403,7 +405,8 @@ function render() {
   }
   const connected = st.stage === "connected";
   $("dot").className = `dot ${connected ? "ok" : "warn"}`;
-  $("where").textContent = connected ? `${st.pulley || "Pulley"} connected` +
+  const strap = st.heart_rate ? (st.heart_rate.connected ? ` · ♥ ${st.heart_rate.name || "strap"}` : " · ♥ looking for strap") : "";
+  $("where").textContent = connected ? `${st.pulley || "Pulley"} connected` + strap +
     (st.coach ? "" : " · coach off (SRB_COACH=1 turns it on)") : "Waiting for the pulley – pull the handle";
   const coach = st.coach;
   renderHistory(coach);
@@ -507,8 +510,9 @@ function closeSessionView() {
 function renderSession(s) {
   const iv = s.intervals || [];
   $("ssTitle").textContent = fmtWhen(s.started_at);
-  $("ssSub").textContent = s.complete ? "Session summary" :
-    `In progress · saved ${new Date(s.saved_at * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+  $("ssSub").textContent = (s.complete ? "Session summary" :
+    `In progress · saved ${new Date(s.saved_at * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`) +
+    (s.intervals_icu && s.intervals_icu.sent_for === s.saved_at ? " · on your intervals.icu calendar" : "");
   const stats = [
     ["TIME", fmtTime(s.rowing_s), `${s.strokes} strokes`],
     ["DISTANCE", fmtKm(s.distance_m), `${Math.round(s.rowing_s && s.distance_m ? s.rowing_s * 500 / s.distance_m : 0) ? fmtPace(Math.round(s.rowing_s * 500 / s.distance_m)) + " /500 m" : ""}`],
@@ -519,6 +523,8 @@ function renderSession(s) {
     const good = iv.filter((i) => i.rating === "good" && !i.legs_late).length;
     stats.push(["INTERVALS", `${iv.length}`, `${good} kept their shape`]);
   }
+  if (s.heart_rate) stats.push(["HEART RATE", `${s.heart_rate.avg} bpm`, `max ${s.heart_rate.max}` +
+    (s.heart_rate.drift_pct !== null && s.heart_rate.drift_pct !== undefined ? ` · drift ${signed(Math.round(s.heart_rate.drift_pct), "%")}` : "")]);
   $("ssStats").innerHTML = stats.map(([l, v, sub]) =>
     `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join("");
   $("ssFindings").innerHTML = (s.findings || []).map((f) => `<li>${f}</li>`).join("");
@@ -530,6 +536,7 @@ function renderSession(s) {
         <span class="pct" style="color:${ratingColour(i)}">${signed(i.finish_pct, "%")}</span></div>
       <canvas data-i="${i.index}"></canvas>
       <div class="sub">${i.stroke_rate_spm} spm · ${Math.round(i.length_cm)} cm (${signed(Math.round(i.length_delta_cm), "")}) · peak ${i.peak_n} N</div>
+      ${i.hr_peak ? `<div class="sub">♥ ${i.hr_avg ?? "–"} avg · ${i.hr_peak} peak${i.hr_recovery !== null && i.hr_recovery !== undefined ? ` · −${i.hr_recovery} in 1 min after` : ""}</div>` : ""}
       ${flags ? `<div class="flag">${flags}</div>` : ""}</div>`;
   }).join("");
   for (const cv of $("ssCards").querySelectorAll("canvas")) {
@@ -537,8 +544,9 @@ function renderSession(s) {
     drawCurve(cv, i.curve, i.steady_curve, ratingColour(i), i.legs_late ? "front" : "back", false);
   }
   $("ssHint").textContent = "Finish = how much of the stroke's force comes in the back half of the drive, against your " +
-    "steady rowing. Curves: grey line = your steady shape, light grey = force missing. Heart rate isn't seen by the " +
-    "bridge: it is in the SmartRow app and its CSV export.";
+    "steady rowing. Curves: grey line = your steady shape, light grey = force missing." +
+    (s.heart_rate ? " Heart rate drift = extra heartbeats per watt in the second half of the steady rowing (under 5% is typical)."
+                  : " No heart rate: connect a strap to the bridge (SRB_HEART_RATE) to have it here.");
 }
 
 $("sessBtn").addEventListener("click", () => openSessionView());
@@ -582,8 +590,8 @@ function shareImage(s) {
   y += 50; text(`${fmtTime(s.rowing_s)} · ${fmtKm(s.distance_m)} · ${s.avg_power_w} W average · ${s.strokes} strokes`,
                 P, y, 30, C.dim);
   y += 46;
-  const stats = [["STEADY", `${s.steady_power_w} W`], ["STROKE", `${s.steady_length_cm} cm`],
-                 ["INTERVALS", `${iv.length}`]];
+  const stats = [["STEADY", `${s.steady_power_w} W`], ["INTERVALS", `${iv.length}`],
+                 s.heart_rate ? ["HEART RATE", `${s.heart_rate.avg}/${s.heart_rate.max}`] : ["STROKE", `${s.steady_length_cm} cm`]];
   const sw = (W - 2 * P - 2 * 20) / 3;
   stats.forEach(([l, v], k) => {
     const x = P + k * (sw + 20);
@@ -607,7 +615,8 @@ function shareImage(s) {
       text(signed(i.finish_pct, "%"), x + cardW - 22, top + 48, 40, ratingColour(i), true, "right");
       plotCurve(g, x + 6, top + 62, cardW - 12, 130, i.curve, i.steady_curve, ratingColour(i),
                 i.legs_late ? "front" : "back", false, 2);
-      const note = i.legs_late ? "leg drive late" : `${Math.round(i.length_cm)} cm (${signed(Math.round(i.length_delta_cm), "")}) · ${i.stroke_rate_spm} spm`;
+      const note = i.legs_late ? "leg drive late" : `${Math.round(i.length_cm)} cm (${signed(Math.round(i.length_delta_cm), "")}) · ${i.stroke_rate_spm} spm` +
+                   (i.hr_peak ? ` · ♥ ${i.hr_peak}` : "");
       text(note, x + 22, top + cardH - 22, 24, i.legs_late ? C.amber : C.dim, !!i.legs_late);
     });
     y += rows * (cardH + 24) - 24;
@@ -665,7 +674,8 @@ function drawPip() {
     const legs = live.cue === "legs", pct = live.finish_pct, colour = legs ? C.amber : finishColour(pct);
     text(fmtTime(live.elapsed_s), 16, 50, 64, C.fg);
     text(`${live.power_w} W`, W - 16, 50, 52, C.fg, "right");
-    text("FINISH", 16, 120, 22, C.dim, "left", false);
+    const hrNow = st.metrics && st.metrics.heart_rate_bpm;
+    text("FINISH" + (hrNow ? `   ♥ ${hrNow}` : ""), 16, 120, 22, C.dim, "left", false);
     text(pct === null || pct === undefined ? "…" : signed(pct, "%"), W - 16, 120, 48, colour, "right");
     const [label, cueColour] = CUES[live.cue] || ["…", C.tile];
     g.fillStyle = cueColour; g.beginPath(); g.roundRect(10, 175, W - 20, 80, 14); g.fill();
@@ -681,7 +691,8 @@ function drawPip() {
   } else {
     const m = st.metrics || {}, rowing = !!st.rowing;
     text(rowing ? `${m.power_w} W` : "–", W / 2, 80, 80, rowing ? C.fg : C.faint, "center");
-    text(rowing ? `${fmtPace(m.pace_s_per_500m)} /500m · ${Math.round(m.stroke_rate_spm)} spm` : "paused",
+    text(rowing ? `${fmtPace(m.pace_s_per_500m)} /500m · ${Math.round(m.stroke_rate_spm)} spm` +
+               (m.heart_rate_bpm ? ` · ♥ ${m.heart_rate_bpm}` : "") : "paused",
          W / 2, 170, 32, rowing ? C.fg : C.dim, "center", false);
     text(coach ? (coach.mode === "warmup" ? "coach: learning steady" : `coach ready · steady ${coach.steady_power_w} W`)
                : "coach off", W / 2, 235, 22, C.dim, "center", false);

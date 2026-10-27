@@ -138,6 +138,7 @@ class StrokeCurve:
     stroke_length_cm: int = 0
     work_j: float = 0.0
     stroke_count: int = 0
+    heart_rate_bpm: int = 0  # from the bridge's own strap connection, 0 = none
 
 
 @dataclass
@@ -153,6 +154,7 @@ class RowingMetrics:
     stroke_length_cm: int = 0
     last_stroke_time: float = 0.0  # time.monotonic() when the stroke count last went up
     stopped: bool = False  # pulley sent its "not rowing" marker ('f' record with '!')
+    heart_rate_bpm: int = 0  # set by the bridge from a heart rate strap (heartrate.py), 0 = none
 
 
 class SmartRowParser:
@@ -228,7 +230,8 @@ class SmartRowParser:
             return
         m = self.metrics
         stroke = StrokeCurve(time=now, force_n=curve, power_w=m.power_w, stroke_rate_spm=m.stroke_rate_spm,
-                             stroke_length_cm=m.stroke_length_cm, work_j=work_j, stroke_count=m.stroke_count)
+                             stroke_length_cm=m.stroke_length_cm, work_j=work_j, stroke_count=m.stroke_count,
+                             heart_rate_bpm=m.heart_rate_bpm)
         try:
             self.on_stroke(stroke)
         except Exception:  # noqa: BLE001 - coaching must never break parsing

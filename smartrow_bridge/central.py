@@ -49,6 +49,7 @@ class PulleyLink:
         self.exclude_addresses = {a.upper() for a in exclude_addresses}
         self.on_notify = on_notify
         self.on_connected: Callable[[], None] = lambda: None
+        self.scan_lock = asyncio.Lock()  # shared with the heart rate strap: one scan at a time
 
         self._client: BleakClient | None = None
         self._disconnected = asyncio.Event()
@@ -78,8 +79,9 @@ class PulleyLink:
                 found.set_result((device, adv))
 
         log.info("Scanning on %s for the SmartRow pulley...", self.adapter)
-        async with BleakScanner(detected, adapter=self.adapter):
-            return await found
+        async with self.scan_lock:
+            async with BleakScanner(detected, adapter=self.adapter):
+                return await found
 
     async def _connect(self, device: BLEDevice) -> BleakClient:
         self._disconnected.clear()
