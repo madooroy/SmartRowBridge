@@ -255,6 +255,9 @@ class IntervalCoach:
         self.power_total = 0.0
         self.length_total = 0.0
         self.trace: list[tuple[float, int, float]] = []  # (time, heart rate, power) per stroke
+        # Every stroke, for the session's activity file:
+        # (time, distance m, power W, strokes/min, heart rate, stroke length cm)
+        self.stroke_log: list[tuple[float, int, float, float, int, int]] = []
 
     # ------------------------------------------------------------ reference
 
@@ -291,6 +294,8 @@ class IntervalCoach:
         self.power_total += stroke_power(s)
         self.length_total += s.stroke_length_cm
         self.trace.append((s.time, s.heart_rate_bpm, stroke_power(s)))
+        self.stroke_log.append((s.time, s.distance_m, stroke_power(s), s.stroke_rate_spm, s.heart_rate_bpm,
+                                s.stroke_length_cm))
         self.recent.append(s)
         smoothed = statistics.median(stroke_power(r) for r in self.recent)
 
@@ -409,6 +414,8 @@ class IntervalCoach:
     def session_summary(self) -> dict:
         """The whole session so far: totals, steady reference, every interval, and findings."""
         intervals = [i.as_dict() for i in self.intervals]
+        for d, i in zip(intervals, self.intervals):  # where it sits in the session, for the activity file
+            d["started_at_s"] = round(i.started_at - (self.first_time or i.started_at), 1)
         n = self.strokes_total
         hr = heart_rate_summary(self.trace, self.intervals, self.steady_power())
         if hr:

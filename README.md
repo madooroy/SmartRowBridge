@@ -215,7 +215,7 @@ Common problems:
 | `smartrow_bridge/status.py`, `smartrow_bridge/display/`, `smartrow_bridge/web/` | Status file; the optional screen and web page, separate services that only read it |
 | `smartrow_bridge/sessions.py` | Saves each session's summary for the web page; progress over weeks |
 | `smartrow_bridge/heartrate.py` | Optional heart rate strap, on the pulley's radio |
-| `smartrow_bridge/intervals.py` | Optional notes on the intervals.icu calendar |
+| `smartrow_bridge/uploads.py`, `intervals.py`, `strava.py`, `fitfile.py` | Optional uploads: when and where, the two services, the session's FIT file |
 | `tools/coach_replay.py` | Runs SmartRow app CSV exports through the coach (and can save their summaries) |
 
 - **Pass-through.** Every pulley notification is forwarded to the clone first, unchanged and in order; parsing
@@ -422,18 +422,10 @@ in intervals (efforts of 1:30 or more apart from shorter ones; within 5% of stea
 strap, **watts per heartbeat** at steady pace, which rises as aerobic fitness does. Tap a session for its
 summary. The newest 500 sessions are kept.
 
-**On your intervals.icu calendar.** Optionally, each finished session's summary goes on that day of your
-[intervals.icu](https://intervals.icu) calendar as a note (its numbers, what the coach saw, each interval):
-
-```bash
-sudo bash ~/smartrow-bridge/tools/setup_intervals.sh      # asks for your API key (Settings, Developer settings)
-```
-
-The key is kept in `/etc/smartrow-bridge/intervals.key`, readable by root only. Notes for sessions finished
-while the Pi was offline follow once it is back (up to a week); a session that resumes after a break updates
-its note rather than adding another. It is a calendar note rather than text on the activity itself because
-activities that reach intervals.icu from Strava can't be changed through its API (Strava's terms), whatever the
-intervals.icu plan. `--undo` deletes the key and stops it.
+**To intervals.icu and Strava.** Optionally, each session is uploaded as an activity of its own, much like
+a Garmin or Hammerhead head unit does it: stroke by stroke (power, stroke rate, distance, pace and, with a
+[strap](#optional-heart-rate-strap), heart rate), each interval the coach found as a lap, and the coach's
+summary as the description. See [uploads](#optional-uploads-to-intervalsicu-and-strava).
 
 **Where it works, and where it doesn't yet.** It was calibrated on one rower's sessions: steady rowing at
 about 21 spm with harder efforts of 1 to 3 minutes at the same rate. In that pattern it found every effort,
@@ -459,7 +451,8 @@ yet been seen on one.
 | `SRB_COACH_SENSITIVITY` | `normal` | How readily the cues speak up: `low`, `normal` or `high` |
 | `SRB_SESSION_DIR` | `/var/lib/smartrow-bridge/sessions` | Where session summaries are saved; `off` disables |
 | `SRB_HEART_RATE`, `SRB_HEART_RATE_TO_FITNESS` | `off`, `1` | [Heart rate strap](#optional-heart-rate-strap) read by the bridge, and whether it goes to the fitness app |
-| `SRB_INTERVALS_KEY_FILE` | `/etc/smartrow-bridge/intervals.key` | intervals.icu API key (set by `tools/setup_intervals.sh`) |
+| `SRB_INTERVALS_KEY_FILE`, `SRB_INTERVALS_UPLOAD` | `/etc/smartrow-bridge/intervals.key`, `activity` | intervals.icu API key (`tools/setup_intervals.sh`); upload the session as an `activity`, a calendar `note`, or `off` |
+| `SRB_STRAVA_FILE`, `SRB_STRAVA_SPORT_TYPE` | `/etc/smartrow-bridge/strava.json`, `Rowing` | Strava authorization (`tools/setup_strava.sh`); activity type `Rowing` or `VirtualRow` |
 
 **Try it on your own rowing first.** Export a session from the SmartRow app as CSV and run it through the
 coach on any computer with Python 3.10 or later (nothing to install):
@@ -471,6 +464,52 @@ python3 tools/coach_replay.py --start-pct 12 --sensitivity high *.csv    # try s
 
 It prints the intervals it finds, each interval's summary line, and how much of each interval each cue was
 showing, so you can see what it would have told you, and pick settings, before relying on it.
+
+## Optional: uploads to intervals.icu and Strava
+
+With the [interval coach](#optional-interval-coach-experimental) on, the bridge can upload each session
+itself, so the SmartRow app's own Strava link is no longer needed:
+
+- **intervals.icu:** the session as an activity, named like "Morning Row", with the coach's summary as its
+  description and the coach's intervals as laps. intervals.icu treats activities that start within a minute
+  of each other, with distance and time within 1%, as the same one, and an uploaded copy takes the place of
+  the one from Strava (as Garmin and Hammerhead uploads do), so a session shows once, linked to Strava.
+  Activities that come from Strava can't be changed through the intervals.icu API (Strava's terms), which
+  is why the bridge uploads its own copy. `SRB_INTERVALS_UPLOAD=note` puts the summary on that day of your
+  calendar as a note instead.
+- **Strava:** the same activity, type Rowing (indoor), with the coach's summary as its description. This
+  needs your own Strava API application, which Strava offers to every account with a subscription; it
+  stays in "single-player mode" (only your account can use it).
+
+```bash
+sudo bash ~/smartrow-bridge/tools/setup_intervals.sh     # your intervals.icu API key (Settings, Developer settings)
+sudo bash ~/smartrow-bridge/tools/setup_strava.sh        # your Strava app's Client ID and Secret, then authorize once
+```
+
+The key and the Strava authorization are kept in `/etc/smartrow-bridge/`, readable by root only; Strava's
+access is renewed by the Pi itself. A session is uploaded about seven minutes after its last stroke (rowing
+again within five minutes continues the same session, so it waits until that can't happen); an intervals.icu
+note goes two minutes after. Uploads that fail (Pi offline, a service down) are retried every ten minutes,
+for up to a week. Each session is uploaded once; what went where is kept in its file:
+
+```bash
+cd /opt/smartrow-bridge
+sudo venv/bin/python -m smartrow_bridge.uploads --status            # recent sessions and where each went
+sudo venv/bin/python -m smartrow_bridge.uploads --send ID            # send a saved session now
+sudo venv/bin/python -m smartrow_bridge.uploads --fit ID row.fit     # write its FIT file, to look at
+```
+
+Only sessions rowed with the bridge after a service was set up are sent by themselves. Sessions added from
+CSV exports are never sent by themselves (they are usually there already); `--send` sends one on purpose.
+
+**Switching over from the SmartRow app's Strava link**, one step at a time:
+
+1. Set up intervals.icu only, row a session, and check on intervals.icu that it shows once (the bridge's
+   copy, with the coach's summary), not twice.
+2. Then set up Strava and, before the next session, switch off the SmartRow app's Strava link; otherwise
+   Strava gets the session twice.
+
+`--undo` on either setup script stops that service and deletes its credentials.
 
 ## Optional: heart rate strap
 
@@ -586,7 +625,10 @@ phone, with far wider device support, use QZ.
 The findings from this project (record checksum, elapsed-time format, stop marker) and a draft "virtual
 SmartRow" profile were offered back to QZ; the patches are in `contrib/qz-virtual-smartrow/`.
 
-Built on [bleak](https://github.com/hbldh/bleak) and [Bumble](https://github.com/google/bumble).
+Built on [bleak](https://github.com/hbldh/bleak) and [Bumble](https://github.com/google/bumble); activity
+files are written with [fit-tool](https://pypi.org/project/fit-tool/) (Stages Cycling). The COROS strap's slow
+accept when it already serves other receivers was found in
+[Grupetto](https://github.com/madooroy/grupetto).
 
 ## Licence
 

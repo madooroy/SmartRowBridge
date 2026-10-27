@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Optional: put each rowing session's coach summary on your intervals.icu calendar, as a note.
+# Optional: send each rowing session to intervals.icu, as an activity with the coach's summary
+# as its description (SRB_INTERVALS_UPLOAD=activity, the default), or as a calendar note (note).
 #
 #   sudo bash ~/smartrow-bridge/tools/setup_intervals.sh          set it up (asks for your API key)
 #   sudo bash ~/smartrow-bridge/tools/setup_intervals.sh --undo   stop sending, delete the key
@@ -7,6 +8,8 @@
 # Your API key is on intervals.icu under Settings, Developer settings ("API key").
 # It is saved in /etc/smartrow-bridge/intervals.key, readable by root only, and is never
 # shown on screen or written to a log. Needs the interval coach on (SRB_COACH=1).
+# An uploaded activity takes the place of the copy that arrives from Strava, as a Garmin or
+# Hammerhead upload does.
 set -euo pipefail
 
 PREFIX=/opt/smartrow-bridge
@@ -21,7 +24,7 @@ fi
 
 if [[ ${1:-} == --undo ]]; then
     rm -f "$KEY_FILE"
-    echo "API key deleted: no more notes are sent to intervals.icu."
+    echo "API key deleted: nothing more is sent to intervals.icu."
     exit 0
 fi
 
@@ -48,9 +51,11 @@ unset key
 echo "Checking the key with intervals.icu..."
 if (cd "$PREFIX" && "$PREFIX/venv/bin/python" -m smartrow_bridge.intervals --test --key-file "$KEY_FILE"); then
     echo
-    echo "Done. After each session (two minutes after the last stroke) a note with the coach's summary"
-    echo "appears on that day of your intervals.icu calendar. Sessions from the last week that were"
-    echo "already saved are sent too, within a few minutes."
+    echo "Done. Sessions you row from now on go to intervals.icu: as an activity about seven minutes"
+    echo "after the last stroke (or, with SRB_INTERVALS_UPLOAD=note, a calendar note two minutes after)."
+    echo "To send a session already saved:"
+    echo "  cd $PREFIX && sudo venv/bin/python -m smartrow_bridge.uploads --status"
+    echo "  cd $PREFIX && sudo venv/bin/python -m smartrow_bridge.uploads --send ID --to intervals"
 else
     echo
     echo "The key is saved, but the check failed (message above). Check the key and the Pi's internet"

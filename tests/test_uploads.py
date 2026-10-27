@@ -1,0 +1,323 @@
+import asyncio
+import base64
+import io
+import json
+import tempfile
+import threading
+import time
+import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+from smartrow_bridge import intervals, sessions, strava, uploads
+from tests.test_sessions import saturday
+
+try:
+    import fitdecode
+    from smartrow_bridge import fitfile
+except ImportError:  # fit-tool / fitdecode not installed
+    fitfile = None
+
+
+class FakeServices:
+    """Stands in for intervals.icu and Strava: records requests, answers like the real APIs."""
+
+    def __init__(self):
+        self.requests = []
+        self.fail = None  # (path prefix, HTTP status)
+        self.strava_duplicate = False
+        self.polls = 0
+        fake = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def _body(self):
+                return self.rfile.read(int(self.headers.get("Content-Length") or 0))
+
+            def _answer(self, code, body):
+                data = json.dumps(body).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def _handle(self):
+                raw = self._body()
+                fake.requests.append((self.command, self.path, dict(self.headers), raw))
+                if fake.fail and self.path.startswith(fake.fail[0]):
+                    return self._answer(fake.fail[1], {"error": "nope"})
+                p = self.path
+                if p == "/api/v1/athlete/0":
+                    return self._answer(200, {"id": "i1001", "name": "Test Rower"})
+                if p.startswith("/api/v1/athlete/0/events"):
+                    return self._answer(200, {"id": 4242, "category": "NOTE"})
+                if p == "/api/v1/athlete/0/activities":
+                    return self._answer(201, {"id": "i777"})
+                if p.startswith("/api/v1/activity/"):
+                    return self._answer(200, {"id": "i777"})
+                if p == "/oauth/token":
+                    return self._answer(200, {"access_token": "fresh-token", "refresh_token": "new-refresh",
+                                              "expires_at": int(time.time()) + 21600})
+                if p == "/api/v3/athlete":
+                    return self._answer(200, {"firstname": "Test", "lastname": "Rower"})
+                if p == "/api/v3/uploads":
+                    return self._answer(201, {"id": 55, "status": "Your activity is still being processed.",
+                                              "error": None, "activity_id": None})
+                if p == "/api/v3/uploads/55":
+                    fake.polls += 1
+                    if fake.strava_duplicate:
+                        return self._answer(200, {"id": 55, "error": "x.fit duplicate of activity 999",
+                                                  "activity_id": None})
+                    return self._answer(200, {"id": 55, "error": None, "activity_id": 31337})
+                return self._answer(404, {})
+
+            do_GET = do_POST = do_PUT = _handle
+
+            def log_message(self, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def posts(self, path):
+        return [r for r in self.requests if r[0] == "POST" and r[1].startswith(path)]
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class UploadsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.dir = root / "sessions"
+        self.key_file = root / "intervals.key"
+        self.strava_file = root / "strava.json"
+        self.fake = FakeServices()
+        self.saved_urls = (intervals.API, strava.API, strava.TOKEN_URL)
+        intervals.API = f"{self.fake.base}/api/v1"
+        strava.API = f"{self.fake.base}/api/v3"
+        strava.TOKEN_URL = f"{self.fake.base}/oauth/token"
+        self.settings = uploads.Settings(str(self.dir), str(self.key_file), "activity", str(self.strava_file), "Rowing")
+
+    def tearDown(self):
+        intervals.API, strava.API, strava.TOKEN_URL = self.saved_urls
+        self.fake.close()
+        self.tmp.cleanup()
+
+    def set_up_intervals(self, mode="activity", when=None):
+        self.key_file.write_text("secret-key\n")
+        if when is not None:
+            import os
+            os.utime(self.key_file, (when, when))
+        self.settings.intervals_upload = mode
+
+    def set_up_strava(self, since=0.0, expires_at=0):
+        self.strava_file.write_text(json.dumps({"client_id": "123", "client_secret": "shh", "access_token": "old",
+                                                "refresh_token": "refresh-1", "expires_at": expires_at,
+                                                "since": since}))
+
+    def saved(self, minutes_ago=30, complete=True, source="bridge", rowing_s=1800):
+        r = saturday()
+        started = time.time() - minutes_ago * 60 - rowing_s
+        record = sessions.build_record(r.coach, started, started + rowing_s, complete, 6000, rowing_s, source)
+        record["rowing_s"] = rowing_s
+        sessions.save(self.dir, record, sessions.stroke_rows(r.coach))
+        return record
+
+    def run_ticks(self, up, n=1):
+        async def go():
+            for _ in range(n):
+                up._next_check = 0.0
+                up.tick()
+                for _ in range(300):
+                    await asyncio.sleep(0.01)
+                    if not up._busy:
+                        break
+        asyncio.run(go())
+
+    # ------------------------------------------------------------ intervals.icu
+
+    def test_intervals_activity_upload(self):
+        self.set_up_intervals(when=time.time() - 86400)
+        record = self.saved()
+        result = intervals.upload_activity(record, b"FITDATA", "secret-key")
+        self.assertEqual(result, {"activity_id": "i777"})
+        method, path, headers, raw = self.fake.posts("/api/v1/athlete/0/activities")[0]
+        self.assertEqual(headers["Authorization"], "Basic " + base64.b64encode(b"API_KEY:secret-key").decode())
+        self.assertIn("multipart/form-data; boundary=", headers["Content-Type"])
+        self.assertIn(b'name="file"; filename="smartrow-', raw)
+        self.assertIn(b"FITDATA", raw)
+        put = [r for r in self.fake.requests if r[0] == "PUT"][0]
+        self.assertEqual(put[1], "/api/v1/activity/i777")
+        body = json.loads(put[3])
+        self.assertTrue(body["name"].endswith(" Row"))
+        self.assertIn("What the coach saw:", body["description"])
+
+    def test_note_mode(self):
+        self.set_up_intervals("note", when=time.time() - 86400)
+        record = self.saved(minutes_ago=1)  # complete: a note doesn't wait for the session to be over
+        up = uploads.Uploader(self.settings)
+        with self.assertLogs("smartrow_bridge.uploads", "INFO"):
+            self.run_ticks(up, 2)
+        notes = self.fake.posts("/api/v1/athlete/0/events?upsertOnUid=true")
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(json.loads(notes[0][3])["uid"], f"smartrowbridge-{record['id']}")
+        self.assertEqual(self.fake.posts("/api/v1/athlete/0/activities"), [])
+
+    # ------------------------------------------------------------ Strava
+
+    def test_strava_refresh_upload_and_poll(self):
+        self.set_up_strava(expires_at=0)
+        account = strava.StravaAccount(str(self.strava_file))
+        result = account.upload(b"FITDATA", "smartrowbridge-x", "Morning Row", "summary", poll_s=0.01)
+        self.assertEqual(result, {"activity_id": 31337})
+        token = self.fake.posts("/oauth/token")[0]
+        self.assertIn(b"grant_type=refresh_token", token[3])
+        self.assertIn(b"refresh_token=refresh-1", token[3])
+        saved = json.loads(self.strava_file.read_text())
+        self.assertEqual((saved["access_token"], saved["refresh_token"]), ("fresh-token", "new-refresh"))
+        self.assertEqual(self.strava_file.stat().st_mode & 0o777, 0o600)
+        upload = self.fake.posts("/api/v3/uploads")[0]
+        self.assertEqual(upload[2]["Authorization"], "Bearer fresh-token")
+        for field in (b'name="data_type"\r\n\r\nfit', b'name="sport_type"\r\n\r\nRowing', b'name="trainer"\r\n\r\n1',
+                      b'name="external_id"\r\n\r\nsmartrowbridge-x', b'name="description"\r\n\r\nsummary'):
+            self.assertIn(field, upload[3])
+        # A still-valid token is not refreshed again.
+        account.upload(b"FITDATA", "smartrowbridge-y", "Morning Row", "summary", poll_s=0.01)
+        self.assertEqual(len(self.fake.posts("/oauth/token")), 1)
+
+    def test_strava_duplicate_counts_as_done(self):
+        self.set_up_strava(expires_at=int(time.time()) + 9999)
+        self.fake.strava_duplicate = True
+        result = strava.StravaAccount(str(self.strava_file)).upload(b"F", "e", "n", "d", poll_s=0.01)
+        self.assertIn("duplicate", result["duplicate"])
+
+    def test_code_from_pasted_address(self):
+        self.assertEqual(strava.code_from("http://localhost/exchange_token?state=&code=abc123&scope=read,activity:write"),
+                         ("abc123", "read,activity:write"))
+        self.assertEqual(strava.code_from("  abc123 "), ("abc123", ""))
+        self.assertEqual(strava.code_from(""), (None, ""))
+        self.assertIn("scope=read%2Cactivity%3Awrite", strava.authorize_url("123"))
+        self.assertIn("redirect_uri=http%3A%2F%2Flocalhost%2Fexchange_token", strava.authorize_url("123"))
+
+    # ------------------------------------------------------------ when sessions are sent
+
+    @unittest.skipIf(fitfile is None, "fit-tool not installed")
+    def test_sent_once_to_each_when_over(self):
+        self.set_up_intervals(when=time.time() - 86400)
+        self.set_up_strava(since=time.time() - 86400, expires_at=int(time.time()) + 9999)
+        recent = self.saved(minutes_ago=2)  # finished 2 minutes ago: could still resume
+        over = self.saved(minutes_ago=30)
+        up = uploads.Uploader(self.settings)
+        with self.assertLogs("smartrow_bridge.uploads", "INFO"):
+            self.run_ticks(up, 5)
+        self.assertEqual(len(self.fake.posts("/api/v1/athlete/0/activities")), 1)
+        self.assertEqual(len(self.fake.posts("/api/v3/uploads")), 1)
+        marks = sessions.read_session(str(self.dir), over["id"])["uploads"]
+        self.assertEqual(marks["intervals_activity"]["activity_id"], "i777")
+        self.assertEqual(marks["strava"]["activity_id"], 31337)
+        self.assertNotIn("uploads", sessions.read_session(str(self.dir), recent["id"]))
+        self.run_ticks(up, 3)  # nothing new: nothing sent again
+        self.assertEqual(len(self.fake.posts("/api/v3/uploads")), 1)
+
+    def test_not_sent_by_itself(self):
+        self.set_up_intervals(when=time.time() - 86400)
+        self.set_up_strava(since=time.time() - 3600, expires_at=int(time.time()) + 9999)
+        self.saved(minutes_ago=30, source="replay")  # from a CSV
+        self.saved(minutes_ago=200)  # rowed before Strava was set up (intervals.icu: yes)
+        self.saved(minutes_ago=30, complete=False)  # never completed
+        self.saved(minutes_ago=60 * 24 * 10)  # ten days ago
+        up = uploads.Uploader(self.settings)
+        pending = up.pending()
+        self.assertEqual([d for d, _ in pending], ["intervals_activity"])
+
+    def test_nothing_set_up_nothing_sent(self):
+        self.saved()
+        up = uploads.Uploader(self.settings)
+        self.run_ticks(up, 2)
+        self.assertEqual(self.fake.requests, [])
+
+    def test_failure_warns_once_and_backs_off(self):
+        self.set_up_intervals("note", when=time.time() - 86400)
+        self.saved()
+        self.fake.fail = ("/api/v1", 401)
+        up = uploads.Uploader(self.settings)
+        with self.assertLogs("smartrow_bridge.uploads", "WARNING") as logs:
+            self.run_ticks(up, 3)
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("refused the API key", logs.output[0])
+        self.assertEqual(up.pending(), [])  # waiting RETRY_AFTER_S before trying intervals.icu again
+
+    # ------------------------------------------------------------ command line
+
+    @unittest.skipIf(fitfile is None, "fit-tool not installed")
+    def test_cli_send_status_and_fit(self):
+        import os
+        self.set_up_intervals(when=time.time() - 86400)
+        self.set_up_strava(since=time.time(), expires_at=int(time.time()) + 9999)
+        record = self.saved(source="replay")
+        env = {"SRB_SESSION_DIR": str(self.dir), "SRB_INTERVALS_KEY_FILE": str(self.key_file),
+               "SRB_STRAVA_FILE": str(self.strava_file)}
+        old = {k: os.environ.get(k) for k in env}
+        os.environ.update(env)
+        try:
+            out = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                self.assertEqual(uploads.main(["--status"]), 0)
+                strava.POLL_S, poll = 0.01, strava.POLL_S
+                try:
+                    self.assertEqual(uploads.main(["--send", record["id"]]), 0)
+                    self.assertEqual(uploads.main(["--send", record["id"]]), 0)  # again: already sent
+                finally:
+                    strava.POLL_S = poll
+                fit_path = Path(self.tmp.name) / "s.fit"
+                self.assertEqual(uploads.main(["--fit", record["id"], str(fit_path)]), 0)
+            text = out.getvalue()
+            self.assertIn("not sent by itself (--send to send)", text)
+            self.assertIn("intervals.icu activity: sent", text)
+            self.assertIn("Strava: sent", text)
+            self.assertIn("already sent, not again", text)
+            self.assertEqual(fit_path.read_bytes()[8:12], b".FIT")
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+
+@unittest.skipIf(fitfile is None, "fit-tool / fitdecode not installed")
+class FitFileTest(unittest.TestCase):
+    def test_activity_file(self):
+        r = saturday()
+        record = sessions.build_record(r.coach, 1_800_000_000.0, 1_800_001_000.0, True, 6000, 1000)
+        strokes = [dict(zip(sessions.STROKE_COLUMNS, row)) for row in sessions.stroke_rows(r.coach)]
+        data = fitfile.build(record, strokes)
+        found = {}
+        with fitdecode.FitReader(io.BytesIO(data), check_crc=fitdecode.CrcCheck.RAISE) as fr:
+            for fm in fr:
+                if isinstance(fm, fitdecode.FitDataMessage):
+                    found.setdefault(fm.name, []).append({f.name: f.value for f in fm.fields})
+        self.assertEqual(len(found["record"]), len(strokes))
+        session = found["session"][0]
+        self.assertEqual((session["sport"], session["sub_sport"]), ("rowing", "indoor_rowing"))
+        self.assertEqual(session["total_strokes"], len(strokes))
+        self.assertEqual(session["start_time"].timestamp(), 1_800_000_000)
+        laps = found["lap"]
+        active = [lap for lap in laps if lap["intensity"] == "active"]
+        self.assertEqual(len(active), len(record["intervals"]))  # one lap per interval ...
+        self.assertEqual(len(laps), 2 * len(record["intervals"]) + 1)  # ... with steady rowing around them
+        self.assertAlmostEqual(sum(lap["total_elapsed_time"] for lap in laps), session["total_elapsed_time"], delta=2)
+        self.assertEqual(found["record"][100]["power"], round(strokes[100]["power_w"]))
+
+    def test_no_strokes(self):
+        with self.assertRaises(ValueError):
+            fitfile.build({"started_at": 0}, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

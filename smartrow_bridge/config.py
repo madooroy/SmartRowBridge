@@ -36,6 +36,9 @@ class Config:
     heart_rate: str
     heart_rate_to_fitness: bool
     intervals_key_file: str
+    intervals_upload: str
+    strava_file: str
+    strava_sport_type: str
     log_level: str
 
 
@@ -106,7 +109,13 @@ def parse(argv: list[str] | None = None) -> Config:
                    default=_env("SRB_HEART_RATE_TO_FITNESS", "1") not in ("0", "false", "no"),
                    help="don't pass the strap's heart rate on to the fitness app")
     p.add_argument("--intervals-key-file", default=_env("SRB_INTERVALS_KEY_FILE", "/etc/smartrow-bridge/intervals.key"),
-                   help="intervals.icu API key (tools/setup_intervals.sh); with it, each session's summary "
-                        "goes on your intervals.icu calendar as a note")
+                   help="intervals.icu API key (tools/setup_intervals.sh); with it, sessions go to intervals.icu")
+    p.add_argument("--intervals-upload", choices=("activity", "note", "off"),
+                   default=_env("SRB_INTERVALS_UPLOAD", "activity").lower(),
+                   help="what goes to intervals.icu: the session as an activity (default), a calendar note, or off")
+    p.add_argument("--strava-file", default=_env("SRB_STRAVA_FILE", "/etc/smartrow-bridge/strava.json"),
+                   help="Strava authorization (tools/setup_strava.sh); with it, sessions are uploaded to Strava")
+    p.add_argument("--strava-sport-type", default=_env("SRB_STRAVA_SPORT_TYPE", "Rowing"),
+                   help="Strava activity type for uploads (Rowing, or VirtualRow)")
     p.add_argument("--log-level", default=_env("SRB_LOG_LEVEL", "INFO"))
     return Config(**vars(p.parse_args(argv)))

@@ -534,12 +534,23 @@ function closeSessionView() {
   render();
 }
 
+// Where the session has been sent (smartrow_bridge/uploads.py notes it in the session's file).
+function sentTo(s) {
+  const u = Object.assign({}, s.uploads || {});
+  if (!u.intervals_note && s.intervals_icu) u.intervals_note = s.intervals_icu;
+  const places = [];
+  if (u.intervals_activity) places.push("intervals.icu");
+  if (u.intervals_note) places.push("intervals.icu calendar");
+  if (u.strava) places.push("Strava");
+  return places.length ? ` · sent to ${places.join(" and ")}` : "";
+}
+
 function renderSession(s) {
   const iv = s.intervals || [];
   $("ssTitle").textContent = fmtWhen(s.started_at);
   $("ssSub").textContent = (s.complete ? "Session summary" :
     `In progress · saved ${new Date(s.saved_at * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`) +
-    (s.intervals_icu && s.intervals_icu.sent_for === s.saved_at ? " · on your intervals.icu calendar" : "");
+    sentTo(s);
   const stats = [
     ["TIME", fmtTime(s.rowing_s), `${s.strokes} strokes`],
     ["DISTANCE", fmtKm(s.distance_m), `${Math.round(s.rowing_s && s.distance_m ? s.rowing_s * 500 / s.distance_m : 0) ? fmtPace(Math.round(s.rowing_s * 500 / s.distance_m)) + " /500 m" : ""}`],

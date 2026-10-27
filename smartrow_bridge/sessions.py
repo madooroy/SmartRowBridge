@@ -9,7 +9,9 @@ pulley's own totals to <directory>/<id>.json:
 - every few minutes while rowing, to keep the totals current;
 - once the session is over (no stroke for END_AFTER_S), marked "complete".
 
-The id is the session's start time, e.g. 2026-10-27T0702. Only the newest KEEP files
+The id is the session's start time, e.g. 2026-10-27T0702. Beside it, <id>.strokes.json
+holds every stroke (time, distance, power, rate, heart rate, length), from which the
+session's activity file is made for uploads (fitfile.py). Only the newest KEEP sessions
 are kept. The files are world-readable, so the web page (a separate, unprivileged
 service) can read them; nothing else about the bridge depends on them.
 
@@ -84,7 +86,7 @@ class SessionRecorder:
         record = build_record(self.coach, self._started_at, wall_now, complete, metrics.distance_m,
                               metrics.elapsed_s)
         try:
-            path = save(self.directory, record)
+            path = save(self.directory, record, stroke_rows(self.coach))
         except OSError as exc:
             if not self._failed:
                 log.warning("Could not save the session summary in %s: %s", self.directory, exc)
@@ -97,11 +99,15 @@ class SessionRecorder:
 
 
 def build_record(coach: IntervalCoach, started_at: float, saved_at: float, complete: bool,
-                 distance_m: int, elapsed_s: int) -> dict:
-    """What a session file holds: when, the pulley's totals and the coach's session summary."""
+                 distance_m: int, elapsed_s: int, source: str = "bridge") -> dict:
+    """What a session file holds: when, the pulley's totals and the coach's session summary.
+
+    source: "bridge" (rowed live) or "replay" (from a CSV export; never uploaded by itself).
+    """
     return {
         "version": VERSION,
         "id": session_id(started_at),
+        "source": source,
         "started_at": round(started_at),
         "saved_at": round(saved_at),
         "complete": complete,
@@ -111,20 +117,53 @@ def build_record(coach: IntervalCoach, started_at: float, saved_at: float, compl
     }
 
 
-def save(directory: Path | str, record: dict) -> Path:
-    """Write one session file in one step (world-readable), then keep only the newest KEEP."""
+STROKE_COLUMNS = ["t", "distance_m", "power_w", "spm", "heart_rate", "length_cm"]
+
+
+def stroke_rows(coach: IntervalCoach) -> list[list]:
+    """The session's strokes, time in seconds from its first stroke (columns STROKE_COLUMNS)."""
+    if not coach.stroke_log:
+        return []
+    t0 = coach.stroke_log[0][0]
+    return [[round(t - t0, 2), d, round(p, 1), round(spm, 1), hr, length]
+            for t, d, p, spm, hr, length in coach.stroke_log]
+
+
+def _write(path: Path, data: dict) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data), encoding="utf-8")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+def save(directory: Path | str, record: dict, strokes: list[list] | None = None) -> Path:
+    """Write one session file (and its strokes) in one step, world-readable; keep the newest KEEP."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     os.chmod(directory, 0o755)
     path = directory / f"{record['id']}.json"
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(record), encoding="utf-8")
-    os.chmod(tmp, 0o644)
-    os.replace(tmp, path)
+    if strokes is not None:
+        _write(directory / f"{record['id']}.strokes.json",
+               {"version": VERSION, "id": record["id"], "started_at": record["started_at"],
+                "columns": STROKE_COLUMNS, "rows": strokes})
+    _write(path, record)
     files = sorted(p for p in directory.glob("*.json") if ID_PATTERN.match(p.stem))
     for old in files[:-KEEP]:
         old.unlink(missing_ok=True)
+        (directory / f"{old.stem}.strokes.json").unlink(missing_ok=True)
     return path
+
+
+def read_strokes(directory: str, session: str) -> list[dict] | None:
+    """A saved session's strokes as dicts (STROKE_COLUMNS), or None if there are none."""
+    if not ID_PATTERN.match(session):
+        return None
+    try:
+        data = json.loads((Path(directory) / f"{session}.strokes.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    cols = data.get("columns", STROKE_COLUMNS)
+    return [dict(zip(cols, row)) for row in data.get("rows", [])] or None
 
 
 def list_sessions(directory: str) -> list[dict]:

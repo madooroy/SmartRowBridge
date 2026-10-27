@@ -28,7 +28,7 @@ MILESTONES = (
     "Interval ",
     "Session summary saved",
     "Heart rate strap connected",
-    "intervals.icu note added",
+    "Upload: ",
 )
 
 

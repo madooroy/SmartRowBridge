@@ -59,6 +59,7 @@ def strokes_from_csv(path: Path):
                 work_j=float(row["Work (J)"]),
                 stroke_count=int(float(row["Stroke (#)"])),
                 heart_rate_bpm=_number(row.get("Heart rate (bpm)")),
+                distance_m=_number(row.get("Distance (m)")),
             )
 
 
@@ -86,8 +87,8 @@ def replay(path: Path, settings: CoachSettings, save_dir: Path | None = None) ->
     if save_dir is not None:
         totals = export_totals(path)
         record = sessions.build_record(coach, totals["started_at"], totals["started_at"] + totals["elapsed_s"],
-                                       True, totals["distance_m"], totals["elapsed_s"])
-        saved = sessions.save(save_dir, record)
+                                       True, totals["distance_m"], totals["elapsed_s"], source="replay")
+        saved = sessions.save(save_dir, record, sessions.stroke_rows(coach))
     return {"intervals": coach.intervals, "cues": cues, "steady_power_w": coach.steady_power(),
             "strokes": coach.last_count, "saved": saved}
 

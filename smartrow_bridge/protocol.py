@@ -139,6 +139,7 @@ class StrokeCurve:
     work_j: float = 0.0
     stroke_count: int = 0
     heart_rate_bpm: int = 0  # from the bridge's own strap connection, 0 = none
+    distance_m: int = 0  # the pulley's distance when the stroke finished
 
 
 @dataclass
@@ -231,7 +232,7 @@ class SmartRowParser:
         m = self.metrics
         stroke = StrokeCurve(time=now, force_n=curve, power_w=m.power_w, stroke_rate_spm=m.stroke_rate_spm,
                              stroke_length_cm=m.stroke_length_cm, work_j=work_j, stroke_count=m.stroke_count,
-                             heart_rate_bpm=m.heart_rate_bpm)
+                             heart_rate_bpm=m.heart_rate_bpm, distance_m=m.distance_m)
         try:
             self.on_stroke(stroke)
         except Exception:  # noqa: BLE001 - coaching must never break parsing

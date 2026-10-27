@@ -47,8 +47,9 @@ class Bridge:
             self.recorder = sessions.SessionRecorder(cfg.session_dir, self.coach)
         self.uploader = None
         if self.recorder is not None:
-            from .intervals import IntervalsUploader
-            self.uploader = IntervalsUploader(cfg.session_dir, cfg.intervals_key_file)
+            from .uploads import Settings, Uploader
+            self.uploader = Uploader(Settings(cfg.session_dir, cfg.intervals_key_file, cfg.intervals_upload,
+                                              cfg.strava_file, cfg.strava_sport_type))
         self.peripheral: BridgePeripheral | None = None
         self.link: PulleyLink | None = None
         self._driver_initialized = False
@@ -187,8 +188,8 @@ class Bridge:
             if self.uploader is not None:
                 try:
                     self.uploader.tick()
-                except Exception:  # noqa: BLE001 - nor intervals.icu
-                    log.exception("intervals.icu upload failed")
+                except Exception:  # noqa: BLE001 - nor the uploads
+                    log.exception("Uploads failed")
             await asyncio.sleep(STATUS_INTERVAL_S)
 
     async def run(self) -> None:

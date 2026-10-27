@@ -1,50 +1,43 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Optional: put each session's coach summary on your intervals.icu calendar, as a note.
+"""Optional: send each session to intervals.icu, as an activity of its own or as a calendar note.
 
 Set up with tools/setup_intervals.sh, which saves your intervals.icu API key (Settings,
 Developer settings, API key) in a file only root can read; with no key file, nothing
-here runs. The bridge then adds a note to the day of each completed session: its
-numbers, what the coach saw and each interval's finish. Sessions finished while the
-Pi was offline are sent once it is back online (up to SEND_WITHIN_DAYS old).
+here runs. The sending itself is done by uploads.py, once a session is over.
 
-Why a calendar note and not the activity itself: activities that reach intervals.icu
-from Strava cannot be read or changed through its API (Strava's terms), whatever the
-intervals.icu plan. A note is the athlete's own calendar entry, so it always works.
-
-Each note has a fixed uid per session, sent with upsertOnUid, so sending a session again
-(it resumed after a break, or a retry) updates its note instead of adding another.
+SRB_INTERVALS_UPLOAD chooses what is sent:
+- "activity" (default): the session's FIT file (fitfile.py), uploaded as an activity, with
+  the coach's summary as its description. Like a Garmin or Hammerhead upload, it takes
+  the place of the copy that arrives from Strava (intervals.icu treats activities that
+  start within a minute of each other, with distance and time within 1 %, as one).
+- "note": a note on that day of the calendar instead, with the same summary. For when the
+  session reaches intervals.icu another way: activities that come from Strava can't be
+  changed through the API (Strava's terms), so the summary can't go on those.
+- "off".
 
     python -m smartrow_bridge.intervals --test          check the key: shows the athlete's name
-    python -m smartrow_bridge.intervals --send ID       send one saved session now
+    python -m smartrow_bridge.intervals --preview ID    print the summary text a session would get
 """
 
 from __future__ import annotations
 
 import argparse
-import asyncio
 import base64
 import json
 import logging
 import os
 import sys
-import time
 import urllib.error
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-from . import sessions
+from . import sessions, webapi
 
 log = logging.getLogger(__name__)
 
 API = "https://intervals.icu/api/v1"
 DEFAULT_KEY_FILE = "/etc/smartrow-bridge/intervals.key"
-# intervals.icu sits behind Cloudflare, which can challenge unknown clients.
-USER_AGENT = "Mozilla/5.0 (X11; Linux aarch64) SmartRowBridge/1.0"
-TIMEOUT_S = 20
-CHECK_EVERY_S = 60.0  # look for sessions to send this often
-RETRY_AFTER_S = 600.0  # after a failure, wait this long
-SEND_WITHIN_DAYS = 7
+MODES = ("activity", "note", "off")
 
 
 def read_key(path: str) -> str | None:
@@ -55,24 +48,20 @@ def read_key(path: str) -> str | None:
     return key or None
 
 
+def _auth(key: str) -> dict[str, str]:
+    return {"Authorization": "Basic " + base64.b64encode(f"API_KEY:{key}".encode()).decode()}
+
+
 def _request(method: str, path: str, key: str, body: dict | None = None, params: str = "") -> dict:
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(f"{API}{path}{params}", data=data, method=method)
-    req.add_header("Authorization", "Basic " + base64.b64encode(f"API_KEY:{key}".encode()).decode())
-    req.add_header("User-Agent", USER_AGENT)
-    req.add_header("Accept", "application/json")
-    if data is not None:
-        req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
-        raw = resp.read()
-    return json.loads(raw) if raw else {}
+    return webapi.request(method, f"{API}{path}{params}", _auth(key), json_body=body)
 
 
 def describe_error(exc: BaseException) -> str:
     if isinstance(exc, urllib.error.HTTPError):
         if exc.code in (401, 403):
             return f"intervals.icu refused the API key (HTTP {exc.code}); run tools/setup_intervals.sh again"
-        return f"intervals.icu answered HTTP {exc.code}"
+        detail = webapi.error_body(exc)
+        return f"intervals.icu answered HTTP {exc.code}" + (f": {detail}" if detail else "")
     if isinstance(exc, urllib.error.URLError):
         return f"can't reach intervals.icu ({exc.reason})"
     return f"{type(exc).__name__}: {exc}"
@@ -128,75 +117,38 @@ def note_for(record: dict) -> dict:
     }
 
 
-def send(record: dict, key: str) -> int | None:
-    """Add (or update) the session's note. Returns the intervals.icu event id."""
+def activity_name(record: dict) -> str:
+    """"Morning Row" and so on, as Strava and Garmin name activities."""
+    hour = datetime.fromtimestamp(record["started_at"]).hour
+    part = ("Night" if hour < 5 else "Morning" if hour < 12 else "Afternoon" if hour < 17
+            else "Evening" if hour < 21 else "Night")
+    return f"{part} Row"
+
+
+def summary_text(record: dict) -> str:
+    """The coach's summary as plain text: the description of an uploaded activity."""
+    return note_for(record)["description"]
+
+
+def send_note(record: dict, key: str) -> dict:
+    """Add (or update: same uid) the session's calendar note."""
     event = _request("POST", "/athlete/0/events", key, note_for(record), params="?upsertOnUid=true")
-    return event.get("id")
+    return {"event_id": event.get("id")}
 
 
-def _marked(record: dict) -> bool:
-    mark = record.get("intervals_icu") or {}
-    return mark.get("sent_for") == record.get("saved_at")  # sent, and not changed since
-
-
-class IntervalsUploader:
-    """Called once a second by the bridge; sends finished sessions in the background."""
-
-    def __init__(self, session_dir: str, key_file: str) -> None:
-        self.session_dir = session_dir
-        self.key_file = key_file
-        self._next_check = 0.0
-        self._busy = False
-        self._last_error: str | None = None
-
-    def tick(self, now: float | None = None) -> None:
-        now = time.monotonic() if now is None else now
-        if self._busy or now < self._next_check:
-            return
-        self._next_check = now + CHECK_EVERY_S
-        key = read_key(self.key_file)
-        if key is None:
-            return
-        pending = self._pending()
-        if pending:
-            self._busy = True
-            asyncio.get_running_loop().create_task(self._send(pending[0], key))
-
-    def _pending(self) -> list[dict]:
-        oldest = time.time() - SEND_WITHIN_DAYS * 86400
-        out = []
-        for entry in sessions.list_sessions(self.session_dir):
-            if not entry["complete"] or (entry.get("started_at") or 0) < oldest:
-                continue
-            record = sessions.read_session(self.session_dir, entry["id"])
-            if record is not None and not _marked(record):
-                out.append(record)
-        return sorted(out, key=lambda r: r["started_at"])  # oldest first
-
-    async def _send(self, record: dict, key: str) -> None:
+def upload_activity(record: dict, fit: bytes, key: str) -> dict:
+    """Upload the session's FIT file as an activity, then give it a name and the coach's summary."""
+    body, content_type = webapi.multipart({}, "file", f"smartrow-{record['id']}.fit", fit)
+    answer = webapi.request("POST", f"{API}/athlete/0/activities", _auth(key), body=body, content_type=content_type)
+    activity_id = answer.get("id") or (answer.get("activities") or [{}])[0].get("id")
+    if activity_id:
         try:
-            event_id = await asyncio.to_thread(send, record, key)
-        except Exception as exc:  # noqa: BLE001 - offline, key revoked...: try again later
-            message = describe_error(exc)
-            if message != self._last_error:
-                log.warning("intervals.icu note for %s not sent: %s", record["id"], message)
-            self._last_error = message
-            self._next_check = time.monotonic() + RETRY_AFTER_S
-        else:
-            self._last_error = None
-            self._mark(record, event_id)
-            log.info("intervals.icu note added for session %s", record["id"])
-            self._next_check = 0.0  # more waiting? next tick
-        finally:
-            self._busy = False
-
-    def _mark(self, record: dict, event_id: int | None) -> None:
-        current = sessions.read_session(self.session_dir, record["id"])
-        if current is None or current.get("saved_at") != record.get("saved_at"):
-            return  # rewritten meanwhile (rowing resumed): it will be sent again
-        current["intervals_icu"] = {"event_id": event_id, "sent_at": round(time.time()),
-                                    "sent_for": record.get("saved_at")}
-        sessions.save(self.session_dir, current)
+            _request("PUT", f"/activity/{activity_id}", key,
+                     {"name": activity_name(record), "description": summary_text(record)})
+        except Exception as exc:  # noqa: BLE001 - the activity is there; only its text is missing
+            log.warning("intervals.icu activity %s uploaded, but its description wasn't set: %s",
+                        activity_id, describe_error(exc))
+    return {"activity_id": activity_id}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -205,7 +157,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--session-dir", default=os.environ.get("SRB_SESSION_DIR", "").strip() or sessions.DEFAULT_DIR)
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--test", action="store_true", help="check the API key")
-    group.add_argument("--send", metavar="ID", help="send one saved session now (e.g. 2026-10-27T0702)")
     group.add_argument("--preview", metavar="ID", help="print the note a saved session would get")
     args = p.parse_args(argv)
     if args.preview:
@@ -213,22 +164,14 @@ def main(argv: list[str] | None = None) -> int:
         if record is None:
             print(f"No saved session {args.preview} in {args.session_dir}", file=sys.stderr)
             return 1
-        note = note_for(record)
-        print(f"{note['start_date_local'][:10]}  {note['name']}\n\n{note['description']}")
+        print(f"{activity_name(record)}  ({record['id']})\n\n{summary_text(record)}")
         return 0
     key = read_key(args.key_file)
     if key is None:
         print(f"No API key in {args.key_file}: run tools/setup_intervals.sh", file=sys.stderr)
         return 1
     try:
-        if args.test:
-            print(f"intervals.icu: connected as {athlete_name(key)}")
-            return 0
-        record = sessions.read_session(args.session_dir, args.send)
-        if record is None:
-            print(f"No saved session {args.send} in {args.session_dir}", file=sys.stderr)
-            return 1
-        print(f"Note added to your intervals.icu calendar (event {send(record, key)})")
+        print(f"intervals.icu: connected as {athlete_name(key)}")
         return 0
     except Exception as exc:  # noqa: BLE001
         print(describe_error(exc), file=sys.stderr)

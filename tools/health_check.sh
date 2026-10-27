@@ -225,11 +225,13 @@ if [[ -n $HR_SETTING && $HR_SETTING != off ]]; then
         warn "strap not connected yet - it is looked for once the pulley is connected; put the strap on"
     fi
 fi
-if [[ -f /etc/smartrow-bridge/intervals.key ]]; then
-    section "intervals.icu"
-    ok "API key saved (root only)"
-    last=$(grep -E 'intervals.icu note' /var/lib/smartrow-bridge/sessions.log 2>/dev/null | tail -n 1)
-    [[ -n $last ]] && info "last: ${last#* * }"
+if [[ -f /etc/smartrow-bridge/intervals.key || -f /etc/smartrow-bridge/strava.json ]]; then
+    section "Uploads"
+    [[ -f /etc/smartrow-bridge/intervals.key ]] && ok "intervals.icu: API key saved (root only), mode: $(sed -n 's/^SRB_INTERVALS_UPLOAD=//p' "$ENV_FILE" 2>/dev/null | tail -n 1 | grep . || echo activity)"
+    [[ -f /etc/smartrow-bridge/strava.json ]] && ok "Strava: authorized (root only)"
+    last=$(grep -E 'Upload: |not sent:' /var/lib/smartrow-bridge/sessions.log 2>/dev/null | tail -n 3)
+    [[ -n $last ]] && while IFS= read -r line; do info "${line#* * }"; done <<<"$last"
+    info "per session: cd $PREFIX && sudo venv/bin/python -m smartrow_bridge.uploads --status"
 fi
 
 section "SD card and system"
