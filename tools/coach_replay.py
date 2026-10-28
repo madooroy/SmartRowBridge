@@ -35,7 +35,7 @@ from smartrow_bridge import sessions  # noqa: E402
 from smartrow_bridge.coach import CoachSettings, IntervalCoach  # noqa: E402
 from smartrow_bridge.protocol import FORCE_SAMPLES, StrokeCurve  # noqa: E402
 
-CUE_NAMES = {"good": "good", "finish": "BACK HALF FADING", "legs": "FORCE LATE", "length": "STROKES SHORTER",
+CUE_NAMES = {"good": "LOOKS GOOD", "finish": "STRONGER FINISH", "legs": "EARLIER PUSH", "length": "LONGER STROKES",
              None: "first strokes"}
 
 

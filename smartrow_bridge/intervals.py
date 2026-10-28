@@ -110,7 +110,7 @@ def note_for(record: dict) -> dict:
             if i.get("hr_peak"):
                 row += f"  HR peak {i['hr_peak']}"
             if i.get("legs_late"):
-                row += "  force late"
+                row += "  late push"
             lines.append(row)
     lines += ["", "From SmartRowBridge (interval coach)."]
     return {

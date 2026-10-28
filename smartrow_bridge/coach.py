@@ -10,48 +10,44 @@ Fed one StrokeCurve per completed stroke (see protocol.SmartRowParser.on_stroke)
   are ignored, and the strokes just after an effort (recovery) never teach the
   steady reference.
 - Live cue, during an effort: compares the last few strokes' curve shape with your
-  steady curve. "finish" (shown as BACK HALF FADING) when less of the force comes in
-  the back half of the drive than in steady rowing, "legs" (FORCE LATE) when the force
-  comes later in the drive than in steady rowing, "length" (STROKES SHORTER) when
-  strokes get clearly shorter, otherwise "good".
+  steady curve, and says what to do in two words, naming a part of the stroke, never a
+  muscle: STRONGER FINISH ("finish") when less of the force comes in the back half of the
+  drive than in steady rowing, EARLIER PUSH ("legs") when the force builds later in the
+  drive, LONGER STROKES ("length") when strokes get clearly shorter, otherwise LOOKS GOOD.
+  (The internal names are kept so saved sessions still read.)
 - Summary, after each effort: its average curve, peak force, stroke length, finish
-  share and how consistently the force peak lands (peak spread), all against the steady
-  reference. Also logged, so it lands in the session record.
+  share and where the force peaks (and how consistently), all against the steady
+  reference. Also logged, so it lands in the session record. Summaries describe (a late
+  push, a fading finish); only the live cues instruct.
 
-What the cues and summaries say is what the curve does, never which muscles did it: the
-pulley measures the total force on the strap, and different causes look alike (an early
-arm pull, for one, can pass for a strong push off the catch). They flag a change against
-your own steady rowing; a video of the effort shows what changed. (The internal names
-"finish" and "legs" are kept so saved sessions still read.)
+The pulley measures the total force on the strap, and different causes look alike (an
+early arm pull, for one, can pass for a strong push off the catch), so nothing here says
+which muscles did what: a cue flags a change against your own steady rowing, and a video
+of the effort shows what changed. (Thanks to Jaap van Ekris, Open Rowing Monitor.)
 
 Stroke power is work x rate / 60 for that stroke. The pulley's own instantaneous
 power lags a stroke behind, which would blur where an effort starts and ends.
 
-Calibrated on a 45-minute session with seven efforts at ~150 W over ~111 W steady:
-the back-half share of the curve was 0.29 steady, 0.29-0.35 in the efforts that kept
-their shape and 0.23-0.24 in the ones that went short, with about 0.02 stroke-to-stroke
-scatter.
+The force samples are taken at fixed distances along the stroke (about every 5.8 cm of
+handle travel), not at fixed times: across 2,952 real strokes the last sample with force
+tracks stroke length (correlation 0.97: about sample 17 at 100 cm, 20 at 120 cm), not
+stroke rate. So every shape measure works on the stroke's own drive, from the catch to
+its last sample with force (drive_end): a shorter stroke then shows as LONGER STROKES
+only, not also as a weaker finish. (An earlier version split every stroke at sample 12;
+on a 45-minute session three efforts with strokes 2-3 % shorter then read as a -15 %
+finish, when against their own length their finish was within 1 % of steady.)
 
-The "legs" (FORCE LATE) cue measures where the curve's centre of force sits (in samples,
-0-23) against the steady curve, minus what a longer stroke explains by itself
-(LATE_PER_PCT per % of extra length, longer strokes only): longer strokes push the centre
-later by themselves. Over 15 real intervals the length-corrected shift never exceeded
-+0.34 samples; the peak moving from about sample 8 to 11 shifts it by 1.5 or more. The
-cue threshold sits between, untested on a real late stroke so far.
-
-The force samples are taken at fixed distances along the stroke, not at fixed times:
-across 2,952 real strokes the last sample with force tracks stroke length (correlation
-0.97: about sample 17 at 100 cm, 20 at 120 cm), not stroke rate. So the curve is force
-against handle position, about 5.8 cm per sample, and a 115 cm drive fills about 20 of
-the 24 samples. back_share() keeps its fixed split at sample 12 (what the thresholds were
-calibrated on); it is compared with your own steady strokes, and longer strokes are
-allowed for where it matters (drive_lateness).
-
-Peak spread: where in the drive each stroke's force peaks (0-100 % of that stroke's own
-drive, the centre of the samples within 10 % of its maximum, so a flat top doesn't jump
-about), and its standard deviation over the interval's strokes, against the same for the
-steady strokes. Suggested by Jaap van Ekris (Open Rowing Monitor), who found the peak's
-stroke-to-stroke variability telling in his own rowing.
+Calibrated on six real sessions (2,952 strokes, 15 efforts):
+- finish: the back-half share varies about 6.6 % from stroke to stroke; efforts ranged
+  from -9 % to +4 % against steady. Thresholds: cue below -12 %, summary colours at
+  -5 % and -12 %.
+- push: the centre of force (as % of the drive) varies about 2 % from stroke to stroke;
+  no effort's average moved more than 2.3 % from steady. The cue sits at 3 % later,
+  untested on a real late stroke so far.
+- peak spread: where each stroke's force peaks (the centre of the samples within 10 % of
+  its maximum, so a flat top doesn't jump about), as % of the drive, and its standard
+  deviation over the interval: 2-5 % in these sessions. Suggested by Jaap van Ekris, who
+  found the peak's stroke-to-stroke variability telling in his own rowing.
 
 Stroke length is judged as a percentage of the steady stroke, so tall and short rowers
 are treated alike. CoachSettings holds what a rower may want to change (how much harder
@@ -82,10 +78,10 @@ NEW_SESSION_S = 300.0  # no stroke for this long starts over
 
 CUE_WINDOW = 8  # strokes in the live cue
 CUE_MIN = 6  # strokes into an effort before the first cue
-LATE_PER_PCT = 0.115  # centre of force moves this much later per % of extra stroke length
-#                       (0.1 sample per cm at ~115 cm, from real sessions)
+DRIVE_END_FRACTION = 0.05  # the drive ends at the last sample above this share of the stroke's peak
 GOOD_FINISH, OK_FINISH = 0.95, 0.88  # summary colours (fixed, so screens agree across settings)
 PEAK_SPREAD_RATIO, PEAK_SPREAD_MIN = 1.5, 3.0  # peak spread flagged above both: x steady, and steady + this (% of drive)
+SHORTER_CM = -2.0  # an interval's strokes this much shorter than steady are called out
 SUMMARY_SHOW_S = 45.0  # how long the summary is shown after an effort
 
 
@@ -93,16 +89,16 @@ SUMMARY_SHOW_S = 45.0  # how long the summary is shown after an effort
 class CueThresholds:
     finish_cue: float  # back-half share vs steady: cue below ...
     finish_clear: float  # ... clear above
-    legs_cue: float  # centre of force later than steady, samples (length-corrected)
+    legs_cue: float  # centre of force later than steady, % of the drive
     legs_clear: float
     length_cue_pct: float  # strokes shorter than steady by this %
     length_clear_pct: float
 
 
 SENSITIVITY = {
-    "low": CueThresholds(0.84, 0.88, 0.80, 0.60, 3.5, 2.5),
-    "normal": CueThresholds(0.88, 0.92, 0.60, 0.45, 2.6, 1.7),  # calibrated
-    "high": CueThresholds(0.91, 0.94, 0.45, 0.35, 2.0, 1.3),
+    "low": CueThresholds(0.84, 0.88, 4.0, 3.0, 3.5, 2.5),
+    "normal": CueThresholds(0.88, 0.92, 3.0, 2.3, 2.6, 1.7),  # calibrated
+    "high": CueThresholds(0.91, 0.94, 2.3, 1.8, 2.0, 1.3),
 }
 
 
@@ -139,25 +135,43 @@ LEGS_CUE = DEFAULT_SETTINGS.cues.legs_cue
 MAX_EFFORT_S = DEFAULT_SETTINGS.max_effort_s
 
 
+def drive_end(force: list[int] | list[float]) -> int:
+    """The last sample of the drive: the last one above DRIVE_END_FRACTION of the peak.
+
+    The samples are spaced by distance, so a longer stroke fills more of them; averaged
+    curves trail off gradually, hence a fraction of the peak rather than any force at all.
+    """
+    top = max(force) if force else 0
+    if top <= 0:
+        return 0
+    return max(i for i, f in enumerate(force) if f > DRIVE_END_FRACTION * top)
+
+
 def back_share(force: list[int] | list[float]) -> float:
-    """Fraction of the stroke's force in the back half of the drive (samples 12-23)."""
-    total = sum(force)
-    return sum(force[FORCE_SAMPLES // 2:]) / total if total else 0.0
+    """Fraction of the stroke's force in the back half of its own drive."""
+    end = drive_end(force)
+    total = sum(force[:end + 1])
+    if not total:
+        return 0.0
+    mid = end / 2
+    back = sum(f for i, f in enumerate(force[:end + 1]) if i > mid)
+    if mid == int(mid):
+        back += force[int(mid)] / 2  # the middle sample: half each side
+    return back / total
 
 
 def centre_of_force(force: list[int] | list[float]) -> float:
-    """Where in the drive the force is centred, in samples from the catch (0-23)."""
-    total = sum(force)
-    return sum(i * f for i, f in enumerate(force)) / total if total else 0.0
+    """Where in the drive the force is centred, as % of the stroke's own drive (catch 0, end 100)."""
+    end = drive_end(force)
+    total = sum(force[:end + 1])
+    if not total or not end:
+        return 0.0
+    return sum(i * f for i, f in enumerate(force[:end + 1])) / total / end * 100
 
 
-def drive_lateness(curve: list[float], steady_curve: list[float], length_delta_pct: float) -> float:
-    """How much later than steady the force comes, beyond what the stroke length explains.
-
-    Only extra length is credited: a longer stroke moves the centre later by itself, but
-    a shorter one is never taken as a reason for the force to come late.
-    """
-    return centre_of_force(curve) - centre_of_force(steady_curve) - LATE_PER_PCT * max(0.0, length_delta_pct)
+def drive_lateness(curve: list[float], steady_curve: list[float]) -> float:
+    """How much later than steady the force comes, in % of the drive (positive = later)."""
+    return centre_of_force(curve) - centre_of_force(steady_curve)
 
 
 def peak_position(force: list[int] | list[float]) -> float:
@@ -170,9 +184,8 @@ def peak_position(force: list[int] | list[float]) -> float:
     top = max(force) if force else 0
     if top <= 0:
         return 0.0
-    last = max(i for i, f in enumerate(force) if f > 0)
     near = [i for i, f in enumerate(force) if f >= 0.9 * top]
-    return sum(near) / len(near) / max(1, last) * 100
+    return sum(near) / len(near) / max(1, drive_end(force)) * 100
 
 
 def peak_stats(strokes) -> tuple[float, float]:
@@ -227,7 +240,7 @@ class IntervalSummary:
 
     @property
     def lateness(self) -> float:
-        return drive_lateness(self.curve, self.steady_curve, self.length_delta_pct)
+        return drive_lateness(self.curve, self.steady_curve)
 
     @property
     def legs_late(self) -> bool:
@@ -287,7 +300,7 @@ class IntervalSummary:
                 f"peak {self.peak_n:.0f} N at {self.peak_at_pct:.0f}% \u00b1{self.peak_spread_pct:.1f} "
                 f"(steady {self.steady_peak_at_pct:.0f}% \u00b1{self.steady_peak_spread_pct:.1f}), "
                 f"finish {self.finish_pct:+d}% vs steady ({self.rating})"
-                + (f", force late ({self.lateness:+.1f})" if self.legs_late else ""))
+                + (f", late push ({self.lateness:+.1f}% of the drive)" if self.legs_late else ""))
 
 
 @dataclass
@@ -466,7 +479,7 @@ class IntervalCoach:
         ratio = back_share(curve) / (self.steady_back_share() or 1)
         steady_len = self.steady_length() or 1
         short_by_pct = (steady_len - statistics.fmean(s.stroke_length_cm for s in window)) / steady_len * 100
-        late = drive_lateness(curve, mean_curve(self.steady), -short_by_pct)
+        late = drive_lateness(curve, mean_curve(self.steady))
         if ratio < t.finish_cue or (e.cue == "finish" and ratio < t.finish_clear):
             e.cue = "finish"
         elif late > t.legs_cue or (e.cue == "legs" and late > t.legs_clear):
@@ -562,32 +575,35 @@ def findings(intervals: list[dict]) -> list[str]:
     if not intervals:
         return ["No intervals: steady rowing only, or efforts too short or too close to the steady pace to count."]
     out: list[str] = []
-    good = [i for i in intervals if i["rating"] == "good" and not i.get("legs_late")]
-    short = [i for i in intervals if i["rating"] == "short"]
+    shorter = [i for i in intervals if i.get("length_delta_cm", 0) <= SHORTER_CM]
+    good = [i for i in intervals if i["rating"] == "good" and not i.get("legs_late") and i not in shorter]
+    faded = [i for i in intervals if i["rating"] == "short"]  # "short": the finish faded (an old name)
     ok = [i for i in intervals if i["rating"] == "ok"]
     n = len(intervals)
 
     if len(good) == n:
-        out.append(f"All {n} intervals kept their shape: finish within 5% of steady.")
+        out.append(f"All {n} intervals kept their shape and length: finish within 5% of steady.")
     elif good:
-        out.append(f"{len(good)} of {n} kept their shape ({_names(good)}).")
-    if short:
-        lo, hi = min(i["finish_pct"] for i in short), max(i["finish_pct"] for i in short)
+        out.append(f"{len(good)} of {n} kept their shape and length ({_names(good)}).")
+    if faded:
+        lo, hi = min(i["finish_pct"] for i in faded), max(i["finish_pct"] for i in faded)
         span = _pct(lo) if lo == hi else f"{_pct(hi)} to {_pct(lo)}"
-        length = sum(i["length_delta_cm"] for i in short) / len(short)
-        extra = f", strokes {abs(length):.0f} cm shorter" if length <= -2 else ""
-        out.append(f"{_names(short)} went short: finish {span} against steady{extra}.")
+        out.append(f"The finish faded in {_names(faded)}: {span} against steady.")
     if ok:
         pcts = ", ".join(_pct(i["finish_pct"]) for i in ok)
-        out.append(f"{_names(ok)} slipped a little (finish {pcts}).")
+        out.append(f"The finish eased a little in {_names(ok)} ({pcts}).")
+    if shorter:
+        cm = sum(i["length_delta_cm"] for i in shorter) / len(shorter)
+        out.append(f"Strokes were shorter than steady in {_names(shorter)} (about {abs(cm):.0f} cm).")
 
-    # Did the long efforts lose their shape and the short ones keep it?
-    if len(short) >= 2 and len(good) >= 2:
-        d_short = sum(i["duration_s"] for i in short) / len(short)
+    # Did the longer efforts slip and the shorter ones hold?
+    slipped = [i for i in intervals if i in faded or i in shorter]
+    if len(slipped) >= 2 and len(good) >= 2:
+        d_slip = sum(i["duration_s"] for i in slipped) / len(slipped)
         d_good = sum(i["duration_s"] for i in good) / len(good)
-        if d_short > d_good * 1.3:
-            out.append(f"The ones that went short were the longer efforts (about {_clock(d_short)} against "
-                       f"{_clock(d_good)}): the back half faded as the pieces went on.")
+        if d_slip > d_good * 1.3:
+            out.append(f"The ones that slipped were the longer efforts (about {_clock(d_slip)} against "
+                       f"{_clock(d_good)}).")
 
     long_fades = [i for i in intervals if i["duration_s"] >= 90 and i.get("fade_pct", 0) <= -5]
     if long_fades:
@@ -597,7 +613,7 @@ def findings(intervals: list[dict]) -> list[str]:
 
     legs = [i for i in intervals if i.get("legs_late")]
     if legs:
-        out.append(f"Force came later in the drive than in steady rowing in {_names(legs)}. The curve can't say "
+        out.append(f"The push came later in the drive than in steady rowing in {_names(legs)}. The curve can't say "
                    f"why (an early arm pull and a slow push off the catch look alike); a video of an effort can.")
 
     wander = [i for i in intervals if i.get("peak_wanders")]

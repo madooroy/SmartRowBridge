@@ -5,14 +5,17 @@ from smartrow_bridge.coach import IntervalCoach, back_share
 from smartrow_bridge.protocol import StrokeCurve
 
 # Average curves (N) from a real 45-minute session: steady rowing, an effort that kept
-# its shape, and one that went short and leg-heavy (back-half share 0.29 / 0.31 / 0.24).
+# its shape, and one whose strokes went 2-3 % shorter (same shape over fewer samples: the
+# samples are spaced by distance).
 STEADY = [131, 210, 286, 344, 389, 422, 445, 465, 467, 455, 430, 401, 375, 340, 295, 246, 196, 148, 104, 68, 32,
           7, 0, 0]
 FULL = [143, 232, 325, 401, 467, 520, 566, 593, 612, 604, 575, 537, 502, 461, 402, 337, 272, 211, 153, 100, 63, 28,
         0, 0]
 SHORT = [176, 295, 414, 512, 593, 656, 696, 714, 701, 666, 613, 550, 492, 416, 339, 269, 203, 146, 95, 51, 14, 2,
          0, 0]
-# Steady shape pushed 3 samples later: a slow push off the catch, force from back and arms.
+# The steady shape with the back half of the drive weakened (30 % less force there): a fading finish.
+FADED = [round(v * (0.7 if 11 <= i <= 19 else 1)) for i, v in enumerate(STEADY)]
+# Steady shape pushed 3 samples later: the force builds later in the drive (a late push).
 LATE = [40, 80, 131, 210, 286, 344, 389, 422, 445, 465, 467, 455, 430, 401, 375, 340, 295, 246, 196, 148, 104, 68,
         32, 7]
 RATE = 21.0
@@ -45,8 +48,9 @@ class Rower:
 
 class CoachTest(unittest.TestCase):
     def test_back_share(self):
-        self.assertAlmostEqual(back_share(STEADY), 0.29, places=2)
-        self.assertAlmostEqual(back_share(SHORT), 0.24, places=2)
+        self.assertAlmostEqual(back_share(STEADY), 0.39, places=2)  # of its own drive
+        self.assertAlmostEqual(back_share(FADED) / back_share(STEADY), 0.82, places=2)
+        self.assertGreater(back_share(SHORT) / back_share(STEADY), 0.94)  # shorter, not fading
         self.assertEqual(back_share([0] * 24), 0.0)
 
     def test_warmup_then_steady(self):
@@ -118,17 +122,17 @@ class CoachTest(unittest.TestCase):
     def test_live_cue_finish(self):
         r = Rower()
         r.row(60, 110)
-        r.row(3, 155, SHORT, length=112)
+        r.row(3, 155, FADED, length=112)
         self.assertIsNone(r.state()["live"]["cue"])  # too early to judge
         self.assertIsNone(r.state()["live"]["finish_pct"])
-        r.row(8, 155, SHORT, length=112)
+        r.row(8, 155, FADED, length=112)
         live = r.state()["live"]
         self.assertEqual(live["cue"], "finish")
         self.assertLess(live["finish_pct"], -12)
         self.assertEqual(live["length_delta_cm"], -3)
         self.assertEqual(live["index"], 1)
         self.assertEqual(len(live["curve"]), 24)
-        r.row(30, 155, SHORT, length=112)
+        r.row(30, 155, FADED, length=112)
         r.row(15, 110)
         self.assertEqual(r.summaries[0].rating, "short")
         self.assertLess(r.summaries[0].finish_pct, -12)
@@ -144,13 +148,17 @@ class CoachTest(unittest.TestCase):
         s = r.summaries[0]
         self.assertTrue(s.legs_late)
         self.assertTrue(s.as_dict()["legs_late"])
-        self.assertIn("force late", logs.output[0])
+        self.assertIn("late push", logs.output[0])
 
-    def test_longer_stroke_is_not_weak_legs(self):
-        """A longer stroke moves the centre of force later by itself; that is not a weak leg drive."""
-        self.assertLess(coach.drive_lateness(FULL, STEADY, 6.1), coach.LEGS_CUE)
-        self.assertGreater(coach.drive_lateness(LATE, STEADY, 0), coach.LEGS_CUE + 1)
-        self.assertLess(coach.drive_lateness(SHORT, STEADY, -2.6), 0)  # leg-heavy: early, the opposite
+    def test_shape_is_measured_on_the_strokes_own_drive(self):
+        """The samples are spaced by distance: a shorter stroke ends sooner, which is LONGER STROKES, not
+        a weaker finish or a later push."""
+        # Real: Saturday's efforts with strokes 2-3 % shorter, against steady.
+        self.assertLess(coach.drive_end(SHORT), coach.drive_end(STEADY))
+        self.assertGreater(coach.back_share(SHORT) / coach.back_share(STEADY), 1 - (1 - coach.FINISH_CUE) / 2)
+        self.assertLess(abs(coach.drive_lateness(SHORT, STEADY)), coach.LEGS_CUE)
+        self.assertLess(abs(coach.drive_lateness(FULL, STEADY)), coach.LEGS_CUE)
+        self.assertGreater(coach.drive_lateness(LATE, STEADY), coach.LEGS_CUE)
 
     def test_live_cue_good_and_length(self):
         r = Rower()
@@ -246,8 +254,8 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(len(r.summaries), found, limit)
 
     def test_high_sensitivity_speaks_up_sooner(self):
-        """A mildly short finish (-10 %): no cue at normal, a cue at high."""
-        mild = [round(a * 0.35 + b * 0.65) for a, b in zip(FULL, SHORT)]
+        """A mildly fading finish (-10 %): no cue at normal, a cue at high."""
+        mild = [round(v * (0.82 if 11 <= i <= 19 else 1)) for i, v in enumerate(STEADY)]
         ratio = back_share(mild) / back_share(STEADY)
         self.assertTrue(0.88 < ratio < 0.91, ratio)
         for sensitivity, cue in (("normal", "good"), ("high", "finish")):

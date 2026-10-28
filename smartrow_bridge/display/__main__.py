@@ -201,7 +201,7 @@ def preview(directory: str) -> None:
     short_last = {**good_last, "index": 7, "duration_s": 182, "strokes": 64, "power_w": 156, "length_cm": 112.5,
                   "length_delta_cm": -3.6, "peak_n": 719, "finish_pct": -15, "rating": "short", "curve": short}
     legs_last = {**good_last, "index": 4, "finish_pct": 14, "curve": late, "length_delta_cm": 0.0,
-                 "drive_late": 2.1, "legs_late": True}
+                 "drive_late": 4.3, "legs_late": True, "peak_at_pct": 52, "steady_peak_at_pct": 41}
     shots = {
         "01-starting-up": screens.status_screen(None, now, 12.0, addr),
         "02-preparing": screens.status_screen(st("starting"), now, up, addr),

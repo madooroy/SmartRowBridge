@@ -189,7 +189,7 @@
       <div class="sumhead"><div class="label" id="sTitle">INTERVAL</div><div class="value" id="sHead"></div></div>
       <div class="tile curve"><canvas id="sCurve"></canvas></div>
       <div class="tiles3">
-        <div class="tile"><div class="label">FINISH</div><div class="value" id="sFinish"></div>
+        <div class="tile"><div class="label" id="sFinishLabel">FINISH</div><div class="value" id="sFinish"></div>
           <div class="mini" id="sMini"><div class="fill"></div><div class="tick"></div></div></div>
         <div class="tile"><div class="label">LENGTH</div><div class="value" id="sLength"></div></div>
         <div class="tile"><div class="label">PEAK</div><div class="value" id="sPeak"></div></div>
@@ -240,9 +240,9 @@ const C = { bg: "#000", fg: "#f0f0f0", dim: "#878787", faint: "#464646", tile: "
             green: "#46cd5f", amber: "#f5af2d", red: "#eb4b41", gap: "#d7d7d7" };
 const GOOD_PCT = -5, OK_PCT = -12, METER_MIN = -30, METER_MAX = 15, FORCE_HALF = 12;
 const STALE_S = 5, RECALL_S = 20, POLL_MS = 1000;
-// What the curve does against your steady strokes, not which muscles (see coach.py).
-const CUES = { finish: ["BACK HALF FADING", C.amber], legs: ["FORCE LATE", C.amber],
-               length: ["STROKES SHORTER", C.amber], good: ["GOOD", C.green] };
+// Two words: what to do, and the part of the stroke; never a muscle (see coach.py).
+const CUES = { finish: ["STRONGER FINISH", C.amber], legs: ["EARLIER PUSH", C.amber],
+               length: ["LONGER STROKES", C.amber], good: ["LOOKS GOOD", C.green] };
 const RATING = { good: C.green, ok: C.amber, short: C.red };
 
 const $ = (id) => document.getElementById(id);
@@ -370,7 +370,8 @@ function renderSummary(last) {
   const colour = legs ? C.amber : (RATING[last.rating] || C.fg);
   $("sTitle").textContent = `INTERVAL ${last.index}`;
   $("sHead").textContent = `${fmtTime(last.duration_s)} · ${last.power_w} W`;
-  $("sFinish").textContent = signed(last.finish_pct, "%");
+  $("sFinishLabel").textContent = legs ? "PEAK AT" : "FINISH";  // a late push inflates the finish figure
+  $("sFinish").textContent = legs ? `${last.peak_at_pct ?? "–"}%` : signed(last.finish_pct, "%");
   $("sFinish").style.color = colour;
   const mini = $("sMini");
   mini.querySelector(".fill").style.cssText = `width:${meterPos(last.finish_pct)}%;background:${legs ? C.amber : finishColour(last.finish_pct)}`;
@@ -378,7 +379,7 @@ function renderSummary(last) {
   $("sLength").textContent = `${Math.round(last.length_cm)} cm`;
   $("sPeak").textContent = `${last.peak_n} N`;
   const note = $("sNote");
-  note.textContent = legs ? "FORCE LATE" : `${signed(Math.round(last.length_delta_cm), " cm")} vs steady · ${last.strokes} strokes · ${last.stroke_rate_spm} spm`;
+  note.textContent = legs ? `LATE PUSH · steady ${last.steady_peak_at_pct ?? "–"}%` : `${signed(Math.round(last.length_delta_cm), " cm")} vs steady · ${last.strokes} strokes · ${last.stroke_rate_spm} spm`;
   note.className = legs ? "note warn" : "note";
   drawCurve($("sCurve"), last.curve, last.steady_curve, colour, legs ? "front" : "back");
 }
@@ -407,7 +408,7 @@ function renderHistory(coach) {
   layout.classList.toggle("with-history", items.length > 0);
   $("history").innerHTML = items.slice().reverse().map((i) => {
     const colour = i.legs_late ? C.amber : (RATING[i.rating] || C.fg);
-    const flag = i.legs_late ? " · force late" : "";
+    const flag = i.legs_late ? " · late push" : "";
     return `<div class="row"><span class="n">${i.index}</span>
       <span>${fmtTime(i.duration_s)} · ${i.power_w} W<div class="sub">${signed(Math.round(i.length_delta_cm), " cm")}${flag}</div></span>
       <span class="pct" style="color:${colour}">${signed(i.finish_pct, "%")}</span></div>`;
@@ -568,7 +569,7 @@ function renderSession(s) {
     `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join("");
   $("ssFindings").innerHTML = (s.findings || []).map((f) => `<li>${f}</li>`).join("");
   $("ssCards").innerHTML = iv.map((i) => {
-    const flags = [i.legs_late ? "FORCE LATE" : "", i.peak_wanders ? "PEAK LESS CONSISTENT" : "",
+    const flags = [i.legs_late ? "LATE PUSH" : "", i.peak_wanders ? "PEAK LESS CONSISTENT" : "",
                    i.duration_s >= 90 && i.fade_pct <= -5 ? `FADED ${signed(i.fade_pct, "%")}` : ""]
       .filter(Boolean).join(" · ");
     return `<div class="tile card">
@@ -788,7 +789,7 @@ function shareImage(s) {
       text(signed(i.finish_pct, "%"), x + cardW - 22, top + 48, 40, ratingColour(i), true, "right");
       plotCurve(g, x + 6, top + 62, cardW - 12, 130, i.curve, i.steady_curve, ratingColour(i),
                 i.legs_late ? "front" : "back", false, 2);
-      const note = i.legs_late ? "force late" : `${Math.round(i.length_cm)} cm (${signed(Math.round(i.length_delta_cm), "")}) · ${i.stroke_rate_spm} spm` +
+      const note = i.legs_late ? "late push" : `${Math.round(i.length_cm)} cm (${signed(Math.round(i.length_delta_cm), "")}) · ${i.stroke_rate_spm} spm` +
                    (i.hr_peak ? ` · ♥ ${i.hr_peak}` : "");
       text(note, x + 22, top + cardH - 22, 24, i.legs_late ? C.amber : C.dim, !!i.legs_late);
     });
@@ -857,9 +858,9 @@ function drawPip() {
     const colour = last.legs_late ? C.amber : (RATING[last.rating] || C.fg);
     text(`INTERVAL ${last.index}`, 16, 34, 22, C.dim);
     text(`${fmtTime(last.duration_s)} · ${last.power_w} W`, W / 2, 95, 50, C.fg, "center");
-    text("FINISH", 16, 175, 22, C.dim, "left", false);
-    text(signed(last.finish_pct, "%"), W - 16, 175, 56, colour, "right");
-    text(last.legs_late ? "FORCE LATE" : `length ${signed(Math.round(last.length_delta_cm), " cm")}`,
+    text(last.legs_late ? "PEAK AT" : "FINISH", 16, 175, 22, C.dim, "left", false);
+    text(last.legs_late ? `${last.peak_at_pct ?? "–"}%` : signed(last.finish_pct, "%"), W - 16, 175, 56, colour, "right");
+    text(last.legs_late ? `LATE PUSH · steady ${last.steady_peak_at_pct ?? "–"}%` : `length ${signed(Math.round(last.length_delta_cm), " cm")}`,
          W / 2, 240, 26, last.legs_late ? C.amber : C.dim, "center", !!last.legs_late);
   } else {
     const m = st.metrics || {}, rowing = !!st.rowing;

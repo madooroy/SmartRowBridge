@@ -34,8 +34,9 @@ class FindingsTest(unittest.TestCase):
         summary = saturday().coach.session_summary()
         self.assertEqual(len(summary["intervals"]), 4)
         text = " ".join(summary["findings"])
-        self.assertIn("2 of 4 kept their shape (I1 and I2)", text)
-        self.assertIn("I3 and I4 went short", text)
+        self.assertIn("2 of 4 kept their shape and length (I1 and I2)", text)
+        self.assertIn("Strokes were shorter than steady in I3 and I4", text)
+        self.assertNotIn("finish faded", text)  # shorter strokes are not a fading finish
         self.assertIn("were the longer efforts", text)
         self.assertIn("Steady pace held at about 110 W", text)
         self.assertNotIn("-", text.replace("−", ""))  # real minus signs only
@@ -51,7 +52,12 @@ class FindingsTest(unittest.TestCase):
     def test_all_good(self):
         self.assertEqual(coach.findings([{"index": 1, "rating": "good", "finish_pct": 1, "duration_s": 60,
                                           "length_delta_cm": 1, "fade_pct": 0}])[0],
-                         "All 1 intervals kept their shape: finish within 5% of steady.")
+                         "All 1 intervals kept their shape and length: finish within 5% of steady.")
+
+    def test_faded_finish(self):
+        iv = [{"index": 1, "rating": "short", "finish_pct": -15, "duration_s": 120, "length_delta_cm": 0,
+               "fade_pct": 0}]
+        self.assertIn("The finish faded in I1: \u221215% against steady.", coach.findings(iv))
 
     def test_legs_and_fade(self):
         iv = [{"index": 1, "rating": "good", "finish_pct": 8, "duration_s": 120, "length_delta_cm": 0,
@@ -59,11 +65,11 @@ class FindingsTest(unittest.TestCase):
               {"index": 2, "rating": "good", "finish_pct": 0, "duration_s": 60, "length_delta_cm": 0,
                "fade_pct": 0, "legs_late": False, "steady_power_w": 120}]
         text = " ".join(coach.findings(iv))
-        self.assertIn("Force came later in the drive than in steady rowing in I1", text)
+        self.assertIn("The push came later in the drive than in steady rowing in I1", text)
         self.assertNotIn("leg drive", text.lower())  # describes the curve, not muscles
         self.assertIn("I1 faded within itself: finish −9%", text)
         self.assertIn("Steady pace went from 100 W to 120 W", text)
-        self.assertIn("1 of 2 kept their shape (I2)", text)  # late legs don't count as kept
+        self.assertIn("1 of 2 kept their shape and length (I2)", text)  # late legs don't count as kept
 
 
 class RecorderTest(unittest.TestCase):
@@ -145,7 +151,7 @@ class RecorderTest(unittest.TestCase):
         self.assertNotEqual(first, second)
         listing = sessions.list_sessions(str(self.dir))
         self.assertEqual([x["id"] for x in listing], [second.stem, first.stem])  # newest first
-        self.assertEqual((listing[1]["intervals"], listing[1]["short"]), (4, 2))
+        self.assertEqual((listing[1]["intervals"], listing[1]["short"]), (4, 0))  # shorter, not faded
         self.assertEqual(sessions.read_session(str(self.dir), first.stem)["distance_m"], 6000)
 
     def test_read_rejects_odd_ids(self):

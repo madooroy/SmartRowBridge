@@ -41,7 +41,7 @@ class WebTest(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertIn("text/html", headers["Content-Type"])
         self.assertEqual(headers["Cache-Control"], "no-store")
-        self.assertIn(b"BACK HALF FADING", body)
+        self.assertIn(b"STRONGER FINISH", body)
         self.assertEqual(body, PAGE.read_bytes())
 
     def test_status_with_age(self):
@@ -155,7 +155,7 @@ class ReplayToolTest(unittest.TestCase):
         text = out.getvalue()
         self.assertIn("101 strokes, steady about 110 W", text)
         self.assertIn("Interval 1: 1:00, 21 strokes, 152 W", text)
-        self.assertIn("live cue: good", text)
+        self.assertIn("live cue: LOOKS GOOD", text)
 
     def test_unreadable_file(self):
         import tools.coach_replay as replay_tool

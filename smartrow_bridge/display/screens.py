@@ -259,11 +259,11 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
 # ---------------------------------------------------------------- interval coach
 
 CUES = {
-    # What the curve does against your steady strokes, not which muscles (see coach.py).
-    "finish": ("BACK HALF FADING", AMBER),
-    "legs": ("FORCE LATE", AMBER),
-    "length": ("STROKES SHORTER", AMBER),
-    "good": ("GOOD", GREEN),
+    # Two words: what to do, and the part of the stroke; never a muscle (see coach.py).
+    "finish": ("STRONGER FINISH", AMBER),
+    "legs": ("EARLIER PUSH", AMBER),
+    "length": ("LONGER STROKES", AMBER),
+    "good": ("LOOKS GOOD", GREEN),
 }
 RATING_COLOURS = {"good": GREEN, "ok": AMBER, "short": RED}
 GOOD_FINISH_PCT, OK_FINISH_PCT = -5, -12  # same bands as smartrow_bridge.coach (GOOD_FINISH, OK_FINISH)
@@ -307,7 +307,7 @@ def _plot_curves(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], curv
         draw.polygon([(x0, y1), *pts, (x1, y1)], fill=_shade(colour))
     if curve and steady:
         # Fill the force missing against the steady shape in the half that matters:
-        # the back half normally, the front half when the force came late.
+        # the back half normally, the front half after a late push.
         sp = points(steady)
         span = range(FORCE_HALF + 1, len(pts) - 1) if gap_half == "back" else range(0, FORCE_HALF + 1)
         for i in span:
@@ -331,7 +331,7 @@ def _finish_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct
     """Back-half force against steady: a big number and a bar with a tick at steady.
 
     `colour` overrides the green/amber/red bands: a strong finish is no good when it
-    only comes from force arriving late.
+    only comes from a late push.
     """
     x0, y0, x1, y1 = box
     draw.rounded_rectangle(box, radius=8, fill=TILE)
@@ -408,8 +408,12 @@ def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
                  "front" if legs_late else "back")
 
     delta = last.get("length_delta_cm", 0)
+    # A late push: where the force peaked says more than the finish figure (which a late
+    # push inflates).
+    first = (("PEAK AT", f"{last.get('peak_at_pct', 0)}%", AMBER) if legs_late
+             else ("FINISH", f"{last['finish_pct']:+d}%", colour))
     tiles = [
-        ("FINISH", f"{last['finish_pct']:+d}%", colour),
+        first,
         ("LENGTH", f"{round(last['length_cm'])} cm", FG),
         ("PEAK", f"{last['peak_n']} N", FG),
     ]
@@ -424,7 +428,8 @@ def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
             _mini_meter(draw, (x0 + 8, y1 - 8, x0 + tile_w - 8, y1 - 4), last["finish_pct"],
                         AMBER if legs_late else None)
     if legs_late:
-        draw.text((WIDTH - 6, HEIGHT - 4), "FORCE LATE", font=font(13, True), fill=AMBER, anchor="rd")
+        draw.text((WIDTH - 6, HEIGHT - 4), f"LATE PUSH \u00b7 steady {last.get('steady_peak_at_pct', 0)}%",
+                  font=font(13, True), fill=AMBER, anchor="rd")
     else:
         draw.text((WIDTH - 6, HEIGHT - 4), f"{delta:+.0f} cm vs steady", font=font(12), fill=DIM, anchor="rd")
     return image

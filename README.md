@@ -362,7 +362,7 @@ hardware: `python3 -m smartrow_bridge.display --preview /tmp/screens` (needs Pil
 
 ## Optional: interval coach (experimental)
 
-<img src="docs/images/screen-interval.png" alt="Interval screen: time, watts, finish meter at -15% and a BACK HALF FADING cue" width="320"> <img src="docs/images/screen-interval-summary.png" alt="Interval summary: average force curve against steady, finish, length and peak" width="320">
+<img src="docs/images/screen-interval.png" alt="Interval screen: time, watts, finish meter at -15% and a STRONGER FINISH cue" width="320"> <img src="docs/images/screen-interval-summary.png" alt="Interval summary: average force curve against steady, finish, length and peak" width="320">
 
 The pulley sends a force curve for every stroke (the SmartRow app draws it). The coach watches those curves
 for you while you row: it spots harder efforts by itself and tells you, in one word, when your stroke starts
@@ -380,23 +380,28 @@ at 70 W or 250 W.
 
 - **During an interval:** time into the effort, watts, a **finish meter** (how much of your last 8 strokes'
   force comes in the back half of the drive, against your steady rowing: a big percentage and a bar with a
-  tick at steady, green / amber / red), and one cue in large type. The cues say what the curve does
-  against your own steady strokes, not which muscles did it: the pulley measures the total force on the
-  strap, and different causes look alike (an early arm pull, for one, can pass for a strong push off the
-  catch). A cue flags a change; a video of yourself rowing an effort shows what changed.
-  - **GOOD** (green): the curve keeps your steady shape.
-  - **BACK HALF FADING** (amber): less of the force comes in the back half of the drive than in your steady
-    strokes.
-  - **FORCE LATE** (amber): the force comes later in the drive than in your steady strokes. Measured as where
-    the curve's centre of force sits against steady, after allowing for a longer stroke (which moves it later
-    by itself). The finish figures turn amber too: a big back half means little when the force came late.
-  - **STROKES SHORTER** (amber): strokes clearly shorter than your steady ones (by 2.6 %, about 3 cm on a
+  tick at steady, green / amber / red), and one cue in large type. Each cue is two words, what to do and
+  the part of the stroke, so it reads at a glance when you're tired. They never name a muscle: the pulley
+  measures the total force on the strap, and different causes look alike (an early arm pull, for one, can
+  pass for a strong push off the catch). A cue flags a change against your own steady rowing; a video of
+  yourself rowing an effort shows what changed.
+  - **LOOKS GOOD** (green): the curve keeps your steady shape and length.
+  - **STRONGER FINISH** (amber): less of the force comes in the back half of the drive than in your steady
+    strokes: the pull fades before the end.
+  - **EARLIER PUSH** (amber): the force builds later in the drive than in your steady strokes (where the
+    curve's centre of force sits, at least 3 % of the drive later).
+  - **LONGER STROKES** (amber): strokes clearly shorter than your steady ones (by 2.6 %, about 3 cm on a
     115 cm stroke).
+
+  The pulley measures force at fixed distances along the stroke (about every 5.8 cm), so a shorter stroke
+  simply has fewer points. The finish and the push are measured against each stroke's own length, so a
+  shorter stroke shows as LONGER STROKES only, not as a weaker finish too.
 - **After an interval:** for 45 seconds, its duration and watts, its average force curve against your steady
-  shape (the force missing in the back half filled in light grey, or in the front half when the force came
-  late, with *FORCE LATE*), and three numbers: **finish** (back-half force against steady: green
-  within 5 %, amber to 12 %, red beyond), **length** and **peak** force. The same summary goes into the
-  session record, one line per interval.
+  shape (the force missing in the back half filled in light grey, or in the front half after a late push),
+  and three numbers: **finish** (back-half force against steady: green within 5 %, amber to 12 %, red
+  beyond), **length** and **peak** force. After a late push the first number is **peak at** instead (where
+  in the drive the force peaked, with steady's alongside, marked *LATE PUSH*): a late push inflates the
+  finish figure. The same summary goes into the session record, one line per interval.
 
 On the summary, the grey line is scaled to the same total force as the coloured curve, so the picture compares
 where in the drive the force comes, not how much there is. The difference is real but small on a 2" screen,
