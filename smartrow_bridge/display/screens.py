@@ -203,7 +203,7 @@ def status_screen(status: dict | None, now: float, uptime: float, address: str =
         elif hr.get("connected"):
             rows.append((label, f"Connected \u00b7 \u2665 {bpm} bpm" if bpm else "Connected \u00b7 \u2665", GREEN))
         else:
-            rows.append((label, "Looking - put it on, wet it", AMBER))
+            rows.append((label, "Looking - put it on", AMBER))
     two_line_address = "\n" in address
     if len(rows) > 3:  # four rows: a little smaller, so they fit above the web page's address
         y, step, big, small, gap, dot = (22, 43, 18, 15, 21, 16) if two_line_address else (24, 48, 19, 16, 23, 16)
