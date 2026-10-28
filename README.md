@@ -255,7 +255,10 @@ checksum of bytes 0-13 (bytes 14-15), CR.
 | `b` | work J×10 [6:11], stroke length cm [11:14] |
 | `x`, `y`, `z` | force curve: 8 samples each at [6:14], catch to finish (24 per stroke); sample = (code − `!`) × 16 N |
 
-The force curve of a stroke arrives as `x`, `y`, `z`, then that stroke's `b` record. The decoding matches a
+The force curve of a stroke arrives as `x`, `y`, `z`, then that stroke's `b` record. The samples are spaced by
+distance, not time: over 2,952 strokes the last sample with force follows stroke length (correlation 0.97; about
+sample 17 at 100 cm, 20 at 120 cm) and not stroke rate, so the curve is force against handle position, about
+5.8 cm per sample. The SmartRow app's CSV export holds exactly these values and nothing finer. The decoding matches a
 SmartRow app CSV export exactly (every force value is a multiple of 16 N), and the curve's integral over the
 stroke length comes within about 10 % of the `b` record's work. The `c` record's instantaneous power is the
 *previous* stroke's (the same lag shows in the app's CSV export), so the coach uses each stroke's own
@@ -408,8 +411,9 @@ and steady watts, a few plain sentences on what the coach saw (which intervals k
 short and whether those were the longer ones, any fade within an effort, force arriving late, how steady the
 pace between efforts was), and each interval's average curve against your steady shape, with **peak at**:
 where in the drive the force peaks and how much that varies from stroke to stroke, against your steady
-rowing (an idea from Jaap van Ekris of Open Rowing Monitor). The pulley gives 24 points per stroke, about 4 %
-of the drive apart, so only a clear change is called out. **Sessions** lists
+rowing (an idea from Jaap van Ekris of Open Rowing Monitor). The pulley measures the force about every 5.8 cm
+of handle travel (24 points, of which a 115 cm stroke fills about 20), so a point is about 5 % of the drive and
+only a clear change is called out. **Sessions** lists
 earlier ones. **Share** turns the summary into a picture for the share sheet (Messages, email, ...), or saves
 it where the browser has no share sheet.
 

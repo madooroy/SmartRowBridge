@@ -39,8 +39,16 @@ later by themselves. Over 15 real intervals the length-corrected shift never exc
 +0.34 samples; the peak moving from about sample 8 to 11 shifts it by 1.5 or more. The
 cue threshold sits between, untested on a real late stroke so far.
 
-Peak spread: where in the drive each stroke's force peaks (0-100 % of the drive, the
-centre of the samples within 10 % of the stroke's maximum, so a flat top doesn't jump
+The force samples are taken at fixed distances along the stroke, not at fixed times:
+across 2,952 real strokes the last sample with force tracks stroke length (correlation
+0.97: about sample 17 at 100 cm, 20 at 120 cm), not stroke rate. So the curve is force
+against handle position, about 5.8 cm per sample, and a 115 cm drive fills about 20 of
+the 24 samples. back_share() keeps its fixed split at sample 12 (what the thresholds were
+calibrated on); it is compared with your own steady strokes, and longer strokes are
+allowed for where it matters (drive_lateness).
+
+Peak spread: where in the drive each stroke's force peaks (0-100 % of that stroke's own
+drive, the centre of the samples within 10 % of its maximum, so a flat top doesn't jump
 about), and its standard deviation over the interval's strokes, against the same for the
 steady strokes. Suggested by Jaap van Ekris (Open Rowing Monitor), who found the peak's
 stroke-to-stroke variability telling in his own rowing.
@@ -153,12 +161,18 @@ def drive_lateness(curve: list[float], steady_curve: list[float], length_delta_p
 
 
 def peak_position(force: list[int] | list[float]) -> float:
-    """Where in the drive the force peaks, 0-100 %: the centre of the samples within 10 % of the maximum."""
+    """Where in the drive the force peaks, 0-100 % of that stroke's drive.
+
+    The pulley samples force at fixed distances along the stroke (about every 5.8 cm), so a
+    longer stroke fills more of the 24 samples; the drive ends at the last sample with force.
+    The peak is the centre of the samples within 10 % of the maximum (a flat top doesn't jump).
+    """
     top = max(force) if force else 0
     if top <= 0:
         return 0.0
+    last = max(i for i, f in enumerate(force) if f > 0)
     near = [i for i, f in enumerate(force) if f >= 0.9 * top]
-    return sum(near) / len(near) / (len(force) - 1) * 100
+    return sum(near) / len(near) / max(1, last) * 100
 
 
 def peak_stats(strokes) -> tuple[float, float]:

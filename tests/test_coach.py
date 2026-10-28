@@ -183,10 +183,12 @@ class PeakTest(unittest.TestCase):
     def test_peak_position(self):
         curve = [0] * 24
         curve[6] = 100
-        self.assertAlmostEqual(coach.peak_position(curve), 6 / 23 * 100)
+        curve[19] = 10  # the drive ends at sample 19 (samples are spaced by distance)
+        self.assertAlmostEqual(coach.peak_position(curve), 6 / 19 * 100)
         flat = [0] * 24
         flat[6] = flat[7] = flat[8] = 100  # a flat top: its middle
-        self.assertAlmostEqual(coach.peak_position(flat), 7 / 23 * 100)
+        flat[19] = 10
+        self.assertAlmostEqual(coach.peak_position(flat), 7 / 19 * 100)
         self.assertEqual(coach.peak_position([0] * 24), 0.0)
 
     def test_peak_wanders_only_on_a_clear_change(self):
