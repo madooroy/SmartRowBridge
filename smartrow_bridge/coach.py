@@ -550,6 +550,7 @@ class IntervalCoach:
         last = self.intervals[-1] if self.intervals else None
         out: dict = {
             "mode": "warmup" if not self.ready else "interval" if self.effort else "steady",
+            "session_strokes": self.strokes_total,  # strokes in this session (the screen offers Y: Done)
             "steady_power_w": round(self.steady_power()),
             "intervals": len(self.intervals),
             "last": last.as_dict() if last else None,

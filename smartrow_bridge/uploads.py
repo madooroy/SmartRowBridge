@@ -86,7 +86,8 @@ def _ended_at(record: dict) -> float:
 
 
 def _over(record: dict, now: float) -> bool:
-    return now - _ended_at(record) >= FINAL_AFTER_S
+    """Over for good: you said so (Y on the screen), or no stroke for FINAL_AFTER_S."""
+    return bool(record.get("finished")) or now - _ended_at(record) >= FINAL_AFTER_S
 
 
 def finished(record: dict, now: float) -> bool:
@@ -130,15 +131,19 @@ class Destinations:
         except OSError:
             return float("inf")
 
-    def wants(self, dest: str, record: dict, now: float, automatic: bool = True) -> bool:
+    def eligible(self, dest: str, record: dict, now: float, since: float | None = None) -> bool:
+        """Sent by itself at all: rowed live, after the destination was set up, in the last week."""
+        since = self.since(dest) if since is None else since
+        return (record.get("source") != "replay" and record["started_at"] >= since - 60
+                and record["started_at"] >= now - SEND_WITHIN_DAYS * 86400)
+
+    def wants(self, dest: str, record: dict, now: float, automatic: bool = True,
+              since: float | None = None) -> bool:
         if not finished(record, now):
             return False
         mark = _mark(record, dest)
-        if automatic:
-            if record.get("source") == "replay":
-                return False
-            if record["started_at"] < self.since(dest) - 60 or record["started_at"] < now - SEND_WITHIN_DAYS * 86400:
-                return False
+        if automatic and not self.eligible(dest, record, now, since):
+            return False
         if dest == "intervals_note":
             return not mark or mark.get("sent_for") != record.get("saved_at")
         return not mark and (_over(record, now) or not automatic)
@@ -209,27 +214,76 @@ class Uploader:
         self._retry_at: dict = {}  # destination, or (destination, session): monotonic time
         self._failures: dict[tuple[str, str], int] = {}
         self._last_error: dict[str, str] = {}
+        self._sending: str | None = None  # the destination being sent to now
+        self._ack: str | None = None  # a "Done" request: echoed once the next look has been taken
+        self._acked: str | None = None
+        self._snapshot: dict = {"configured": [], "sending": None, "waiting": 0, "retrying": 0, "error": None,
+                                "latest": None, "ack": None}
+
+    def check_now(self, token: str | None = None) -> None:
+        """A session was just finished by hand: look (and send) at the next tick, not in a minute."""
+        self._next_check = 0.0
+        self._ack = token
+
+    def latest_waiting(self) -> str | None:
+        """The newest session whose uploads wait for FINAL_AFTER_S (to finish it by hand), if any."""
+        latest = self._snapshot.get("latest") or {}
+        return latest.get("id") if "later" in (latest.get("dests") or {}).values() else None
+
+    def snapshot(self) -> dict:
+        """For the status file (the screen): what is being sent, what is still to go, and how the
+        newest session stands with each destination."""
+        return {**self._snapshot, "sending": LABELS.get(self._sending) if self._sending else None,
+                "ack": self._acked}
 
     def pending(self, now: float | None = None) -> list[tuple[str, dict]]:
-        """What to send now, oldest first. Reads files: called in a background thread."""
+        """What to send now, oldest first. Reads files: called in a background thread. Also takes
+        stock for snapshot()."""
         now = time.time() if now is None else now
         mono = time.monotonic()
-        configured = [d for d in self.dests.configured() if self._retry_at.get(d, 0) <= mono]
-        if not configured:
-            return []
-        since = {d: self.dests.since(d) for d in configured}
+        ack = self._ack
+        all_configured = self.dests.configured()
+        configured = [d for d in all_configured if self._retry_at.get(d, 0) <= mono]
+        since = {d: self.dests.since(d) for d in all_configured}
         directory = self.settings.session_dir
-        out = []
-        for record in recent_sessions(directory, now):
-            for d in configured:
-                if self._retry_at.get((d, record["id"]), 0) > mono:
+        out, waiting, retrying, latest = [], 0, 0, None
+        records = recent_sessions(directory, now) if all_configured else []
+        for record in records:
+            states = {}
+            for d in all_configured:
+                mark = _mark(record, d)
+                if mark and mark.get("failed"):
+                    states[LABELS[d]] = "failed"
                     continue
-                if record["started_at"] < since[d] - 60:
+                if mark and d != "intervals_note":
+                    states[LABELS[d]] = "sent"
+                    continue
+                if not self.dests.eligible(d, record, now, since[d]):
                     continue
                 if d in ACTIVITIES and not has_strokes(directory, record["id"]):
                     continue  # saved before activity files existed
-                if self.dests.wants(d, record, now):
-                    out.append((d, record))
+                if not finished(record, now):
+                    states[LABELS[d]] = "rowing"
+                    continue
+                if self._retry_at.get(d, 0) > mono or self._retry_at.get((d, record["id"]), 0) > mono:
+                    states[LABELS[d]] = "retrying"
+                    retrying += 1
+                    continue
+                if self.dests.wants(d, record, now, since=since[d]):
+                    if d in configured:
+                        out.append((d, record))
+                    states[LABELS[d]] = "waiting"
+                    waiting += 1
+                elif d == "intervals_note" and mark:
+                    states[LABELS[d]] = "sent"
+                elif not _over(record, now):
+                    states[LABELS[d]] = "later"  # goes FINAL_AFTER_S after the last stroke
+                    waiting += 1
+            latest = {"id": record["id"], "dests": states}
+        errors = [self._last_error[d] for d in all_configured if d in self._last_error]
+        self._snapshot = {"configured": [LABELS[d] for d in all_configured], "waiting": waiting,
+                          "retrying": retrying, "error": errors[0] if errors else None, "latest": latest}
+        self._acked = ack
         return out
 
     def tick(self, now: float | None = None) -> None:
@@ -252,6 +306,7 @@ class Uploader:
 
     async def _send(self, dest: str, record: dict) -> None:
         key = (dest, record["id"])
+        self._sending = dest
         try:
             result = await asyncio.to_thread(self.dests.send, dest, record)
         except Exception as exc:  # noqa: BLE001 - offline, a service down, a revoked key, a bad file
@@ -262,6 +317,7 @@ class Uploader:
             later = time.monotonic() + RETRY_AFTER_S
             if connection_trouble(exc):
                 self._retry_at[dest] = later  # the whole destination
+                self._next_check = 0.0  # take stock again, so the screen shows it
                 return
             self._failures[key] = self._failures.get(key, 0) + 1
             self._retry_at[key] = later  # this session; the others still go
@@ -276,6 +332,8 @@ class Uploader:
             log.info("Upload: %s for session %s %s%s", LABELS[dest], record["id"], what,
                      "" if noted else " (but its file is gone, so this isn't noted)")
             self._next_check = 0.0  # more waiting? next tick
+        finally:
+            self._sending = None
 
 
 def _status(settings: Settings) -> int:

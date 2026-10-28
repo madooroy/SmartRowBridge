@@ -46,6 +46,7 @@ class Bridge:
         if self.coach and cfg.session_dir.lower() != "off":
             self.recorder = sessions.SessionRecorder(cfg.session_dir, self.coach)
         self.uploader = None
+        self._finish_result: dict | None = None  # the last "Done" (button Y) handled, for the screen
         if self.recorder is not None:
             from .uploads import Settings, Uploader
             self.uploader = Uploader(Settings(cfg.session_dir, cfg.intervals_key_file, cfg.intervals_upload,
@@ -164,13 +165,37 @@ class Bridge:
             coach=self.coach.state(time.monotonic()) if self.coach else None,
             heart_rate=({"name": self.hr_link.name, "connected": self.hr_link.connected}
                         if self.hr_link else None),
+            uploads=self.uploader.snapshot() if self.uploader else None,
+            finish=self._finish_result,
         )
+
+    def _handle_request(self) -> None:
+        """Requests from the screen (status.send_request): "finish" = button Y, you're done."""
+        request = status.take_request(self.cfg.status_file)
+        if not request or request.get("action") != "finish":
+            return
+        session = self.recorder.finish(self.parser.metrics) if self.recorder else None
+        if session:
+            self.coach.reset()  # rowing again is a new session
+            log.info("Session finished: %s (from the screen)", session)
+        elif self.uploader and self.uploader.latest_waiting():
+            # Already saved as complete, its uploads waiting for the session to be over for good.
+            session = self.uploader.latest_waiting()
+            sessions.mark_finished(self.cfg.session_dir, session)
+            log.info("Session finished: %s (from the screen)", session)
+        if self.uploader:
+            self.uploader.check_now(request.get("token"))
+        self._finish_result = {"token": request.get("token"), "session": session}
 
     async def _status_loop(self) -> None:
         """Keep the status file (read by the optional screen) up to date."""
         path = self.cfg.status_file
         failed = False
         while True:
+            try:
+                self._handle_request()
+            except Exception:  # noqa: BLE001 - nor may a request from the screen
+                log.exception("Request from the screen failed")
             if self.hr_link is not None and not self.hr_link.fresh():
                 self.parser.metrics.heart_rate_bpm = 0  # strap off or out of range: no reading
             try:

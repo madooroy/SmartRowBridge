@@ -120,6 +120,11 @@ def run() -> None:
             if now - address_at >= ADDRESS_EVERY_S:
                 address, address_at = _address(), now
             frame = controller.step(status_file.read(path), time.time(), _uptime(), buttons, address)
+            if frame.request:  # Y (done) or A with uploads to go: ask the bridge to finish the session
+                try:
+                    status_file.write(status_file.request_path(path), frame.request)
+                except OSError as exc:
+                    log.warning("Could not pass the request to the bridge: %s", exc)
             hat.show(frame.image)
             hat.set_led(frame.led)
             last_draw = now
@@ -243,6 +248,38 @@ def preview(directory: str) -> None:
                                                        "heart_rate": {"name": "COROS HRM 8A2F", "connected": True}},
                                                       now, up, address_lines("raspberrypi", "192.168.1.23", None)),
     }
+    # Y (done) and A with uploads to go.
+    from .app import Controller
+
+    def with_session(st, strokes=420):
+        st["coach"] = {**(st.get("coach") or {}), "session_strokes": strokes}
+        return st
+
+    def uploads(states, sending=None):
+        return {"configured": list(states), "sending": sending, "waiting": 1, "retrying": 0, "error": None,
+                "latest": {"id": "2026-10-28T0702", "dests": states}, "ack": "t"}
+
+    c = Controller()
+    rowing_y = c.step(with_session(st("connected", "SmartRow-34", True, True, True, **rowing)), now, up,
+                      {"A": False, "B": False, "X": False, "Y": False}).image
+    interval_y = screens.add_tab(screens.interval_screen(coached(live("good", full, 2, 4, 0.2, 1.5)), now, up),
+                                 "Y", "check", "Hold: done")
+    fin = {"token": "t", "session": "2026-10-28T0702"}
+    going = {**st("connected"), "finish": fin,
+             "uploads": uploads({"intervals.icu activity": "sent", "Strava": "waiting"}, sending="Strava")}
+    done = {**st("connected"), "finish": fin,
+            "uploads": uploads({"intervals.icu activity": "sent", "Strava": "sent"})}
+    offline = {**st("connected"), "finish": fin,
+               "uploads": {**uploads({"intervals.icu activity": "sent", "Strava": "retrying"}), "retrying": 1}}
+    shots.update({
+        "18-rowing-y-done": rowing_y,
+        "19-interval-y-done": interval_y,
+        "20-hold-y": screens.hold_screen(0.6, "Keep holding: done rowing"),
+        "21-finished-uploading": screens.finish_screen(going, fin["session"], True),
+        "22-finished-sent": screens.finish_screen(done, fin["session"], True),
+        "23-off-uploading-first": screens.upload_off_screen(going, False),
+        "24-off-closing-offline": screens.upload_off_screen(offline, True),
+    })
     for name, image in shots.items():
         image.save(out / f"{name}.png")
     print(f"{len(shots)} screens saved in {out}")

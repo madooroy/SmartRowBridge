@@ -101,6 +101,20 @@ class SessionRecorder:
             self._written = (len(c.intervals), True)
         return path
 
+    def finish(self, metrics: RowingMetrics) -> str | None:
+        """You said you're done (Y on the screen): save the session as complete and finished,
+        so it is uploaded straight away. Returns its id, or None when there is no session."""
+        c = self.coach
+        if self._id is None or c.session != self._session or c.strokes_total < MIN_STROKES:
+            return None
+        self.close(metrics)
+        try:
+            mark_finished(str(self.directory), self._id)
+        except OSError as exc:
+            log.warning("Could not mark session %s finished: %s", self._id, exc)
+            return None
+        return self._id
+
     def _write(self, metrics: RowingMetrics, complete: bool, wall_now: float) -> Path | None:
         rows = stroke_rows(self.coach)
         distance = metrics.distance_m - distance_offset([r[1] for r in rows])
@@ -195,6 +209,14 @@ def save(directory: Path | str, record: dict, strokes: list[list] | None = None)
         old.unlink(missing_ok=True)
         (directory / f"{old.stem}.strokes.json").unlink(missing_ok=True)
     return path
+
+
+def mark_finished(directory: str, session: str) -> None:
+    """Note that the rower ended this session (uploads then go at once, not FINAL_AFTER_S later)."""
+    record = read_session(directory, session)
+    if record is not None and not record.get("finished"):
+        record["finished"] = True
+        save(directory, record)
 
 
 def read_strokes(directory: str, session: str) -> list[dict] | None:

@@ -125,6 +125,38 @@ class RecorderTest(unittest.TestCase):
         self.assertEqual(record["ended_at"] - record["started_at"], round(r.coach.last_time - r.coach.first_time))
         self.assertIsNone(rec.close(RowingMetrics()))  # once is enough
 
+    def test_finish_by_hand(self):
+        r = saturday()
+        rec = self.recorder(r)
+        rec.update(RowingMetrics(distance_m=6000), mono_now=r.t, wall_now=1_800_000_000.0)
+        session = rec.finish(RowingMetrics(distance_m=6000))
+        record = sessions.read_session(str(self.dir), session)
+        self.assertTrue(record["complete"] and record["finished"])
+        self.assertTrue(sessions.read_strokes(str(self.dir), session))
+        from tests.test_coach import STEADY
+        short = rowed((10, 110, STEADY, 115))
+        self.assertIsNone(self.recorder(short).finish(RowingMetrics()))  # no session yet: nothing to finish
+
+    def test_bridge_handles_done_from_the_screen(self):
+        from types import SimpleNamespace
+        from smartrow_bridge import status
+        from smartrow_bridge.bridge import Bridge
+        r = saturday()
+        rec = self.recorder(r)
+        rec.update(RowingMetrics(distance_m=6000), mono_now=r.t, wall_now=1_800_000_000.0)
+        b = object.__new__(Bridge)
+        b.cfg = SimpleNamespace(status_file=str(Path(self.tmp.name) / "status.json"), session_dir=str(self.dir))
+        b.recorder, b.coach, b.uploader, b._finish_result = rec, r.coach, None, None
+        b.parser = SimpleNamespace(metrics=RowingMetrics(distance_m=6000))
+        token = status.send_request(b.cfg.status_file, "finish")
+        session = rec._id
+        b._handle_request()
+        self.assertEqual(b._finish_result, {"token": token, "session": session})
+        self.assertTrue(sessions.read_session(str(self.dir), session)["finished"])
+        self.assertEqual(r.coach.strokes_total, 0)  # rowing again is a new session
+        b._handle_request()  # nothing waiting: nothing happens
+        self.assertEqual(b._finish_result["token"], token)
+
     def test_clock_set_mid_session_keeps_the_file(self):
         r = saturday()
         rec = self.recorder(r)

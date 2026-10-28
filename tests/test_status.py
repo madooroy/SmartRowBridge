@@ -42,6 +42,15 @@ class StatusTest(unittest.TestCase):
             self.assertEqual(status.read(path), s)
             self.assertFalse(Path(path + ".tmp").exists())
 
+    def test_request_round_trip(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            path = f"{d}/status.json"
+            self.assertIsNone(status.take_request(path))
+            token = status.send_request(path, "finish")
+            self.assertEqual(status.take_request(path), {"action": "finish", "token": token})
+            self.assertIsNone(status.take_request(path))  # handled once
+
     def test_read_missing_or_broken_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "status.json"

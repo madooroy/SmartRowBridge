@@ -27,6 +27,7 @@ MILESTONES = (
     "Data flow",
     "Interval ",
     "Session summary saved",
+    "Session finished",
     "Heart rate strap connected",
     "Upload: ",
 )

@@ -92,7 +92,26 @@ def _icon_curve(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, colour) -> 
     draw.line((cx - r, cy + r, cx + r, cy + r), fill=colour, width=1)
 
 
-_ICONS = {"power": _icon_power, "rowing": _icon_rowing, "status": _icon_status, "curve": _icon_curve}
+def _icon_check(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, colour) -> None:
+    """Done: a tick."""
+    draw.line((cx - r, cy, cx - r // 3, cy + r - 1, cx + r, cy - r + 1), fill=colour, width=3, joint="curve")
+
+
+def _icon_close(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, colour) -> None:
+    """Cancel: a cross."""
+    d = r - 2
+    draw.line((cx - d, cy - d, cx + d, cy + d), fill=colour, width=2)
+    draw.line((cx - d, cy + d, cx + d, cy - d), fill=colour, width=2)
+
+
+_ICONS = {"power": _icon_power, "rowing": _icon_rowing, "status": _icon_status, "curve": _icon_curve,
+          "check": _icon_check, "close": _icon_close}
+
+
+def add_tab(image: Image.Image, corner: str, icon: str, label: str) -> Image.Image:
+    """Put a button tab on a finished screen (used for Y: Done, when there is a session to finish)."""
+    _button(ImageDraw.Draw(image), corner, icon, label)
+    return image
 
 
 def _button(draw: ImageDraw.ImageDraw, corner: str, icon: str, label: str) -> None:
@@ -453,15 +472,77 @@ def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
     return image
 
 
-def hold_screen(progress: float) -> Image.Image:
+def hold_screen(progress: float, title: str = "Keep holding to switch off") -> Image.Image:
     image, draw = _canvas()
-    _centered(draw, [("Keep holding to switch off", 22, True, FG), ("Let go to cancel", 16, False, DIM)],
-              centre_y=96)
+    _centered(draw, [(title, 22, True, FG), ("Let go to cancel", 16, False, DIM)], centre_y=96)
     x0, y0, x1, y1 = 30, 150, WIDTH - 30, 174
     draw.rounded_rectangle((x0, y0, x1, y1), radius=12, outline=DIM, width=2)
     filled = x0 + int((x1 - x0) * max(0.0, min(1.0, progress)))
     if filled > x0 + 6:
         draw.rounded_rectangle((x0, y0, filled, y1), radius=12, fill=AMBER)
+    return image
+
+
+UPLOAD_WORDS = {  # how each destination stands with the newest session (uploads.Uploader.snapshot)
+    "sent": ("sent", GREEN), "failed": ("failed - see --status", RED), "retrying": ("will try again later", AMBER),
+    "waiting": ("waiting", DIM), "later": ("waiting", DIM), "rowing": ("waiting", DIM),
+}
+
+
+def _upload_rows(draw: ImageDraw.ImageDraw, status: dict | None, top: int) -> int:
+    """One line per destination: sent, sending..., waiting, will try again later, failed."""
+    ups = (status or {}).get("uploads") or {}
+    states = ((ups.get("latest") or {}).get("dests")) or {}
+    y = top
+    for label in ups.get("configured") or []:
+        state = states.get(label)
+        if state is None:
+            continue  # not for this session (rowed before it was set up, or from a CSV)
+        if ups.get("sending") == label and state != "sent":
+            word, colour = "sending\u2026", FG
+        else:
+            word, colour = UPLOAD_WORDS.get(state, (state, DIM))
+        draw.ellipse((16, y + 5, 28, y + 17), fill=colour if colour != DIM else None, outline=colour, width=2)
+        name = label.replace(" activity", "").replace(" note", " note")  # "intervals.icu", "Strava"
+        draw.text((38, y + 11), name, font=_fit(draw, name, 17, 150, True), fill=FG, anchor="lm")
+        draw.text((WIDTH - 12, y + 11), word, font=_fit(draw, word, 15, 128), fill=colour, anchor="rm")
+        y += 30
+    return y
+
+
+def finish_screen(status: dict | None, session: str | None, acked: bool) -> Image.Image:
+    """After Y (Done): the session saved as finished, and its uploads as they go."""
+    image, draw = _canvas()
+    _button(draw, "X", "close", "Close")
+    if not acked:
+        _centered(draw, [("Finishing\u2026", 26, True, FG)], centre_y=110)
+        return image
+    if session is None:
+        _centered(draw, [("No session to finish", 22, True, FG),
+                         ("Row at least 30 strokes first", 15, False, DIM)], centre_y=110)
+        return image
+    draw.text((WIDTH // 2, 48), "Session finished", font=font(24, True), fill=GREEN, anchor="mm")
+    y = _upload_rows(draw, status, 80)
+    if y == 80:
+        _centered(draw, [("Saved on the Pi", 18, True, FG), ("Summary on the web page", 15, False, DIM)],
+                  centre_y=130)
+    return image
+
+
+def upload_off_screen(status: dict | None, closing: bool) -> Image.Image:
+    """A held with uploads still to go: upload first, then switch off by itself."""
+    image, draw = _canvas()
+    if closing:
+        _centered(draw, [("Switching off", 24, True, FG)], centre_y=48)
+    else:
+        _button(draw, "A", "power", "Off now")
+        _button(draw, "B", "close", "Cancel")
+        draw.text((WIDTH // 2, 48), "Uploading, then off", font=font(22, True), fill=FG, anchor="mm")
+    y = _upload_rows(draw, status, 80)
+    ups = (status or {}).get("uploads") or {}
+    if closing and ups.get("retrying"):
+        draw.text((WIDTH // 2, y + 14), "The rest goes next time the Pi is on", font=_fit(draw, "x" * 36, 14, WIDTH - 24),
+                  fill=DIM, anchor="mm")
     return image
 
 

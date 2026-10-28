@@ -328,8 +328,17 @@ without a phone:
   Unplug when the screen goes dark: it shows *Safe to unplug* for a moment at the very end, after the SD
   card has been closed, and goes dark as the Pi stops. The Pi's own green light may flash a few more
   times; that is fine. It does the same however the Pi is shut down (the iPhone shortcut, SSH).
-- **Buttons:** small tabs in the screen's corners show what A and B do: a power symbol on A, and on B
-  the screen it switches to (and on X, once there is an interval to look back at).
+  With [uploads](#optional-uploads-to-intervalsicu-and-strava) set up and a session still to go, holding A
+  first finishes the session and uploads it, showing each service as it goes (*Uploading, then off*), then
+  switches off by itself; A again switches off at once, B cancels. A service that can't be reached gets the
+  session the next time the Pi is on.
+- **Done:** with the interval coach on, once you've rowed a session, hold button **Y** for a second when
+  you're done. The session is saved as finished and uploaded straight away (instead of about seven minutes
+  after the last stroke), and the screen shows *Session finished* with each upload as it goes; X closes it.
+  Rowing again after that starts a new session.
+- **Buttons:** small tabs in the screen's corners show what each does: a power symbol on A, on B the screen
+  it switches to, on X once there is an interval to look back at, and a tick on Y (*Hold: done*) once there
+  is a session to finish.
 - **LED:** dim red while the bridge starts and waits for the pulley (or is not running), dim green
   when ready, and off while you row, until the screen goes back to the status.
 - **Interval coach** (experimental, off unless you turn it on): the screen shows each interval's
@@ -504,8 +513,8 @@ sudo bash ~/smartrow-bridge/tools/setup_strava.sh        # your Strava app's Cli
 
 The key and the Strava authorization are kept in `/etc/smartrow-bridge/`, readable by root only; Strava's
 access is renewed by the Pi itself. A session is uploaded about seven minutes after its last stroke (rowing
-again within five minutes continues the same session, so it waits until that can't happen); an intervals.icu
-note goes two minutes after. Uploads that fail (Pi offline, a service down) are retried every ten minutes,
+again within five minutes continues the same session, so it waits until that can't happen), or straight away
+when you hold **Y** on the Pi's screen (*Done*); an intervals.icu note goes two minutes after. Uploads that fail (Pi offline, a service down) are retried every ten minutes,
 for up to a week; one session that fails doesn't hold up the others, and one a service turns down for good
 (a file it can't read) is marked "failed" in `--status` and only tried again with `--send`. Switching the
 Pi off with the screen's button or `sudo poweroff` saves the session there and then; if the power is

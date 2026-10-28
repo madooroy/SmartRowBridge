@@ -313,6 +313,36 @@ class UploadsTest(unittest.TestCase):
         self.assertNotIn("Authorization", other.headers)
         self.assertEqual(same.headers.get("Authorization"), "Bearer secret")
 
+    @unittest.skipIf(fitfile is None, "fit-tool not installed")
+    def test_finished_by_hand_goes_at_once(self):
+        self.set_up_intervals(when=time.time() - 86400)
+        record = self.saved(minutes_ago=1)  # just stopped: would wait FINAL_AFTER_S
+        up = uploads.Uploader(self.settings)
+        self.assertEqual(up.pending(), [])
+        snap = up.snapshot()
+        self.assertEqual((snap["waiting"], snap["latest"]["dests"]), (1, {"intervals.icu activity": "later"}))
+        self.assertEqual(up.latest_waiting(), record["id"])
+        sessions.mark_finished(str(self.dir), record["id"])  # Y on the screen
+        up.check_now("t1")
+        with self.assertLogs("smartrow_bridge.uploads", "INFO"):
+            self.run_ticks(up, 2)
+        self.assertEqual(len(self.fake.posts("/api/v1/athlete/0/activities")), 1)
+        snap = up.snapshot()
+        self.assertEqual(snap["latest"]["dests"], {"intervals.icu activity": "sent"})
+        self.assertEqual((snap["waiting"], snap["ack"], snap["sending"]), (0, "t1", None))
+
+    def test_snapshot_shows_a_service_out_of_reach(self):
+        self.set_up_intervals("note", when=time.time() - 86400)
+        self.saved()
+        self.fake.fail = ("/api/v1", 503)
+        up = uploads.Uploader(self.settings)
+        with self.assertLogs("smartrow_bridge.uploads", "WARNING"):
+            self.run_ticks(up, 2)
+        snap = up.snapshot()
+        self.assertEqual((snap["retrying"], snap["waiting"]), (1, 0))
+        self.assertEqual(snap["latest"]["dests"], {"intervals.icu note": "retrying"})
+        self.assertIn("503", snap["error"])
+
     def test_nothing_set_up_nothing_sent(self):
         self.saved()
         up = uploads.Uploader(self.settings)
