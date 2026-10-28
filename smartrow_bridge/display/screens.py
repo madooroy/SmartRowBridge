@@ -362,10 +362,10 @@ BAR_RANGE = 2.0  # the bars show +-2 cue thresholds; the markers sit at +-1
 
 
 def _centre_bar(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], value: float | None,
-                pointer: bool = True, warn_above: bool = True) -> None:
+                pointer: bool = True, warn_above: bool = True, colour: tuple | None = None) -> None:
     """A bar that grows out from the middle (your steady stroke): green inside the markers at
     +-1 (where the cues start), amber beyond. Clamped at +-BAR_RANGE, with an arrowhead.
-    warn_above=False: only the left side warns (longer strokes are fine)."""
+    warn_above=False: only the left side warns (longer strokes are fine). colour overrides it."""
     x0, y0, x1, y1 = box
     mid = (x0 + x1) / 2
     half = (x1 - x0) / 2
@@ -375,7 +375,7 @@ def _centre_bar(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], value
 
     draw.rectangle(box, fill=FAINT)
     if value is not None:
-        colour = AMBER if value <= -1 or (warn_above and value >= 1) else GREEN
+        colour = colour or (AMBER if value <= -1 or (warn_above and value >= 1) else GREEN)
         end = at(value)
         if abs(end - mid) >= 2:
             draw.rectangle((min(mid, end), y0, max(mid, end), y1), fill=colour)
@@ -389,8 +389,16 @@ def _centre_bar(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], value
     draw.line((mid, y0 - 4, mid, y1 + 4), fill=FG, width=2)
 
 
+def _bar_colour(cue: str | None, mine: tuple[str, ...]) -> tuple | None:
+    """Only the bar the cue is about turns amber; the other goes grey, so the two cues look
+    different at a glance. LOOKS GOOD (or no cue yet): each bar by its own markers."""
+    if cue in (None, "good"):
+        return None
+    return AMBER if cue in mine else DIM
+
+
 def _shape_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], balance: float | None,
-                 length_balance: float | None, length_delta: int | None) -> None:
+                 length_balance: float | None, length_delta: int | None, cue: str | None = None) -> None:
     """During an effort: where the force sits in the drive (left: towards the catch, the finish
     fading; right: towards the finish, a late push) and the stroke length (left: shorter), each
     against your steady stroke in the middle."""
@@ -400,12 +408,13 @@ def _shape_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], bala
     draw.text((bx0, y0 + 5), "catch", font=font(12), fill=DIM)
     draw.text(((bx0 + bx1) // 2, y0 + 5), "FORCE vs STEADY", font=font(12, True), fill=DIM, anchor="mt")
     draw.text((bx1, y0 + 5), "finish", font=font(12), fill=DIM, anchor="rt")
-    _centre_bar(draw, (bx0, y0 + 24, bx1, y0 + 46), balance)
+    _centre_bar(draw, (bx0, y0 + 24, bx1, y0 + 46), balance, colour=_bar_colour(cue, ("finish", "legs")))
     draw.text((bx0, y0 + 54), "shorter", font=font(12), fill=DIM)
     label = "LENGTH" if length_delta is None else f"LENGTH {length_delta:+d} cm".replace("-", "\u2212")
     draw.text(((bx0 + bx1) // 2, y0 + 54), label, font=font(12, True), fill=DIM, anchor="mt")
     draw.text((bx1, y0 + 54), "longer", font=font(12), fill=DIM, anchor="rt")
-    _centre_bar(draw, (bx0, y0 + 71, bx1, y0 + 79), length_balance, pointer=False, warn_above=False)
+    _centre_bar(draw, (bx0, y0 + 69, bx1, y0 + 81), length_balance, pointer=False, warn_above=False,
+                colour=_bar_colour(cue, ("length",)))
 
 
 def _mini_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct: int,
@@ -431,7 +440,7 @@ def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
     draw.text((8, 58), format_time(live["elapsed_s"]), font=font(50, True), fill=FG, anchor="lm")
     draw.text((WIDTH - 8, 58), f"{live['power_w']} W", font=font(40, True), fill=FG, anchor="rm")
     _shape_meter(draw, (4, 90, WIDTH - 4, 176), live.get("balance"), live.get("length_balance"),
-                 live.get("length_delta_cm") if live.get("balance") is not None else None)
+                 live.get("length_delta_cm") if live.get("balance") is not None else None, live.get("cue"))
 
     text, colour = CUES.get(live.get("cue"), ("…", DIM))
     banner = (4, 181, WIDTH - 4, 215)

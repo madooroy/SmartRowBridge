@@ -75,7 +75,7 @@
   .ends { display: flex; justify-content: space-between; align-items: baseline; font-size: var(--label); color: var(--dim); }
   .ends b { color: var(--dim); letter-spacing: .04em; }
   .cbar { position: relative; height: clamp(18px, 4.5vmin, 44px); background: var(--faint); margin: 8px 0 12px; }
-  .cbar.thin { height: clamp(6px, 1.4vmin, 12px); }
+  .cbar.thin { height: clamp(9px, 2.2vmin, 20px); }
   .cbar .fill { position: absolute; top: 0; bottom: 0; }
   .cbar .mid { position: absolute; left: 50%; top: -6px; bottom: -6px; width: 3px; margin-left: -1px; background: var(--fg); }
   .cbar .mark { position: absolute; top: -3px; bottom: -3px; border-left: 1px dashed var(--dim); }
@@ -350,23 +350,26 @@ function shapeColour(i) {
   if (i.balance === null || i.balance === undefined) return i.legs_late ? C.amber : (RATING[i.rating] || C.fg);
   return Math.abs(i.balance) >= 1 || (i.length_balance ?? 0) <= -1 ? C.amber : C.green;
 }
-function pipCentreBar(g, x0, y0, x1, y1, value, warnAbove = true) {
+function pipCentreBar(g, x0, y0, x1, y1, value, warnAbove = true, override = null) {
   const mid = (x0 + x1) / 2, half = (x1 - x0) / 2;
   const at = (v) => mid + half * Math.max(-BAR_RANGE, Math.min(BAR_RANGE, v)) / BAR_RANGE;
   g.fillStyle = C.faint; g.fillRect(x0, y0, x1 - x0, y1 - y0);
   if (value !== null && value !== undefined) {
-    g.fillStyle = value <= -1 || (warnAbove && value >= 1) ? C.amber : C.green;
+    g.fillStyle = override || (value <= -1 || (warnAbove && value >= 1) ? C.amber : C.green);
     const x = at(value); g.fillRect(Math.min(mid, x), y0, Math.abs(x - mid), y1 - y0);
   }
   g.fillStyle = C.dim;
   for (const v of warnAbove ? [-1, 1] : [-1]) for (let y = y0 - 3; y < y1 + 3; y += 4) g.fillRect(at(v), y, 1, 2);
   g.fillStyle = C.fg; g.fillRect(mid - 1, y0 - 5, 3, y1 - y0 + 10);
 }
-function centreBar(el, value, warnAbove = true) {
+// Only the bar the cue is about turns amber; the other goes grey (as on the Pi's screen).
+const barColour = (cue, mine) => cue === null || cue === undefined || cue === "good" ? null
+  : mine.includes(cue) ? C.amber : C.dim;
+function centreBar(el, value, warnAbove = true, override = null) {
   const at = (v) => 50 + 50 * Math.max(-BAR_RANGE, Math.min(BAR_RANGE, v)) / BAR_RANGE;
   let html = "";
   if (value !== null && value !== undefined) {
-    const colour = value <= -1 || (warnAbove && value >= 1) ? C.amber : C.green;
+    const colour = override || (value <= -1 || (warnAbove && value >= 1) ? C.amber : C.green);
     const x = at(value);
     html += `<div class="fill" style="left:${Math.min(50, x)}%;width:${Math.abs(x - 50)}%;background:${colour}"></div>`;
   }
@@ -381,8 +384,8 @@ function renderInterval(live) {
   $("iClock").textContent = fmtTime(live.elapsed_s);
   $("iWatts").textContent = `${live.power_w} W`;
   const judged = live.balance !== null && live.balance !== undefined;
-  centreBar($("iBal"), live.balance);
-  centreBar($("iLenBar"), live.length_balance, false);
+  centreBar($("iBal"), live.balance, true, barColour(live.cue, ["finish", "legs"]));
+  centreBar($("iLenBar"), live.length_balance, false, barColour(live.cue, ["length"]));
   $("iLen").textContent = judged ? `LENGTH ${signed(live.length_delta_cm, " cm")}` : "LENGTH";
   const cue = $("iCue"), [text, cueColour] = CUES[live.cue] || ["…", null];
   cue.textContent = text;
@@ -880,8 +883,8 @@ function drawPip() {
     text("catch", 16, 98, 18, C.dim, "left", false);
     text("FORCE vs STEADY" + (hrNow ? `   ♥ ${hrNow}` : ""), W / 2, 98, 18, C.dim, "center");
     text("finish", W - 16, 98, 18, C.dim, "right", false);
-    pipCentreBar(g, 16, 112, W - 16, 138, live.balance);
-    pipCentreBar(g, 16, 152, W - 16, 160, live.length_balance, false);
+    pipCentreBar(g, 16, 112, W - 16, 138, live.balance, true, barColour(live.cue, ["finish", "legs"]));
+    pipCentreBar(g, 16, 150, W - 16, 162, live.length_balance, false, barColour(live.cue, ["length"]));
     const [label, cueColour] = CUES[live.cue] || ["…", C.tile];
     g.fillStyle = cueColour; g.beginPath(); g.roundRect(10, 175, W - 20, 80, 14); g.fill();
     text(label, W / 2, 216, label.length > 14 ? 34 : 44, live.cue ? C.bg : C.dim, "center");

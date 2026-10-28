@@ -385,7 +385,9 @@ at 70 W or 250 W.
   - **LENGTH**: left is shorter strokes, right longer.
 
   The dashed markers are where the cues start: green inside them, amber past them (longer strokes stay
-  green). No percentages to read while you row; the numbers are in the summary afterwards. Each cue is two words, what to do and
+  green). While a cue is up, only the bar it is about is amber and the other is grey, so STRONGER FINISH
+  (the big bar) and LONGER STROKES (the thin one) look different at a glance. No percentages to read
+  while you row; the numbers are in the summary afterwards. Each cue is two words, what to do and
   the part of the stroke, so it reads at a glance when you're tired. They never name a muscle: the pulley
   measures the total force on the strap, and different causes look alike (an early arm pull, for one, can
   pass for a strong push off the catch). A cue flags a change against your own steady rowing; a video of
