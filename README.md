@@ -575,11 +575,16 @@ Put it next to the SmartRow app in split screen on an Android tablet, or on a ph
 **As an app, with the screen kept on (Chrome on Android).** Over plain `http://` on a home network, Chrome
 won't install the page as an app or let it keep the screen awake. To allow both on your own tablet, open
 `chrome://flags/#unsafely-treat-insecure-origin-as-secure`, type the page's addresses into the box,
-comma-separated (for example `http://raspberrypi.local:8080,http://192.168.1.23:8080`, using the address you
+comma-separated (for example `http://pirower.local:8080,http://192.168.1.23:8080`, using the address you
 actually open), set it to **Enabled** and tap **Relaunch**. The page then shows *screen stays on* at the top
-while it holds the screen awake, and Chrome's menu offers to install it (*Install app* or *Add to home
-screen*), after which it opens in its own window without the address bar. Chrome updates can reset flags
-now and then.
+while it holds the screen awake, and Chrome's menu can add it to the home screen. Chrome updates can reset
+flags now and then.
+
+**Full screen.** Chrome makes a true installed app (no address bar) only for https addresses its servers can
+reach, which a Pi on a home network is not, so the home-screen icon still opens with the address bar. Tap
+**Full screen** at the top of the page to hide it (and the status bar), in split screen too; swipe from the
+top edge or tap *Exit full screen* to leave. Chrome doesn't keep it between visits, so it's one tap each
+time.
 
 **Float** (shown where the browser supports it) puts a compact version in a floating Picture-in-Picture window,
 which stays on top of other apps, Peloton included. Whether it keeps updating while another app is in front

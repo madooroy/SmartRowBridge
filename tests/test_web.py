@@ -42,6 +42,7 @@ class WebTest(unittest.TestCase):
         self.assertIn("text/html", headers["Content-Type"])
         self.assertEqual(headers["Cache-Control"], "no-store")
         self.assertIn(b"STRONGER FINISH", body)
+        self.assertIn(b"requestFullscreen", body)  # the Full screen button
         self.assertEqual(body, PAGE.read_bytes())
 
     def test_status_with_age(self):

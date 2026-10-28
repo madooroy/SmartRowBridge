@@ -166,6 +166,7 @@
   <span id="awake" hidden title="This page is keeping the screen on">screen stays on</span>
   <button id="close" hidden>Close</button>
   <button id="sessBtn" hidden title="Saved summaries of your sessions">Sessions</button>
+  <button id="full" hidden title="Hide the browser's address bar (swipe from the top edge, or tap again, to leave)">Full screen</button>
   <button id="float" hidden title="Keep the coach in a floating window over other apps">Float</button>
 </header>
 
@@ -915,6 +916,31 @@ if (pipSupported) {
 }
 // A still canvas can stall the stream: redraw a little more often than the data changes.
 setInterval(drawPip, 500);
+
+// ------------------------------------------------------------------ full screen
+// Over plain http on a home network Chrome can't install the page as an app, so it opens with
+// the address bar; full screen hides it (and the status bar) until you leave it. Not offered
+// where the browser can't, or when the page already runs as an installed app.
+
+const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+const fsEnabled = document.fullscreenEnabled || document.webkitFullscreenEnabled;
+const standalone = window.matchMedia("(display-mode: standalone), (display-mode: fullscreen)").matches;
+function showFullButton() { $("full").textContent = fsElement() ? "Exit full screen" : "Full screen"; }
+async function toggleFull() {
+  try {
+    if (fsElement()) await (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    else {
+      const el = document.documentElement;
+      await (el.requestFullscreen ? el.requestFullscreen({ navigationUI: "hide" }) : el.webkitRequestFullscreen());
+    }
+  } catch (e) { /* refused (not from a tap, or not allowed here): nothing changes */ }
+}
+if (fsEnabled && !standalone) {
+  $("full").hidden = false;
+  $("full").addEventListener("click", toggleFull);
+  document.addEventListener("fullscreenchange", showFullButton);
+  document.addEventListener("webkitfullscreenchange", showFullButton);
+}
 
 // ------------------------------------------------------------------ app install and screen awake
 // Both need a secure context: https, or (on a home network) Chrome's
