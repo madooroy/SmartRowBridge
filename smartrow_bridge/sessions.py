@@ -174,7 +174,9 @@ def distance_offset(distances: list[int]) -> int:
     return max(0, distances[0] - max(0, first))
 
 
-STROKE_COLUMNS = ["t", "distance_m", "power_w", "spm", "heart_rate", "length_cm"]
+# force_n: the stroke's force curve as the pulley sends it (24 samples, N, about every 5.8 cm of
+# handle travel from the catch; see coach.py). Files saved before it was added lack the column.
+STROKE_COLUMNS = ["t", "distance_m", "power_w", "spm", "heart_rate", "length_cm", "force_n"]
 
 
 def stroke_rows(coach: IntervalCoach) -> list[list]:
@@ -182,8 +184,8 @@ def stroke_rows(coach: IntervalCoach) -> list[list]:
     if not coach.stroke_log:
         return []
     t0 = coach.stroke_log[0][0]
-    return [[round(t - t0, 2), d, round(p, 1), round(spm, 1), hr, length]
-            for t, d, p, spm, hr, length in coach.stroke_log]
+    return [[round(t - t0, 2), d, round(p, 1), round(spm, 1), hr, length, list(force)]
+            for t, d, p, spm, hr, length, force in coach.stroke_log]
 
 
 def _write(path: Path, data: dict) -> None:
