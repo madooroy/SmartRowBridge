@@ -41,7 +41,7 @@ class WebTest(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertIn("text/html", headers["Content-Type"])
         self.assertEqual(headers["Cache-Control"], "no-store")
-        self.assertIn(b"FINISH THE STROKE", body)
+        self.assertIn(b"BACK HALF FADING", body)
         self.assertEqual(body, PAGE.read_bytes())
 
     def test_status_with_age(self):

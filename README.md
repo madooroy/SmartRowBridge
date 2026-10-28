@@ -359,7 +359,7 @@ hardware: `python3 -m smartrow_bridge.display --preview /tmp/screens` (needs Pil
 
 ## Optional: interval coach (experimental)
 
-<img src="docs/images/screen-interval.png" alt="Interval screen: time, watts, finish meter at -15% and a FINISH THE STROKE cue" width="320"> <img src="docs/images/screen-interval-summary.png" alt="Interval summary: average force curve against steady, finish, length and peak" width="320">
+<img src="docs/images/screen-interval.png" alt="Interval screen: time, watts, finish meter at -15% and a BACK HALF FADING cue" width="320"> <img src="docs/images/screen-interval-summary.png" alt="Interval summary: average force curve against steady, finish, length and peak" width="320">
 
 The pulley sends a force curve for every stroke (the SmartRow app draws it). The coach watches those curves
 for you while you row: it spots harder efforts by itself and tells you, in one word, when your stroke starts
@@ -377,19 +377,21 @@ at 70 W or 250 W.
 
 - **During an interval:** time into the effort, watts, a **finish meter** (how much of your last 8 strokes'
   force comes in the back half of the drive, against your steady rowing: a big percentage and a bar with a
-  tick at steady, green / amber / red), and one cue in large type:
+  tick at steady, green / amber / red), and one cue in large type. The cues say what the curve does
+  against your own steady strokes, not which muscles did it: the pulley measures the total force on the
+  strap, and different causes look alike (an early arm pull, for one, can pass for a strong push off the
+  catch). A cue flags a change; a video of yourself rowing an effort shows what changed.
   - **GOOD** (green): the curve keeps your steady shape.
-  - **FINISH THE STROKE** (amber): too little force in the back half of the drive; the stroke has gone short
-    and leg-heavy (back swing and arm draw cut short).
-  - **DRIVE WITH THE LEGS** (amber): the force comes late in the drive, a slow push off the catch with back
-    and arms doing the work. Measured as where the curve's centre of force sits against steady, after
-    allowing for a longer stroke (which moves it later by itself). The finish figures turn amber too: a big
-    finish is no good when the legs came in late.
-  - **LONGER STROKES** (amber): strokes clearly shorter than your steady ones (by 2.6 %, about 3 cm on a
+  - **BACK HALF FADING** (amber): less of the force comes in the back half of the drive than in your steady
+    strokes.
+  - **FORCE LATE** (amber): the force comes later in the drive than in your steady strokes. Measured as where
+    the curve's centre of force sits against steady, after allowing for a longer stroke (which moves it later
+    by itself). The finish figures turn amber too: a big back half means little when the force came late.
+  - **STROKES SHORTER** (amber): strokes clearly shorter than your steady ones (by 2.6 %, about 3 cm on a
     115 cm stroke).
 - **After an interval:** for 45 seconds, its duration and watts, its average force curve against your steady
-  shape (the force missing in the finish half filled in light grey, or in the leg-drive half when the legs
-  came in late, with *LEG DRIVE LATE*), and three numbers: **finish** (back-half force against steady: green
+  shape (the force missing in the back half filled in light grey, or in the front half when the force came
+  late, with *FORCE LATE*), and three numbers: **finish** (back-half force against steady: green
   within 5 %, amber to 12 %, red beyond), **length** and **peak** force. The same summary goes into the
   session record, one line per interval.
 
@@ -403,8 +405,11 @@ over.
 summary on the Pi, in `/var/lib/smartrow-bridge/sessions/` (the newest 60 are kept). The
 [web page](#optional-a-web-page-for-phones-and-tablets) then shows **Summary ready**: time, distance, average
 and steady watts, a few plain sentences on what the coach saw (which intervals kept their shape, which went
-short and whether those were the longer ones, any fade within an effort, a late leg drive, how steady the
-pace between efforts was), and each interval's average curve against your steady shape. **Sessions** lists
+short and whether those were the longer ones, any fade within an effort, force arriving late, how steady the
+pace between efforts was), and each interval's average curve against your steady shape, with **peak at**:
+where in the drive the force peaks and how much that varies from stroke to stroke, against your steady
+rowing (an idea from Jaap van Ekris of Open Rowing Monitor). The pulley gives 24 points per stroke, about 4 %
+of the drive apart, so only a clear change is called out. **Sessions** lists
 earlier ones. **Share** turns the summary into a picture for the share sheet (Messages, email, ...), or saves
 it where the browser has no share sheet.
 

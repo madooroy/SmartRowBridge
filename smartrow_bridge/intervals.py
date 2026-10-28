@@ -100,14 +100,17 @@ def note_for(record: dict) -> dict:
         lines[0] += f" Heart rate {hr['avg']} average, {hr['max']} max."
     lines += ["", "What the coach saw:"] + [f"- {f}" for f in record.get("findings", [])]
     if intervals:
-        lines += ["", "Intervals (finish = force in the back half of the drive against steady):"]
+        lines += ["", "Intervals (finish = force in the back half of the drive against steady; peak = where in "
+                      "the drive the force peaks, \u00b1 stroke to stroke):"]
         for i in intervals:
             row = (f"I{i['index']}  {_clock(i['duration_s'])}  {i['power_w']} W  {i['stroke_rate_spm']} spm  "
                    f"finish {_signed(i['finish_pct'])}%  length {_signed(round(i['length_delta_cm']))} cm")
+            if "peak_at_pct" in i:
+                row += f"  peak {i['peak_at_pct']}% \u00b1{round(i['peak_spread_pct'])}"
             if i.get("hr_peak"):
                 row += f"  HR peak {i['hr_peak']}"
             if i.get("legs_late"):
-                row += "  leg drive late"
+                row += "  force late"
             lines.append(row)
     lines += ["", "From SmartRowBridge (interval coach)."]
     return {

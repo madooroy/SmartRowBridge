@@ -59,7 +59,8 @@ class FindingsTest(unittest.TestCase):
               {"index": 2, "rating": "good", "finish_pct": 0, "duration_s": 60, "length_delta_cm": 0,
                "fade_pct": 0, "legs_late": False, "steady_power_w": 120}]
         text = " ".join(coach.findings(iv))
-        self.assertIn("Leg drive came late in I1", text)
+        self.assertIn("Force came later in the drive than in steady rowing in I1", text)
+        self.assertNotIn("leg drive", text.lower())  # describes the curve, not muscles
         self.assertIn("I1 faded within itself: finish −9%", text)
         self.assertIn("Steady pace went from 100 W to 120 W", text)
         self.assertIn("1 of 2 kept their shape (I2)", text)  # late legs don't count as kept

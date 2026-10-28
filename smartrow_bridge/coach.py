@@ -10,28 +10,40 @@ Fed one StrokeCurve per completed stroke (see protocol.SmartRowParser.on_stroke)
   are ignored, and the strokes just after an effort (recovery) never teach the
   steady reference.
 - Live cue, during an effort: compares the last few strokes' curve shape with your
-  steady curve. "finish" when too little of the force comes in the back half of the
-  drive (a short, leg-only stroke), "legs" when the force comes late in the drive
-  (a weak push off the catch, pulling with back and arms), "length" when strokes get
-  clearly shorter, otherwise "good".
-- Summary, after each effort: its average curve, peak force, stroke length and finish
-  share against the steady reference. Also logged, so it lands in the session record.
+  steady curve. "finish" (shown as BACK HALF FADING) when less of the force comes in
+  the back half of the drive than in steady rowing, "legs" (FORCE LATE) when the force
+  comes later in the drive than in steady rowing, "length" (STROKES SHORTER) when
+  strokes get clearly shorter, otherwise "good".
+- Summary, after each effort: its average curve, peak force, stroke length, finish
+  share and how consistently the force peak lands (peak spread), all against the steady
+  reference. Also logged, so it lands in the session record.
+
+What the cues and summaries say is what the curve does, never which muscles did it: the
+pulley measures the total force on the strap, and different causes look alike (an early
+arm pull, for one, can pass for a strong push off the catch). They flag a change against
+your own steady rowing; a video of the effort shows what changed. (The internal names
+"finish" and "legs" are kept so saved sessions still read.)
 
 Stroke power is work x rate / 60 for that stroke. The pulley's own instantaneous
 power lags a stroke behind, which would blur where an effort starts and ends.
 
 Calibrated on a 45-minute session with seven efforts at ~150 W over ~111 W steady:
 the back-half share of the curve was 0.29 steady, 0.29-0.35 in the efforts that kept
-their shape and 0.23-0.24 in the ones that went short and leg-heavy, with about 0.02
-stroke-to-stroke scatter.
+their shape and 0.23-0.24 in the ones that went short, with about 0.02 stroke-to-stroke
+scatter.
 
-The "legs" cue measures where the curve's centre of force sits (in samples, 0-23)
-against the steady curve, minus what a longer stroke explains by itself (LATE_PER_PCT
-per % of extra length, longer strokes only): longer strokes push the centre later
-without any loss of leg drive.
-Over 15 real intervals the length-corrected shift never exceeded +0.34 samples; a
-weak leg drive (peak force moving from about sample 8 to 11) shifts it by 1.5 or
-more. The cue threshold sits between, untested on a real weak-leg stroke so far.
+The "legs" (FORCE LATE) cue measures where the curve's centre of force sits (in samples,
+0-23) against the steady curve, minus what a longer stroke explains by itself
+(LATE_PER_PCT per % of extra length, longer strokes only): longer strokes push the centre
+later by themselves. Over 15 real intervals the length-corrected shift never exceeded
++0.34 samples; the peak moving from about sample 8 to 11 shifts it by 1.5 or more. The
+cue threshold sits between, untested on a real late stroke so far.
+
+Peak spread: where in the drive each stroke's force peaks (0-100 % of the drive, the
+centre of the samples within 10 % of the stroke's maximum, so a flat top doesn't jump
+about), and its standard deviation over the interval's strokes, against the same for the
+steady strokes. Suggested by Jaap van Ekris (Open Rowing Monitor), who found the peak's
+stroke-to-stroke variability telling in his own rowing.
 
 Stroke length is judged as a percentage of the steady stroke, so tall and short rowers
 are treated alike. CoachSettings holds what a rower may want to change (how much harder
@@ -65,6 +77,7 @@ CUE_MIN = 6  # strokes into an effort before the first cue
 LATE_PER_PCT = 0.115  # centre of force moves this much later per % of extra stroke length
 #                       (0.1 sample per cm at ~115 cm, from real sessions)
 GOOD_FINISH, OK_FINISH = 0.95, 0.88  # summary colours (fixed, so screens agree across settings)
+PEAK_SPREAD_RATIO, PEAK_SPREAD_MIN = 1.5, 3.0  # peak spread flagged above both: x steady, and steady + this (% of drive)
 SUMMARY_SHOW_S = 45.0  # how long the summary is shown after an effort
 
 
@@ -139,6 +152,23 @@ def drive_lateness(curve: list[float], steady_curve: list[float], length_delta_p
     return centre_of_force(curve) - centre_of_force(steady_curve) - LATE_PER_PCT * max(0.0, length_delta_pct)
 
 
+def peak_position(force: list[int] | list[float]) -> float:
+    """Where in the drive the force peaks, 0-100 %: the centre of the samples within 10 % of the maximum."""
+    top = max(force) if force else 0
+    if top <= 0:
+        return 0.0
+    near = [i for i, f in enumerate(force) if f >= 0.9 * top]
+    return sum(near) / len(near) / (len(force) - 1) * 100
+
+
+def peak_stats(strokes) -> tuple[float, float]:
+    """Mean and standard deviation of the peak position (% of the drive) over strokes."""
+    at = [peak_position(s.force_n) for s in strokes if s.force_n]
+    if not at:
+        return 0.0, 0.0
+    return statistics.fmean(at), (statistics.pstdev(at) if len(at) > 1 else 0.0)
+
+
 def stroke_power(s: StrokeCurve) -> float:
     return s.work_j * s.stroke_rate_spm / 60.0 if s.work_j and s.stroke_rate_spm else float(s.power_w)
 
@@ -170,6 +200,16 @@ class IntervalSummary:
     legs_threshold: float = LEGS_CUE
     steady_power_w: float = 0.0
     started_at: float = 0.0  # time of its first stroke (same clock as the strokes)
+    peak_at_pct: float = 0.0  # where the force peaks, % of the drive (mean over the strokes)
+    peak_spread_pct: float = 0.0  # ... and how much that varies from stroke to stroke (std dev)
+    steady_peak_at_pct: float = 0.0
+    steady_peak_spread_pct: float = 0.0
+
+    @property
+    def peak_wanders(self) -> bool:
+        """The peak landed clearly less consistently than in steady rowing."""
+        return self.peak_spread_pct > max(self.steady_peak_spread_pct * PEAK_SPREAD_RATIO,
+                                          self.steady_peak_spread_pct + PEAK_SPREAD_MIN)
 
     @property
     def lateness(self) -> float:
@@ -215,6 +255,11 @@ class IntervalSummary:
             "steady_power_w": round(self.steady_power_w),
             "drive_late": round(self.lateness, 2),
             "legs_late": self.legs_late,
+            "peak_at_pct": round(self.peak_at_pct),
+            "peak_spread_pct": round(self.peak_spread_pct, 1),
+            "steady_peak_at_pct": round(self.steady_peak_at_pct),
+            "steady_peak_spread_pct": round(self.steady_peak_spread_pct, 1),
+            "peak_wanders": self.peak_wanders,
             "fade_pct": round((self.last_third_back_share / self.first_third_back_share - 1) * 100)
             if self.first_third_back_share else 0,
             "curve": [round(v) for v in self.curve],
@@ -225,8 +270,10 @@ class IntervalSummary:
         m, s = divmod(round(self.duration_s), 60)
         return (f"Interval {self.index}: {m}:{s:02d}, {self.strokes} strokes, {self.power_w:.0f} W, "
                 f"{self.stroke_rate_spm:.1f} spm, length {self.length_cm:.0f} cm ({self.length_delta_cm:+.0f}), "
-                f"peak {self.peak_n:.0f} N, finish {self.finish_pct:+d}% vs steady ({self.rating})"
-                + (f", leg drive late ({self.lateness:+.1f})" if self.legs_late else ""))
+                f"peak {self.peak_n:.0f} N at {self.peak_at_pct:.0f}% \u00b1{self.peak_spread_pct:.1f} "
+                f"(steady {self.steady_peak_at_pct:.0f}% \u00b1{self.steady_peak_spread_pct:.1f}), "
+                f"finish {self.finish_pct:+d}% vs steady ({self.rating})"
+                + (f", force late ({self.lateness:+.1f})" if self.legs_late else ""))
 
 
 @dataclass
@@ -362,6 +409,8 @@ class IntervalCoach:
         n = len(strokes)
         period = 60.0 / statistics.fmean(s.stroke_rate_spm for s in strokes)
         third = max(1, n // 3)
+        peak_at, peak_spread = peak_stats(strokes)
+        steady_at, steady_spread = peak_stats(self.steady)
         return IntervalSummary(
             index=len(self.intervals) + 1,
             duration_s=strokes[-1].time - strokes[0].time + period,
@@ -381,6 +430,10 @@ class IntervalCoach:
             legs_threshold=self.settings.cues.legs_cue,
             steady_power_w=self.steady_power(),
             started_at=strokes[0].time,
+            peak_at_pct=peak_at,
+            peak_spread_pct=peak_spread,
+            steady_peak_at_pct=steady_at,
+            steady_peak_spread_pct=steady_spread,
         )
 
     # ------------------------------------------------------------ live cue
@@ -520,7 +573,7 @@ def findings(intervals: list[dict]) -> list[str]:
         d_good = sum(i["duration_s"] for i in good) / len(good)
         if d_short > d_good * 1.3:
             out.append(f"The ones that went short were the longer efforts (about {_clock(d_short)} against "
-                       f"{_clock(d_good)}): keep the finish going in the long pieces.")
+                       f"{_clock(d_good)}): the back half faded as the pieces went on.")
 
     long_fades = [i for i in intervals if i["duration_s"] >= 90 and i.get("fade_pct", 0) <= -5]
     if long_fades:
@@ -530,7 +583,15 @@ def findings(intervals: list[dict]) -> list[str]:
 
     legs = [i for i in intervals if i.get("legs_late")]
     if legs:
-        out.append(f"Leg drive came late in {_names(legs)}: push off the catch with the legs first.")
+        out.append(f"Force came later in the drive than in steady rowing in {_names(legs)}. The curve can't say "
+                   f"why (an early arm pull and a slow push off the catch look alike); a video of an effort can.")
+
+    wander = [i for i in intervals if i.get("peak_wanders")]
+    if wander:
+        spreads = ", ".join(f"\u00b1{i['peak_spread_pct']:.0f}%" for i in wander)
+        steady_spread = wander[0].get("steady_peak_spread_pct", 0)
+        out.append(f"The force peak landed less consistently from stroke to stroke in {_names(wander)} "
+                   f"({spreads} of the drive, against \u00b1{steady_spread:.0f}% in steady rowing).")
 
     steady = [i["steady_power_w"] for i in intervals if i.get("steady_power_w")]
     if len(steady) >= 2 and min(steady):

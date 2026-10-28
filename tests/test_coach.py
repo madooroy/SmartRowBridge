@@ -144,7 +144,7 @@ class CoachTest(unittest.TestCase):
         s = r.summaries[0]
         self.assertTrue(s.legs_late)
         self.assertTrue(s.as_dict()["legs_late"])
-        self.assertIn("leg drive late", logs.output[0])
+        self.assertIn("force late", logs.output[0])
 
     def test_longer_stroke_is_not_weak_legs(self):
         """A longer stroke moves the centre of force later by itself; that is not a weak leg drive."""
@@ -177,6 +177,29 @@ class CoachTest(unittest.TestCase):
         r.row(1, 110)
         st = r.state()
         self.assertEqual((st["mode"], st["intervals"], st["last"]), ("warmup", 0, None))
+
+
+class PeakTest(unittest.TestCase):
+    def test_peak_position(self):
+        curve = [0] * 24
+        curve[6] = 100
+        self.assertAlmostEqual(coach.peak_position(curve), 6 / 23 * 100)
+        flat = [0] * 24
+        flat[6] = flat[7] = flat[8] = 100  # a flat top: its middle
+        self.assertAlmostEqual(coach.peak_position(flat), 7 / 23 * 100)
+        self.assertEqual(coach.peak_position([0] * 24), 0.0)
+
+    def test_peak_wanders_only_on_a_clear_change(self):
+        base = dict(index=1, duration_s=60, strokes=20, power_w=150, stroke_rate_spm=22, length_cm=115, peak_n=600,
+                    back_share=0.3, steady_back_share=0.3, steady_length_cm=115, curve=[1] * 24,
+                    steady_curve=[1] * 24, first_third_back_share=0.3, last_third_back_share=0.3,
+                    steady_peak_at_pct=35, steady_peak_spread_pct=3.0)
+        self.assertFalse(coach.IntervalSummary(**base, peak_spread_pct=4.0).peak_wanders)  # within the scatter
+        self.assertTrue(coach.IntervalSummary(**base, peak_spread_pct=7.0).peak_wanders)
+        d = coach.IntervalSummary(**base, peak_spread_pct=7.0).as_dict()
+        self.assertEqual((d["peak_spread_pct"], d["steady_peak_spread_pct"], d["peak_wanders"]), (7.0, 3.0, True))
+        text = " ".join(coach.findings([{**d, "rating": "good"}]))
+        self.assertIn("force peak landed less consistently from stroke to stroke in I1", text)
 
 
 class SettingsTest(unittest.TestCase):

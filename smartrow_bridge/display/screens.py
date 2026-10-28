@@ -245,9 +245,10 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
 # ---------------------------------------------------------------- interval coach
 
 CUES = {
-    "finish": ("FINISH THE STROKE", AMBER),
-    "legs": ("DRIVE WITH THE LEGS", AMBER),
-    "length": ("LONGER STROKES", AMBER),
+    # What the curve does against your steady strokes, not which muscles (see coach.py).
+    "finish": ("BACK HALF FADING", AMBER),
+    "legs": ("FORCE LATE", AMBER),
+    "length": ("STROKES SHORTER", AMBER),
     "good": ("GOOD", GREEN),
 }
 RATING_COLOURS = {"good": GREEN, "ok": AMBER, "short": RED}
@@ -292,7 +293,7 @@ def _plot_curves(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], curv
         draw.polygon([(x0, y1), *pts, (x1, y1)], fill=_shade(colour))
     if curve and steady:
         # Fill the force missing against the steady shape in the half that matters:
-        # the finish (back) half normally, the leg-drive (front) half when legs are late.
+        # the back half normally, the front half when the force came late.
         sp = points(steady)
         span = range(FORCE_HALF + 1, len(pts) - 1) if gap_half == "back" else range(0, FORCE_HALF + 1)
         for i in span:
@@ -305,10 +306,10 @@ def _plot_curves(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], curv
         draw.line(points(steady), fill=DIM, width=2, joint="curve")
         draw.text((x1, y0), "steady shape", font=font(12), fill=DIM, anchor="rt")
     if curve:
-        for y in range(y0 + 16, y1, 8):  # dashed line where the finish half starts
+        for y in range(y0 + 16, y1, 8):  # dashed line where the back half starts
             draw.line((mid, y, mid, y + 3), fill=FAINT, width=1)
-        draw.text((mid + 4, y1 - 2), "finish", font=font(11), fill=DIM, anchor="lb")
-        draw.text((mid - 4, y1 - 2), "legs", font=font(11), fill=DIM, anchor="rb")
+        draw.text((mid + 4, y1 - 2), "back", font=font(11), fill=DIM, anchor="lb")
+        draw.text((mid - 4, y1 - 2), "front", font=font(11), fill=DIM, anchor="rb")
 
 
 def _finish_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct: int | None,
@@ -316,7 +317,7 @@ def _finish_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct
     """Back-half force against steady: a big number and a bar with a tick at steady.
 
     `colour` overrides the green/amber/red bands: a strong finish is no good when it
-    only comes from a late leg drive.
+    only comes from force arriving late.
     """
     x0, y0, x1, y1 = box
     draw.rounded_rectangle(box, radius=8, fill=TILE)
@@ -409,7 +410,7 @@ def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
             _mini_meter(draw, (x0 + 8, y1 - 8, x0 + tile_w - 8, y1 - 4), last["finish_pct"],
                         AMBER if legs_late else None)
     if legs_late:
-        draw.text((WIDTH - 6, HEIGHT - 4), "LEG DRIVE LATE", font=font(13, True), fill=AMBER, anchor="rd")
+        draw.text((WIDTH - 6, HEIGHT - 4), "FORCE LATE", font=font(13, True), fill=AMBER, anchor="rd")
     else:
         draw.text((WIDTH - 6, HEIGHT - 4), f"{delta:+.0f} cm vs steady", font=font(12), fill=DIM, anchor="rd")
     return image

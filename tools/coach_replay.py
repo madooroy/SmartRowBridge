@@ -35,7 +35,8 @@ from smartrow_bridge import sessions  # noqa: E402
 from smartrow_bridge.coach import CoachSettings, IntervalCoach  # noqa: E402
 from smartrow_bridge.protocol import FORCE_SAMPLES, StrokeCurve  # noqa: E402
 
-CUE_NAMES = {"good": "good", "finish": "FINISH", "legs": "LEGS", "length": "LENGTH", None: "first strokes"}
+CUE_NAMES = {"good": "good", "finish": "BACK HALF FADING", "legs": "FORCE LATE", "length": "STROKES SHORTER",
+             None: "first strokes"}
 
 
 def _number(text: str | None) -> int:

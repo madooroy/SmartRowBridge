@@ -240,8 +240,9 @@ const C = { bg: "#000", fg: "#f0f0f0", dim: "#878787", faint: "#464646", tile: "
             green: "#46cd5f", amber: "#f5af2d", red: "#eb4b41", gap: "#d7d7d7" };
 const GOOD_PCT = -5, OK_PCT = -12, METER_MIN = -30, METER_MAX = 15, FORCE_HALF = 12;
 const STALE_S = 5, RECALL_S = 20, POLL_MS = 1000;
-const CUES = { finish: ["FINISH THE STROKE", C.amber], legs: ["DRIVE WITH THE LEGS", C.amber],
-               length: ["LONGER STROKES", C.amber], good: ["GOOD", C.green] };
+// What the curve does against your steady strokes, not which muscles (see coach.py).
+const CUES = { finish: ["BACK HALF FADING", C.amber], legs: ["FORCE LATE", C.amber],
+               length: ["STROKES SHORTER", C.amber], good: ["GOOD", C.green] };
 const RATING = { good: C.green, ok: C.amber, short: C.red };
 
 const $ = (id) => document.getElementById(id);
@@ -323,8 +324,8 @@ function plotCurve(g, bx, by, w, h, curve, steady, colour, gapHalf = "back", lab
   if (pc) {
     g.strokeStyle = C.faint; g.setLineDash([3 * scale, 5 * scale]); g.lineWidth = scale;
     g.beginPath(); g.moveTo(mid, y0); g.lineTo(mid, y1); g.stroke(); g.setLineDash([]);
-    g.textAlign = "right"; g.fillText("legs", mid - 5 * scale, by + h - 6 * scale);
-    g.textAlign = "left"; g.fillText("finish", mid + 5 * scale, by + h - 6 * scale);
+    g.textAlign = "right"; g.fillText("front", mid - 5 * scale, by + h - 6 * scale);
+    g.textAlign = "left"; g.fillText("back", mid + 5 * scale, by + h - 6 * scale);
   }
 }
 
@@ -377,7 +378,7 @@ function renderSummary(last) {
   $("sLength").textContent = `${Math.round(last.length_cm)} cm`;
   $("sPeak").textContent = `${last.peak_n} N`;
   const note = $("sNote");
-  note.textContent = legs ? "LEG DRIVE LATE" : `${signed(Math.round(last.length_delta_cm), " cm")} vs steady · ${last.strokes} strokes · ${last.stroke_rate_spm} spm`;
+  note.textContent = legs ? "FORCE LATE" : `${signed(Math.round(last.length_delta_cm), " cm")} vs steady · ${last.strokes} strokes · ${last.stroke_rate_spm} spm`;
   note.className = legs ? "note warn" : "note";
   drawCurve($("sCurve"), last.curve, last.steady_curve, colour, legs ? "front" : "back");
 }
@@ -406,7 +407,7 @@ function renderHistory(coach) {
   layout.classList.toggle("with-history", items.length > 0);
   $("history").innerHTML = items.slice().reverse().map((i) => {
     const colour = i.legs_late ? C.amber : (RATING[i.rating] || C.fg);
-    const flag = i.legs_late ? " · legs late" : "";
+    const flag = i.legs_late ? " · force late" : "";
     return `<div class="row"><span class="n">${i.index}</span>
       <span>${fmtTime(i.duration_s)} · ${i.power_w} W<div class="sub">${signed(Math.round(i.length_delta_cm), " cm")}${flag}</div></span>
       <span class="pct" style="color:${colour}">${signed(i.finish_pct, "%")}</span></div>`;
@@ -567,13 +568,15 @@ function renderSession(s) {
     `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join("");
   $("ssFindings").innerHTML = (s.findings || []).map((f) => `<li>${f}</li>`).join("");
   $("ssCards").innerHTML = iv.map((i) => {
-    const flags = [i.legs_late ? "LEG DRIVE LATE" : "", i.duration_s >= 90 && i.fade_pct <= -5 ? `FADED ${signed(i.fade_pct, "%")}` : ""]
+    const flags = [i.legs_late ? "FORCE LATE" : "", i.peak_wanders ? "PEAK LESS CONSISTENT" : "",
+                   i.duration_s >= 90 && i.fade_pct <= -5 ? `FADED ${signed(i.fade_pct, "%")}` : ""]
       .filter(Boolean).join(" · ");
     return `<div class="tile card">
       <div class="top"><span class="name">I${i.index} · ${fmtTime(i.duration_s)} · ${i.power_w} W</span>
         <span class="pct" style="color:${ratingColour(i)}">${signed(i.finish_pct, "%")}</span></div>
       <canvas data-i="${i.index}"></canvas>
       <div class="sub">${i.stroke_rate_spm} spm · ${Math.round(i.length_cm)} cm (${signed(Math.round(i.length_delta_cm), "")}) · peak ${i.peak_n} N</div>
+      ${i.peak_spread_pct !== undefined ? `<div class="sub">peak at ${i.peak_at_pct}% ±${Math.round(i.peak_spread_pct)} (steady ${i.steady_peak_at_pct}% ±${Math.round(i.steady_peak_spread_pct)})</div>` : ""}
       ${i.hr_peak ? `<div class="sub">♥ ${i.hr_avg ?? "–"} avg · ${i.hr_peak} peak${i.hr_recovery !== null && i.hr_recovery !== undefined ? ` · −${i.hr_recovery} in 1 min after` : ""}</div>` : ""}
       ${flags ? `<div class="flag">${flags}</div>` : ""}</div>`;
   }).join("");
@@ -582,7 +585,10 @@ function renderSession(s) {
     drawCurve(cv, i.curve, i.steady_curve, ratingColour(i), i.legs_late ? "front" : "back", false);
   }
   $("ssHint").textContent = "Finish = how much of the stroke's force comes in the back half of the drive, against your " +
-    "steady rowing. Curves: grey line = your steady shape, light grey = force missing." +
+    "steady rowing. Peak at = where in the drive the force peaks, ± how much that varies stroke to stroke " +
+    "(the pulley gives 24 points per stroke, about 4% of the drive apart, so small differences mean little). " +
+    "These describe the curve, not which muscles did the work: video shows that. " +
+    "Curves: grey line = your steady shape, light grey = force missing." +
     (s.heart_rate ? " Heart rate drift = extra heartbeats per watt in the second half of the steady rowing (under 5% is typical)."
                   : " No heart rate: connect a strap to the bridge (SRB_HEART_RATE) to have it here.");
 }
@@ -782,7 +788,7 @@ function shareImage(s) {
       text(signed(i.finish_pct, "%"), x + cardW - 22, top + 48, 40, ratingColour(i), true, "right");
       plotCurve(g, x + 6, top + 62, cardW - 12, 130, i.curve, i.steady_curve, ratingColour(i),
                 i.legs_late ? "front" : "back", false, 2);
-      const note = i.legs_late ? "leg drive late" : `${Math.round(i.length_cm)} cm (${signed(Math.round(i.length_delta_cm), "")}) · ${i.stroke_rate_spm} spm` +
+      const note = i.legs_late ? "force late" : `${Math.round(i.length_cm)} cm (${signed(Math.round(i.length_delta_cm), "")}) · ${i.stroke_rate_spm} spm` +
                    (i.hr_peak ? ` · ♥ ${i.hr_peak}` : "");
       text(note, x + 22, top + cardH - 22, 24, i.legs_late ? C.amber : C.dim, !!i.legs_late);
     });
@@ -853,7 +859,7 @@ function drawPip() {
     text(`${fmtTime(last.duration_s)} · ${last.power_w} W`, W / 2, 95, 50, C.fg, "center");
     text("FINISH", 16, 175, 22, C.dim, "left", false);
     text(signed(last.finish_pct, "%"), W - 16, 175, 56, colour, "right");
-    text(last.legs_late ? "LEG DRIVE LATE" : `length ${signed(Math.round(last.length_delta_cm), " cm")}`,
+    text(last.legs_late ? "FORCE LATE" : `length ${signed(Math.round(last.length_delta_cm), " cm")}`,
          W / 2, 240, 26, last.legs_late ? C.amber : C.dim, "center", !!last.legs_late);
   } else {
     const m = st.metrics || {}, rowing = !!st.rowing;
