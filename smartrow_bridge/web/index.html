@@ -60,8 +60,7 @@
 
   /* Interval */
   .clockrow { display: flex; justify-content: space-between; align-items: baseline; gap: var(--pad); }
-  .clockrow .value { font-size: var(--big); }
-  .clockrow .watts { font-size: var(--mid); }
+  .clockrow .value, .clockrow .watts { font-size: clamp(36px, 11vmin, 124px); }  /* time and power alike */
   .meter .top { display: flex; justify-content: space-between; align-items: center; }
   .meter .pct { font-size: var(--mid); }
   .bar { position: relative; height: clamp(20px, 4.5vmin, 44px); margin: 14px 0 4px; }
@@ -80,6 +79,14 @@
   .cbar .mid { position: absolute; left: 50%; top: -6px; bottom: -6px; width: 3px; margin-left: -1px; background: var(--fg); }
   .cbar .mark { position: absolute; top: -3px; bottom: -3px; border-left: 1px dashed var(--dim); }
   .mini.cbar { height: 6px; margin: 8px 0 0; }
+  /* Three blocks (as on the Pi's screen): force slides against steady; length grows or shrinks from the middle. */
+  .trio { position: relative; height: clamp(66px, 16vmin, 170px); margin: 6px 0 4px; }
+  .trio .row { position: absolute; left: 0; right: 0; }
+  .trio .blk { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
+  .trio .steady { background: var(--faint); color: var(--fg); font-size: calc(var(--label) * .8);
+    display: flex; align-items: center; justify-content: center; }
+  .trio .guide { position: absolute; top: -4px; bottom: -4px; border-left: 1px dashed var(--dim); }
+  .ends.centre { justify-content: center; }
   .cue { border-radius: 12px; padding: var(--pad); text-align: center; font-weight: 700;
     font-size: clamp(24px, 7vmin, 72px); color: var(--bg); }
   .cue.none { background: var(--tile); color: var(--dim); }
@@ -186,10 +193,9 @@
       <div class="label" id="iTitle">INTERVAL</div>
       <div class="clockrow"><div class="value" id="iClock">0:00</div><div class="value watts" id="iWatts">0 W</div></div>
       <div class="tile meter">
-        <div class="ends"><span>catch</span><b>FORCE vs STEADY</b><span>finish</span></div>
-        <div class="cbar" id="iBal"></div>
-        <div class="ends"><span>shorter</span><b id="iLen">LENGTH</b><span>longer</span></div>
-        <div class="cbar thin" id="iLenBar"></div>
+        <div class="ends"><span>catch</span><b>FORCE</b><span>finish</span></div>
+        <div class="trio" id="iTrio"></div>
+        <div class="ends centre"><b id="iLen">LENGTH</b></div>
       </div>
       <div class="cue none" id="iCue">…</div>
       <div class="tile curve"><canvas id="iCurve"></canvas></div>
@@ -350,6 +356,44 @@ function shapeColour(i) {
   if (i.balance === null || i.balance === undefined) return i.legs_late ? C.amber : (RATING[i.rating] || C.fg);
   return Math.abs(i.balance) >= 1 || (i.length_balance ?? 0) <= -1 ? C.amber : C.green;
 }
+// The three blocks, as on the Pi's screen (display/screens.py _shape_meter).
+const STEADY_SHARE = 0.5, SHIFT_PER_UNIT = 0.25, STRETCH_PER_UNIT = 0.25;
+const clampBar = (v) => Math.max(-BAR_RANGE, Math.min(BAR_RANGE, v));
+function trioGeometry(balance, lengthBalance) {  // in % of the width
+  const w = STEADY_SHARE * 100, left = 50 - w / 2;
+  const has = (v) => v !== null && v !== undefined;
+  return {
+    steady: [left, w],
+    force: has(balance) ? [left + clampBar(balance) * SHIFT_PER_UNIT * w, w] : null,
+    length: has(lengthBalance) ? (() => { const lw = w * (1 + clampBar(lengthBalance) * STRETCH_PER_UNIT);
+                                          return [50 - lw / 2, lw]; })() : null,
+  };
+}
+function trioColours(balance, lengthBalance, cue) {
+  return [barColour(cue, ["finish", "legs"]) || (Math.abs(balance) >= 1 ? C.amber : C.green),
+          barColour(cue, ["length"]) || (lengthBalance <= -1 ? C.amber : C.green)];
+}
+function renderTrio(el, balance, lengthBalance, cue) {
+  const g = trioGeometry(balance, lengthBalance), [fc, lc] = trioColours(balance, lengthBalance, cue);
+  const blk = (r, cls, style) => `<div class="blk ${cls}" style="left:${r[0]}%;width:${r[1]}%;${style}"></div>`;
+  let html = `<div class="row" style="top:0;height:32%">${g.force ? blk(g.force, "", `background:${fc}`) : ""}</div>`;
+  html += `<div class="row" style="top:39%;height:22%"><div class="blk steady" style="left:${g.steady[0]}%;width:${g.steady[1]}%">steady</div></div>`;
+  html += `<div class="row" style="top:68%;height:32%">${g.length ? blk(g.length, "", `background:${lc}`) : ""}</div>`;
+  for (const x of [g.steady[0], g.steady[0] + g.steady[1]]) html += `<div class="guide" style="left:${x}%"></div>`;
+  el.innerHTML = html;
+}
+function pipTrio(g, x0, y0, x1, y1, balance, lengthBalance, cue) {
+  const geo = trioGeometry(balance, lengthBalance), [fc, lc] = trioColours(balance, lengthBalance, cue);
+  const X = (pct) => x0 + (x1 - x0) * pct / 100, H = y1 - y0;
+  const rect = (r, ya, yb, colour) => { g.fillStyle = colour; g.beginPath();
+    g.roundRect(X(r[0]), y0 + H * ya, X(r[0] + r[1]) - X(r[0]), H * (yb - ya), 4); g.fill(); };
+  if (geo.force) rect(geo.force, 0, 0.32, fc);
+  rect(geo.steady, 0.39, 0.61, C.faint);
+  if (geo.length) rect(geo.length, 0.68, 1, lc);
+  g.fillStyle = C.dim;
+  for (const x of [geo.steady[0], geo.steady[0] + geo.steady[1]])
+    for (let y = y0 - 3; y < y1 + 3; y += 4) g.fillRect(X(x), y, 1, 2);
+}
 function pipCentreBar(g, x0, y0, x1, y1, value, warnAbove = true, override = null) {
   const mid = (x0 + x1) / 2, half = (x1 - x0) / 2;
   const at = (v) => mid + half * Math.max(-BAR_RANGE, Math.min(BAR_RANGE, v)) / BAR_RANGE;
@@ -384,8 +428,7 @@ function renderInterval(live) {
   $("iClock").textContent = fmtTime(live.elapsed_s);
   $("iWatts").textContent = `${live.power_w} W`;
   const judged = live.balance !== null && live.balance !== undefined;
-  centreBar($("iBal"), live.balance, true, barColour(live.cue, ["finish", "legs"]));
-  centreBar($("iLenBar"), live.length_balance, false, barColour(live.cue, ["length"]));
+  renderTrio($("iTrio"), live.balance, live.length_balance, live.cue);
   $("iLen").textContent = judged ? `LENGTH ${signed(live.length_delta_cm, " cm")}` : "LENGTH";
   const cue = $("iCue"), [text, cueColour] = CUES[live.cue] || ["…", null];
   cue.textContent = text;
@@ -405,8 +448,13 @@ function renderSummary(last) {
   $("sFinishLabel").textContent = hasBal ? "SHAPE" : "FINISH";
   $("sFinish").textContent = hasBal ? (bal >= 1 ? "LATE" : bal <= -1 ? "FADED" : "STEADY") : signed(last.finish_pct, "%");
   $("sFinish").style.color = colour;
-  $("sMini").className = hasBal ? "mini cbar" : "mini";
-  if (hasBal) centreBar($("sMini"), bal); else $("sMini").innerHTML = "";
+  $("sMini").className = hasBal ? "mini trio" : "mini";
+  $("sMini").style.height = hasBal ? "14px" : "";
+  if (hasBal) {  // a small version of the force and steady blocks
+    const g = trioGeometry(bal, null);
+    $("sMini").innerHTML = `<div class="row" style="top:0;height:45%"><div class="blk" style="left:${g.force[0]}%;width:${g.force[1]}%;background:${colour}"></div></div>` +
+      `<div class="row" style="top:55%;height:45%"><div class="blk" style="left:${g.steady[0]}%;width:${g.steady[1]}%;background:var(--faint)"></div></div>`;
+  } else $("sMini").innerHTML = "";
   $("sLength").textContent = `${Math.round(last.length_cm)} cm`;
   $("sPeak").textContent = `${last.peak_n} N`;
   const note = $("sNote");
@@ -877,14 +925,13 @@ function drawPip() {
   if (!st || st.stage === null || st.age_s > STALE_S) { text("Bridge not running", W / 2, H / 2, 36, C.red, "center"); return; }
   const coach = st.coach, live = coach && coach.live, last = coach && coach.last;
   if (live) {
-    text(fmtTime(live.elapsed_s), 16, 50, 64, C.fg);
-    text(`${live.power_w} W`, W - 16, 50, 52, C.fg, "right");
+    text(fmtTime(live.elapsed_s), 16, 50, 58, C.fg);  // time and power the same size
+    text(`${live.power_w} W`, W - 16, 50, 58, C.fg, "right");
     const hrNow = st.metrics && st.metrics.heart_rate_bpm;
-    text("catch", 16, 98, 18, C.dim, "left", false);
-    text("FORCE vs STEADY" + (hrNow ? `   ♥ ${hrNow}` : ""), W / 2, 98, 18, C.dim, "center");
-    text("finish", W - 16, 98, 18, C.dim, "right", false);
-    pipCentreBar(g, 16, 112, W - 16, 138, live.balance, true, barColour(live.cue, ["finish", "legs"]));
-    pipCentreBar(g, 16, 150, W - 16, 162, live.length_balance, false, barColour(live.cue, ["length"]));
+    text("catch", 16, 96, 18, C.dim, "left", false);
+    text("FORCE" + (hrNow ? `   ♥ ${hrNow}` : ""), W / 2, 96, 18, C.dim, "center");
+    text("finish", W - 16, 96, 18, C.dim, "right", false);
+    pipTrio(g, 16, 108, W - 16, 166, live.balance, live.length_balance, live.cue);
     const [label, cueColour] = CUES[live.cue] || ["…", C.tile];
     g.fillStyle = cueColour; g.beginPath(); g.roundRect(10, 175, W - 20, 80, 14); g.fill();
     text(label, W / 2, 216, label.length > 14 ? 34 : 44, live.cue ? C.bg : C.dim, "center");

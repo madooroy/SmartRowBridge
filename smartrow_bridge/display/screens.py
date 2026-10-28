@@ -397,24 +397,71 @@ def _bar_colour(cue: str | None, mine: tuple[str, ...]) -> tuple | None:
     return AMBER if cue in mine else DIM
 
 
+STEADY_SHARE = 0.5  # the steady block's width, as a share of the meter
+SHIFT_PER_UNIT = 0.25  # the force block moves this share of the steady width per cue threshold
+STRETCH_PER_UNIT = 0.25  # the length block grows or shrinks this share of the steady width per cue threshold
+
+
+def _block(draw: ImageDraw.ImageDraw, x0: float, y0: int, x1: float, y1: int, fill, outline=None) -> None:
+    draw.rounded_rectangle((round(x0), y0, round(x1), y1), radius=3, fill=fill, outline=outline)
+
+
 def _shape_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], balance: float | None,
                  length_balance: float | None, length_delta: int | None, cue: str | None = None) -> None:
-    """During an effort: where the force sits in the drive (left: towards the catch, the finish
-    fading; right: towards the finish, a late push) and the stroke length (left: shorter), each
-    against your steady stroke in the middle."""
+    """During an effort, three blocks against each other:
+
+    - FORCE (top): a block the size of steady that slides left (force towards the catch: the
+      finish fading) or right (towards the finish: a late push);
+    - STEADY (middle, grey): your steady stroke, the reference; its edges run as guide lines
+      through the other two;
+    - LENGTH (bottom): grows or shrinks from the middle: narrower than steady = shorter strokes.
+
+    Each moves SHIFT/STRETCH_PER_UNIT of the steady width per cue threshold (coach.balance(),
+    length_balance()), clamped at +-BAR_RANGE. Colours: green, amber for the bar the cue is about,
+    grey for the other one while a cue is up.
+    """
     x0, y0, x1, y1 = box
     draw.rounded_rectangle(box, radius=8, fill=TILE)
     bx0, bx1 = x0 + 12, x1 - 12
-    draw.text((bx0, y0 + 5), "catch", font=font(12), fill=DIM)
-    draw.text(((bx0 + bx1) // 2, y0 + 5), "FORCE vs STEADY", font=font(12, True), fill=DIM, anchor="mt")
-    draw.text((bx1, y0 + 5), "finish", font=font(12), fill=DIM, anchor="rt")
-    _centre_bar(draw, (bx0, y0 + 24, bx1, y0 + 46), balance, colour=_bar_colour(cue, ("finish", "legs")))
-    draw.text((bx0, y0 + 54), "shorter", font=font(12), fill=DIM)
+    mid = (bx0 + bx1) / 2
+    w = (bx1 - bx0) * STEADY_SHARE
+    left, right = mid - w / 2, mid + w / 2
+    clamp = lambda v: max(-BAR_RANGE, min(BAR_RANGE, v))  # noqa: E731
+
+    draw.text((bx0, y0 + 3), "catch", font=font(12), fill=DIM)
+    draw.text((mid, y0 + 3), "FORCE", font=font(12, True), fill=DIM, anchor="mt")
+    draw.text((bx1, y0 + 3), "finish", font=font(12), fill=DIM, anchor="rt")
+    rows = {"force": (y0 + 18, y0 + 35), "steady": (y0 + 40, y0 + 52), "length": (y0 + 57, y0 + 74)}
+    for x in (left, right):  # the steady edges, through all three rows
+        for y in range(rows["force"][0] - 2, rows["length"][1] + 3, 4):
+            draw.line((x, y, x, y + 1), fill=DIM, width=1)
+
+    sy0, sy1 = rows["steady"]
+    _block(draw, left, sy0, right, sy1, fill=FAINT)
+    draw.text((mid, (sy0 + sy1) // 2), "steady", font=font(10), fill=FG, anchor="mm")
+
+    if balance is not None:
+        shift = clamp(balance) * SHIFT_PER_UNIT * w
+        colour = _bar_colour(cue, ("finish", "legs")) or (AMBER if abs(balance) >= 1 else GREEN)
+        fy0, fy1 = rows["force"]
+        _block(draw, left + shift, fy0, right + shift, fy1, fill=colour)
+    if length_balance is not None:
+        half = w / 2 * (1 + clamp(length_balance) * STRETCH_PER_UNIT)
+        colour = _bar_colour(cue, ("length",)) or (AMBER if length_balance <= -1 else GREEN)
+        ly0, ly1 = rows["length"]
+        _block(draw, mid - half, ly0, mid + half, ly1, fill=colour)
     label = "LENGTH" if length_delta is None else f"LENGTH {length_delta:+d} cm".replace("-", "\u2212")
-    draw.text(((bx0 + bx1) // 2, y0 + 54), label, font=font(12, True), fill=DIM, anchor="mt")
-    draw.text((bx1, y0 + 54), "longer", font=font(12), fill=DIM, anchor="rt")
-    _centre_bar(draw, (bx0, y0 + 69, bx1, y0 + 81), length_balance, pointer=False, warn_above=False,
-                colour=_bar_colour(cue, ("length",)))
+    draw.text((mid, y0 + 79), label, font=font(12, True), fill=DIM, anchor="mt")
+
+
+def _mini_shape(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], balance: float, colour: tuple) -> None:
+    """A small version of the force and steady blocks, for the summary's SHAPE tile."""
+    x0, y0, x1, y1 = box
+    mid, w = (x0 + x1) / 2, (x1 - x0) * STEADY_SHARE
+    shift = max(-BAR_RANGE, min(BAR_RANGE, balance)) * SHIFT_PER_UNIT * w
+    ym = (y0 + y1) // 2
+    _block(draw, mid - w / 2, ym + 1, mid + w / 2, y1, fill=FAINT)  # steady, below
+    _block(draw, mid - w / 2 + shift, y0, mid + w / 2 + shift, ym - 1, fill=colour)  # this interval, above
 
 
 def _mini_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct: int,
@@ -437,19 +484,21 @@ def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
     _hints(draw, "rowing")
     live = status["coach"]["live"]
     draw.text((WIDTH - 6, 4), f"INTERVAL {live['index']}", font=font(15, True), fill=DIM, anchor="rt")
-    draw.text((8, 58), format_time(live["elapsed_s"]), font=font(50, True), fill=FG, anchor="lm")
-    draw.text((WIDTH - 8, 58), f"{live['power_w']} W", font=font(40, True), fill=FG, anchor="rm")
-    _shape_meter(draw, (4, 90, WIDTH - 4, 176), live.get("balance"), live.get("length_balance"),
+    clock, watts = format_time(live["elapsed_s"]), f"{live['power_w']} W"
+    size = min(_fit(draw, clock, 44, WIDTH // 2 - 14, True).size, _fit(draw, watts, 44, WIDTH // 2 - 14, True).size)
+    draw.text((8, 54), clock, font=font(size, True), fill=FG, anchor="lm")  # the same size, side by side
+    draw.text((WIDTH - 8, 54), watts, font=font(size, True), fill=FG, anchor="rm")
+    _shape_meter(draw, (4, 84, WIDTH - 4, 179), live.get("balance"), live.get("length_balance"),
                  live.get("length_delta_cm") if live.get("balance") is not None else None, live.get("cue"))
 
     text, colour = CUES.get(live.get("cue"), ("…", DIM))
-    banner = (4, 181, WIDTH - 4, 215)
+    banner = (4, 183, WIDTH - 4, 216)
     if colour == DIM:
         draw.rounded_rectangle(banner, radius=8, fill=TILE)
-        draw.text((WIDTH // 2, 198), text, font=font(24, True), fill=DIM, anchor="mm")
+        draw.text((WIDTH // 2, 199), text, font=font(24, True), fill=DIM, anchor="mm")
     else:
         draw.rounded_rectangle(banner, radius=8, fill=colour)
-        draw.text((WIDTH // 2, 198), text, font=_fit(draw, text, 26, WIDTH - 24, True), fill=BG, anchor="mm")
+        draw.text((WIDTH // 2, 199), text, font=_fit(draw, text, 26, WIDTH - 24, True), fill=BG, anchor="mm")
     return image
 
 
@@ -493,7 +542,7 @@ def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
         draw.text((x0 + tile_w // 2, at_y), value, font=_fit(draw, value, size, tile_w - 10, True),
                   fill=value_colour, anchor="mm")
         if label == "SHAPE":
-            _centre_bar(draw, (x0 + 10, y1 - 9, x0 + tile_w - 10, y1 - 5), bal, pointer=False)
+            _mini_shape(draw, (x0 + 10, y1 - 12, x0 + tile_w - 10, y1 - 4), bal, value_colour)
         elif label == "FINISH":
             _mini_meter(draw, (x0 + 8, y1 - 8, x0 + tile_w - 8, y1 - 4), last["finish_pct"],
                         AMBER if legs_late else None)
