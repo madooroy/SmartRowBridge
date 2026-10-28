@@ -577,6 +577,7 @@ class IntervalCoach:
                 "balance": round(balance(ratio, late, self.settings.cues), 2) if judged else None,
                 "length_balance": round(length_balance(-short_by_pct, self.settings.cues), 2) if judged else None,
                 "curve": [round(v) for v in mean_curve(window)],
+                "stroke_curve": list(strokes[-1].force_n),  # the latest stroke, drawn live over steady
                 "steady_curve": [round(v) for v in mean_curve(self.steady)],
             }
         return out

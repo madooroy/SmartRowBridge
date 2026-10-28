@@ -10,6 +10,8 @@ screen it switches to.
 
 from __future__ import annotations
 
+import math
+
 from functools import lru_cache
 from pathlib import Path
 
@@ -301,7 +303,13 @@ def _plot_curves(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], curv
         step = (x1 - x0) / (len(values) - 1)
         return [(x0 + i * step, y1 - (y1 - y0) * v / top) for i, v in enumerate(values)]
 
-    mid = x0 + (x1 - x0) * (FORCE_HALF + 1) / (len(curve or steady or [0]) + 1)
+    # Half-way along the steady drive (the samples are spaced by distance; the drive ends at
+    # the last sample above 5 % of the peak, as in coach.drive_end), +1 for the leading zero.
+    ref = steady or curve or [0]
+    top_ref = max(ref) or 1
+    end = max((i for i, v in enumerate(ref) if v > 0.05 * top_ref), default=len(ref) - 1)
+    half = end / 2 + 1
+    mid = x0 + (x1 - x0) * half / (len(curve or steady or [0]) + 1)
     if curve:
         pts = points(curve)
         draw.polygon([(x0, y1), *pts, (x1, y1)], fill=_shade(colour))
@@ -309,7 +317,9 @@ def _plot_curves(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], curv
         # Fill the force missing against the steady shape in the half that matters:
         # the back half normally, the front half after a late push.
         sp = points(steady)
-        span = range(FORCE_HALF + 1, len(pts) - 1) if gap_half == "back" else range(0, FORCE_HALF + 1)
+        cut = math.ceil(half)
+        span = (range(cut, len(pts) - 1) if gap_half == "back" else range(0, cut)
+                if gap_half == "front" else range(0, len(pts) - 1))
         for i in span:
             a, b, c, d = pts[i], pts[i + 1], sp[i + 1], sp[i]
             if c[1] < b[1] or d[1] < a[1]:  # steady above the effort here (smaller y = higher)
@@ -320,138 +330,17 @@ def _plot_curves(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], curv
         draw.line(points(steady), fill=DIM, width=2, joint="curve")
         draw.text((x1, y0), "steady shape", font=font(12), fill=DIM, anchor="rt")
     if curve:
-        for y in range(y0 + 16, y1, 8):  # dashed line where the back half starts
+        for y in range(y0 + 16, y1, 8):  # dashed line half-way along the steady drive
             draw.line((mid, y, mid, y + 3), fill=FAINT, width=1)
-        draw.text((mid + 4, y1 - 2), "back", font=font(11), fill=DIM, anchor="lb")
-        draw.text((mid - 4, y1 - 2), "front", font=font(11), fill=DIM, anchor="rb")
 
 
-def _finish_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct: int | None,
-                  length_delta: int | None, colour: tuple | None = None) -> None:
-    """Back-half force against steady: a big number and a bar with a tick at steady.
-
-    `colour` overrides the green/amber/red bands: a strong finish is no good when it
-    only comes from a late push.
-    """
-    x0, y0, x1, y1 = box
-    draw.rounded_rectangle(box, radius=8, fill=TILE)
-    colour = colour or finish_colour(pct)
-    draw.text((x0 + 10, y0 + 8), "FINISH vs STEADY", font=font(13), fill=DIM)
-    value = "…" if pct is None else f"{pct:+d}%"
-    draw.text((x1 - 10, y0 + 22), value, font=font(34, True), fill=colour, anchor="rm")
-
-    bx0, bx1, by0, by1 = x0 + 12, x1 - 12, y0 + 46, y0 + 66
-
-    def at(p: float) -> float:
-        p = max(METER_MIN_PCT, min(METER_MAX_PCT, p))
-        return bx0 + (bx1 - bx0) * (p - METER_MIN_PCT) / (METER_MAX_PCT - METER_MIN_PCT)
-
-    for lo, hi, zone in ((METER_MIN_PCT, OK_FINISH_PCT, RED), (OK_FINISH_PCT, GOOD_FINISH_PCT, AMBER),
-                         (GOOD_FINISH_PCT, METER_MAX_PCT, GREEN)):
-        draw.rectangle((at(lo), by0, at(hi), by1), fill=_shade(zone, 0.3))
-    if pct is not None:
-        draw.rectangle((bx0, by0 + 4, at(pct), by1 - 4), fill=colour)
-        draw.polygon([(at(pct) - 7, by0 - 6), (at(pct) + 7, by0 - 6), (at(pct), by0 + 2)], fill=FG)
-    draw.line((at(0), by0 - 3, at(0), by1 + 3), fill=FG, width=2)
-    draw.text((at(0), by1 + 3), "steady", font=font(11), fill=DIM, anchor="mt")
-    if length_delta is not None:
-        draw.text((bx0, by1 + 3), f"length {length_delta:+d} cm", font=font(11), fill=DIM, anchor="lt")
-
-
-BAR_RANGE = 2.0  # the bars show +-2 cue thresholds; the markers sit at +-1
-
-
-def _centre_bar(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], value: float | None,
-                pointer: bool = True, warn_above: bool = True, colour: tuple | None = None) -> None:
-    """A bar that grows out from the middle (your steady stroke): green inside the markers at
-    +-1 (where the cues start), amber beyond. Clamped at +-BAR_RANGE, with an arrowhead.
-    warn_above=False: only the left side warns (longer strokes are fine). colour overrides it."""
-    x0, y0, x1, y1 = box
-    mid = (x0 + x1) / 2
-    half = (x1 - x0) / 2
-
-    def at(v: float) -> float:
-        return mid + half * max(-BAR_RANGE, min(BAR_RANGE, v)) / BAR_RANGE
-
-    draw.rectangle(box, fill=FAINT)
-    if value is not None:
-        colour = colour or (AMBER if value <= -1 or (warn_above and value >= 1) else GREEN)
-        end = at(value)
-        if abs(end - mid) >= 2:
-            draw.rectangle((min(mid, end), y0, max(mid, end), y1), fill=colour)
-        if pointer and abs(value) >= BAR_RANGE:  # off the scale: an arrowhead at that end
-            tip, back = (x1, x1 - 9) if value > 0 else (x0, x0 + 9)
-            draw.polygon([(tip, (y0 + y1) / 2), (back, y0 - 3), (back, y1 + 3)], fill=colour)
-    for v in ((-1, 1) if warn_above else (-1,)):  # where the cues start
-        x = at(v)
-        for y in range(y0 - 3, y1 + 4, 4):
-            draw.line((x, y, x, y + 1), fill=DIM, width=1)
-    draw.line((mid, y0 - 4, mid, y1 + 4), fill=FG, width=2)
-
-
-def _bar_colour(cue: str | None, mine: tuple[str, ...]) -> tuple | None:
-    """Only the bar the cue is about turns amber; the other goes grey, so the two cues look
-    different at a glance. LOOKS GOOD (or no cue yet): each bar by its own markers."""
-    if cue in (None, "good"):
-        return None
-    return AMBER if cue in mine else DIM
-
-
+BAR_RANGE = 2.0  # the summary's shape block moves up to +-2 cue thresholds
 STEADY_SHARE = 0.5  # the steady block's width, as a share of the meter
 SHIFT_PER_UNIT = 0.25  # the force block moves this share of the steady width per cue threshold
-STRETCH_PER_UNIT = 0.25  # the length block grows or shrinks this share of the steady width per cue threshold
 
 
 def _block(draw: ImageDraw.ImageDraw, x0: float, y0: int, x1: float, y1: int, fill, outline=None) -> None:
     draw.rounded_rectangle((round(x0), y0, round(x1), y1), radius=3, fill=fill, outline=outline)
-
-
-def _shape_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], balance: float | None,
-                 length_balance: float | None, length_delta: int | None, cue: str | None = None) -> None:
-    """During an effort, three blocks against each other:
-
-    - FORCE (top): a block the size of steady that slides left (force towards the catch: the
-      finish fading) or right (towards the finish: a late push);
-    - STEADY (middle, grey): your steady stroke, the reference; its edges run as guide lines
-      through the other two;
-    - LENGTH (bottom): grows or shrinks from the middle: narrower than steady = shorter strokes.
-
-    Each moves SHIFT/STRETCH_PER_UNIT of the steady width per cue threshold (coach.balance(),
-    length_balance()), clamped at +-BAR_RANGE. Colours: green, amber for the bar the cue is about,
-    grey for the other one while a cue is up.
-    """
-    x0, y0, x1, y1 = box
-    draw.rounded_rectangle(box, radius=8, fill=TILE)
-    bx0, bx1 = x0 + 12, x1 - 12
-    mid = (bx0 + bx1) / 2
-    w = (bx1 - bx0) * STEADY_SHARE
-    left, right = mid - w / 2, mid + w / 2
-    clamp = lambda v: max(-BAR_RANGE, min(BAR_RANGE, v))  # noqa: E731
-
-    draw.text((bx0, y0 + 3), "catch", font=font(12), fill=DIM)
-    draw.text((mid, y0 + 3), "FORCE", font=font(12, True), fill=DIM, anchor="mt")
-    draw.text((bx1, y0 + 3), "finish", font=font(12), fill=DIM, anchor="rt")
-    rows = {"force": (y0 + 18, y0 + 35), "steady": (y0 + 40, y0 + 52), "length": (y0 + 57, y0 + 74)}
-    for x in (left, right):  # the steady edges, through all three rows
-        for y in range(rows["force"][0] - 2, rows["length"][1] + 3, 4):
-            draw.line((x, y, x, y + 1), fill=DIM, width=1)
-
-    sy0, sy1 = rows["steady"]
-    _block(draw, left, sy0, right, sy1, fill=FAINT)
-    draw.text((mid, (sy0 + sy1) // 2), "steady", font=font(10), fill=FG, anchor="mm")
-
-    if balance is not None:
-        shift = clamp(balance) * SHIFT_PER_UNIT * w
-        colour = _bar_colour(cue, ("finish", "legs")) or (AMBER if abs(balance) >= 1 else GREEN)
-        fy0, fy1 = rows["force"]
-        _block(draw, left + shift, fy0, right + shift, fy1, fill=colour)
-    if length_balance is not None:
-        half = w / 2 * (1 + clamp(length_balance) * STRETCH_PER_UNIT)
-        colour = _bar_colour(cue, ("length",)) or (AMBER if length_balance <= -1 else GREEN)
-        ly0, ly1 = rows["length"]
-        _block(draw, mid - half, ly0, mid + half, ly1, fill=colour)
-    label = "LENGTH" if length_delta is None else f"LENGTH {length_delta:+d} cm".replace("-", "\u2212")
-    draw.text((mid, y0 + 79), label, font=font(12, True), fill=DIM, anchor="mt")
 
 
 def _mini_shape(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], balance: float, colour: tuple) -> None:
@@ -488,8 +377,14 @@ def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
     size = min(_fit(draw, clock, 44, WIDTH // 2 - 14, True).size, _fit(draw, watts, 44, WIDTH // 2 - 14, True).size)
     draw.text((8, 54), clock, font=font(size, True), fill=FG, anchor="lm")  # the same size, side by side
     draw.text((WIDTH - 8, 54), watts, font=font(size, True), fill=FG, anchor="rm")
-    _shape_meter(draw, (4, 84, WIDTH - 4, 179), live.get("balance"), live.get("length_balance"),
-                 live.get("length_delta_cm") if live.get("balance") is not None else None, live.get("cue"))
+    # The force curve, as in the SmartRow app: each stroke over your steady shape (grey), the force
+    # missing against steady filled in light grey. A shorter stroke ends before the steady curve does.
+    stroke = live.get("stroke_curve") or live.get("curve") or []
+    curve_colour = CUES.get(live.get("cue"), ("", FG))[1] if live.get("cue") else FG
+    _plot_curves(draw, (4, 84, WIDTH - 4, 179), stroke, live.get("steady_curve") or [], curve_colour, "both")
+    if live.get("balance") is not None and live.get("length_delta_cm") is not None:
+        length = f"length {live['length_delta_cm']:+d} cm".replace("-", "\u2212")
+        draw.text((12, 89), length, font=font(12), fill=DIM)
 
     text, colour = CUES.get(live.get("cue"), ("…", DIM))
     banner = (4, 183, WIDTH - 4, 216)
@@ -517,7 +412,7 @@ def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
     headline = f"{format_time(last['duration_s'])}  ·  {last['power_w']} W"
     draw.text((WIDTH // 2, 62), headline, font=_fit(draw, headline, 34, WIDTH - 16, True), fill=FG, anchor="mm")
     _plot_curves(draw, (4, 84, WIDTH - 4, 160), last.get("curve") or [], last.get("steady_curve") or [], colour,
-                 "front" if legs_late else "back")
+                 "both")
 
     delta = last.get("length_delta_cm", 0)
     # A late push: where the force peaked says more than the finish figure (which a late

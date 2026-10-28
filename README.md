@@ -362,7 +362,7 @@ hardware: `python3 -m smartrow_bridge.display --preview /tmp/screens` (needs Pil
 
 ## Optional: interval coach (experimental)
 
-<img src="docs/images/screen-interval.png" alt="Interval screen: time, watts, the force block shifted towards the catch and a STRONGER FINISH cue" width="320"> <img src="docs/images/screen-interval-summary.png" alt="Interval summary: average force curve against steady, finish, length and peak" width="320">
+<img src="docs/images/screen-interval.png" alt="Interval screen: time, watts, a stroke's force curve over the steady shape and a STRONGER FINISH cue" width="320"> <img src="docs/images/screen-interval-summary.png" alt="Interval summary: average force curve against steady, finish, length and peak" width="320">
 
 The pulley sends a force curve for every stroke (the SmartRow app draws it). The coach watches those curves
 for you while you row: it spots harder efforts by itself and tells you, in one word, when your stroke starts
@@ -378,17 +378,13 @@ then treats any stretch clearly harder than that (20 % and 15 W above, for at le
 as an interval. Everything is judged against *your own* steady rowing in that session, so it works the same
 at 70 W or 250 W.
 
-- **During an interval:** time into the effort and watts (the same size), three blocks and one cue in large
-  type. The grey block in the middle is your **steady** stroke; dashed lines run from its edges through the
-  other two, which show your last 8 strokes against it:
-  - **FORCE** (top): a block the size of steady that slides. Left, towards *catch*: the finish is fading.
-    Right, towards *finish*: the push is coming late. Lined up with steady: the same shape.
-  - **LENGTH** (bottom): grows or shrinks from the middle. Narrower than steady: shorter strokes; wider:
-    longer.
-
-  Green while a block is within its cue's range; while a cue is up, the block it is about turns amber and
-  the other grey, so each cue looks different at a glance. No percentages to read while you row; the
-  numbers are in the summary afterwards.
+- **During an interval:** time into the effort and watts (the same size), the **force curve** and one cue in
+  large type. The force curve is drawn as in the SmartRow app: each stroke as it comes, over your **steady
+  shape** (grey line, scaled to the same total force, so it compares shape, not size), with the force missing
+  against steady filled in light grey. A fading finish shows as grey under the back of the curve, a late push
+  as grey under the front, and a shorter stroke as a curve that ends before the steady one. The curve takes
+  the cue's colour. The cue itself is judged over your last 8 strokes, so one odd stroke doesn't set it off.
+  No percentages to read while you row; the numbers are in the summary afterwards.
   - **LOOKS GOOD** (green): the curve keeps your steady shape and length.
   - **STRONGER FINISH** (amber): less of the force comes in the back half of the drive than in your steady
     strokes: the pull fades before the end.
@@ -401,7 +397,7 @@ at 70 W or 250 W.
   simply has fewer points. The finish and the push are measured against each stroke's own length, so a
   shorter stroke shows as LONGER STROKES only, not as a weaker finish too.
 - **After an interval:** for 45 seconds, its duration and watts, its average force curve against your steady
-  shape (the force missing in the back half filled in light grey, or in the front half after a late push),
+  shape (the force missing against it filled in light grey),
   and three tiles: **shape** (STEADY, FADED or LATE, with small force and steady blocks), **length** and
   **peak** force. Underneath, the finish figure when it faded (*FINISH −15% vs steady*), or where the force
   peaked after a late push (*LATE PUSH · peak 52%, steady 41%*). The same summary goes into the session record, one line per interval.

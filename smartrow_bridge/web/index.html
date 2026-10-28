@@ -73,12 +73,6 @@
   /* Centre bars (as on the Pi's screen): your steady stroke in the middle, dashed markers where the cues start. */
   .ends { display: flex; justify-content: space-between; align-items: baseline; font-size: var(--label); color: var(--dim); }
   .ends b { color: var(--dim); letter-spacing: .04em; }
-  .cbar { position: relative; height: clamp(18px, 4.5vmin, 44px); background: var(--faint); margin: 8px 0 12px; }
-  .cbar.thin { height: clamp(9px, 2.2vmin, 20px); }
-  .cbar .fill { position: absolute; top: 0; bottom: 0; }
-  .cbar .mid { position: absolute; left: 50%; top: -6px; bottom: -6px; width: 3px; margin-left: -1px; background: var(--fg); }
-  .cbar .mark { position: absolute; top: -3px; bottom: -3px; border-left: 1px dashed var(--dim); }
-  .mini.cbar { height: 6px; margin: 8px 0 0; }
   /* Three blocks (as on the Pi's screen): force slides against steady; length grows or shrinks from the middle. */
   .trio { position: relative; height: clamp(66px, 16vmin, 170px); margin: 6px 0 4px; }
   .trio .row { position: absolute; left: 0; right: 0; }
@@ -92,7 +86,10 @@
   .cue.none { background: var(--tile); color: var(--dim); }
   .curve { flex: 1; min-height: 90px; position: relative; padding: 0; }
   .curve canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-  @media (max-height: 420px) { #interval .curve { display: none; } }
+  /* The live force curve is the main picture: on short panes the clock shrinks instead. */
+  #interval .curve.live { min-height: 120px; }
+  .clen { position: absolute; left: 14px; top: 8px; font-size: var(--label); color: var(--dim); }
+  @media (max-height: 420px) { #interval .clockrow .value { font-size: clamp(28px, 9vmin, 60px); } }
   /* Short panes (a split screen's lower half): the coach keeps all the height, no session list. */
   @media (max-height: 520px) { #layout.with-history aside { display: none !important; } }
 
@@ -192,13 +189,8 @@
     <section id="interval">
       <div class="label" id="iTitle">INTERVAL</div>
       <div class="clockrow"><div class="value" id="iClock">0:00</div><div class="value watts" id="iWatts">0 W</div></div>
-      <div class="tile meter">
-        <div class="ends"><span>catch</span><b>FORCE</b><span>finish</span></div>
-        <div class="trio" id="iTrio"></div>
-        <div class="ends centre"><b id="iLen">LENGTH</b></div>
-      </div>
+      <div class="tile curve live"><canvas id="iCurve"></canvas><div class="clen" id="iLen"></div></div>
       <div class="cue none" id="iCue">…</div>
-      <div class="tile curve"><canvas id="iCurve"></canvas></div>
     </section>
 
     <section id="summary">
@@ -305,7 +297,11 @@ function plotCurve(g, bx, by, w, h, curve, steady, colour, gapHalf = "back", lab
   const y0 = by + (labels ? 26 : 8) * scale, y1 = by + h - (labels ? 22 : 6) * scale;
   const top = Math.max(1, ...curve, ...steady);
   const pts = (vals) => [0, ...vals].map((v, i, a) => [x0 + i * (x1 - x0) / (a.length - 1), y1 - (y1 - y0) * v / top]);
-  const mid = x0 + (x1 - x0) * (FORCE_HALF + 1) / ((curve.length || steady.length || 24) + 1);
+  // Half-way along the steady drive (samples are spaced by distance; as coach.drive_end), +1 for the leading 0.
+  const ref = steady.length ? steady : curve, topRef = Math.max(1, ...ref);
+  let end = ref.length - 1;
+  while (end > 0 && !(ref[end] > 0.05 * topRef)) end--;
+  const mid = x0 + (x1 - x0) * (end / 2 + 1) / ((curve.length || steady.length || 24) + 1);
   const line = (p, col, width) => {
     g.beginPath(); p.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y));
     g.strokeStyle = col; g.lineWidth = width; g.lineJoin = "round"; g.stroke();
@@ -323,8 +319,10 @@ function plotCurve(g, bx, by, w, h, curve, steady, colour, gapHalf = "back", lab
     s2.setTransform(t);
     const edge = Math.round(mid * t.a + t.e) / t.a - t.e / t.a;  // on a whole device pixel: no hairline
     s2.beginPath();
-    if (gapHalf === "back") s2.rect(edge, by, bx + w - edge, h); else s2.rect(bx, by, edge - bx, h);
-    s2.clip();
+    if (gapHalf !== "both") {  // "both": the force missing anywhere along the drive
+      if (gapHalf === "back") s2.rect(edge, by, bx + w - edge, h); else s2.rect(bx, by, edge - bx, h);
+      s2.clip();
+    }
     const area2 = (p) => { s2.beginPath(); s2.moveTo(p[0][0], y1); p.forEach(([x, y]) => s2.lineTo(x, y));
                            s2.lineTo(p[p.length - 1][0], y1); s2.closePath(); };
     area2(pts(steady)); s2.fillStyle = C.gap; s2.fill();
@@ -340,85 +338,23 @@ function plotCurve(g, bx, by, w, h, curve, steady, colour, gapHalf = "back", lab
   if (pc) {
     g.strokeStyle = C.faint; g.setLineDash([3 * scale, 5 * scale]); g.lineWidth = scale;
     g.beginPath(); g.moveTo(mid, y0); g.lineTo(mid, y1); g.stroke(); g.setLineDash([]);
-    g.textAlign = "right"; g.fillText("front", mid - 5 * scale, by + h - 6 * scale);
-    g.textAlign = "left"; g.fillText("back", mid + 5 * scale, by + h - 6 * scale);
   }
 }
 
 // ------------------------------------------------------------------ views
 
-// A bar that grows out from the middle (your steady stroke), as on the Pi's screen: value in
-// units of the cue threshold (coach.balance()), shown to +-2; green inside the markers at +-1,
-// amber beyond. warnAbove false: only the left side warns (longer strokes are fine).
-const BAR_RANGE = 2;
-// An interval's colour, by the same rule as the bars (older saved sessions: by their finish rating).
+// An interval's colour (older saved sessions: by their finish rating): green, or amber when its
+// shape or length passed a cue's threshold (coach.balance(), length_balance()).
 function shapeColour(i) {
   if (i.balance === null || i.balance === undefined) return i.legs_late ? C.amber : (RATING[i.rating] || C.fg);
   return Math.abs(i.balance) >= 1 || (i.length_balance ?? 0) <= -1 ? C.amber : C.green;
 }
-// The three blocks, as on the Pi's screen (display/screens.py _shape_meter).
-const STEADY_SHARE = 0.5, SHIFT_PER_UNIT = 0.25, STRETCH_PER_UNIT = 0.25;
-const clampBar = (v) => Math.max(-BAR_RANGE, Math.min(BAR_RANGE, v));
-function trioGeometry(balance, lengthBalance) {  // in % of the width
+// The summary's SHAPE tile: a small block for the interval, slid against one for steady
+// (as display/screens.py _mini_shape).
+const BAR_RANGE = 2, STEADY_SHARE = 0.5, SHIFT_PER_UNIT = 0.25;
+function trioGeometry(balance) {  // in % of the width
   const w = STEADY_SHARE * 100, left = 50 - w / 2;
-  const has = (v) => v !== null && v !== undefined;
-  return {
-    steady: [left, w],
-    force: has(balance) ? [left + clampBar(balance) * SHIFT_PER_UNIT * w, w] : null,
-    length: has(lengthBalance) ? (() => { const lw = w * (1 + clampBar(lengthBalance) * STRETCH_PER_UNIT);
-                                          return [50 - lw / 2, lw]; })() : null,
-  };
-}
-function trioColours(balance, lengthBalance, cue) {
-  return [barColour(cue, ["finish", "legs"]) || (Math.abs(balance) >= 1 ? C.amber : C.green),
-          barColour(cue, ["length"]) || (lengthBalance <= -1 ? C.amber : C.green)];
-}
-function renderTrio(el, balance, lengthBalance, cue) {
-  const g = trioGeometry(balance, lengthBalance), [fc, lc] = trioColours(balance, lengthBalance, cue);
-  const blk = (r, cls, style) => `<div class="blk ${cls}" style="left:${r[0]}%;width:${r[1]}%;${style}"></div>`;
-  let html = `<div class="row" style="top:0;height:32%">${g.force ? blk(g.force, "", `background:${fc}`) : ""}</div>`;
-  html += `<div class="row" style="top:39%;height:22%"><div class="blk steady" style="left:${g.steady[0]}%;width:${g.steady[1]}%">steady</div></div>`;
-  html += `<div class="row" style="top:68%;height:32%">${g.length ? blk(g.length, "", `background:${lc}`) : ""}</div>`;
-  for (const x of [g.steady[0], g.steady[0] + g.steady[1]]) html += `<div class="guide" style="left:${x}%"></div>`;
-  el.innerHTML = html;
-}
-function pipTrio(g, x0, y0, x1, y1, balance, lengthBalance, cue) {
-  const geo = trioGeometry(balance, lengthBalance), [fc, lc] = trioColours(balance, lengthBalance, cue);
-  const X = (pct) => x0 + (x1 - x0) * pct / 100, H = y1 - y0;
-  const rect = (r, ya, yb, colour) => { g.fillStyle = colour; g.beginPath();
-    g.roundRect(X(r[0]), y0 + H * ya, X(r[0] + r[1]) - X(r[0]), H * (yb - ya), 4); g.fill(); };
-  if (geo.force) rect(geo.force, 0, 0.32, fc);
-  rect(geo.steady, 0.39, 0.61, C.faint);
-  if (geo.length) rect(geo.length, 0.68, 1, lc);
-  g.fillStyle = C.dim;
-  for (const x of [geo.steady[0], geo.steady[0] + geo.steady[1]])
-    for (let y = y0 - 3; y < y1 + 3; y += 4) g.fillRect(X(x), y, 1, 2);
-}
-function pipCentreBar(g, x0, y0, x1, y1, value, warnAbove = true, override = null) {
-  const mid = (x0 + x1) / 2, half = (x1 - x0) / 2;
-  const at = (v) => mid + half * Math.max(-BAR_RANGE, Math.min(BAR_RANGE, v)) / BAR_RANGE;
-  g.fillStyle = C.faint; g.fillRect(x0, y0, x1 - x0, y1 - y0);
-  if (value !== null && value !== undefined) {
-    g.fillStyle = override || (value <= -1 || (warnAbove && value >= 1) ? C.amber : C.green);
-    const x = at(value); g.fillRect(Math.min(mid, x), y0, Math.abs(x - mid), y1 - y0);
-  }
-  g.fillStyle = C.dim;
-  for (const v of warnAbove ? [-1, 1] : [-1]) for (let y = y0 - 3; y < y1 + 3; y += 4) g.fillRect(at(v), y, 1, 2);
-  g.fillStyle = C.fg; g.fillRect(mid - 1, y0 - 5, 3, y1 - y0 + 10);
-}
-// Only the bar the cue is about turns amber; the other goes grey (as on the Pi's screen).
-const barColour = (cue, mine) => cue === null || cue === undefined || cue === "good" ? null
-  : mine.includes(cue) ? C.amber : C.dim;
-function centreBar(el, value, warnAbove = true, override = null) {
-  const at = (v) => 50 + 50 * Math.max(-BAR_RANGE, Math.min(BAR_RANGE, v)) / BAR_RANGE;
-  let html = "";
-  if (value !== null && value !== undefined) {
-    const colour = override || (value <= -1 || (warnAbove && value >= 1) ? C.amber : C.green);
-    const x = at(value);
-    html += `<div class="fill" style="left:${Math.min(50, x)}%;width:${Math.abs(x - 50)}%;background:${colour}"></div>`;
-  }
-  for (const v of warnAbove ? [-1, 1] : [-1]) html += `<div class="mark" style="left:${at(v)}%"></div>`;
-  el.innerHTML = html + `<div class="mid"></div>`;
+  return { steady: [left, w], force: [left + Math.max(-BAR_RANGE, Math.min(BAR_RANGE, balance)) * SHIFT_PER_UNIT * w, w] };
 }
 
 function renderInterval(live) {
@@ -428,13 +364,13 @@ function renderInterval(live) {
   $("iClock").textContent = fmtTime(live.elapsed_s);
   $("iWatts").textContent = `${live.power_w} W`;
   const judged = live.balance !== null && live.balance !== undefined;
-  renderTrio($("iTrio"), live.balance, live.length_balance, live.cue);
-  $("iLen").textContent = judged ? `LENGTH ${signed(live.length_delta_cm, " cm")}` : "LENGTH";
+  $("iLen").textContent = judged ? `length ${signed(live.length_delta_cm, " cm")}` : "";
   const cue = $("iCue"), [text, cueColour] = CUES[live.cue] || ["…", null];
   cue.textContent = text;
   cue.className = cueColour ? "cue" : "cue none";
   cue.style.background = cueColour || "";
-  drawCurve($("iCurve"), live.curve, live.steady_curve, cueColour || C.fg);
+  // As in the SmartRow app: each stroke over your steady shape, the force missing against it in light grey.
+  drawCurve($("iCurve"), live.stroke_curve || live.curve, live.steady_curve, cueColour || C.fg, "both");
 }
 
 function renderSummary(last) {
@@ -451,7 +387,7 @@ function renderSummary(last) {
   $("sMini").className = hasBal ? "mini trio" : "mini";
   $("sMini").style.height = hasBal ? "14px" : "";
   if (hasBal) {  // a small version of the force and steady blocks
-    const g = trioGeometry(bal, null);
+    const g = trioGeometry(bal);
     $("sMini").innerHTML = `<div class="row" style="top:0;height:45%"><div class="blk" style="left:${g.force[0]}%;width:${g.force[1]}%;background:${colour}"></div></div>` +
       `<div class="row" style="top:55%;height:45%"><div class="blk" style="left:${g.steady[0]}%;width:${g.steady[1]}%;background:var(--faint)"></div></div>`;
   } else $("sMini").innerHTML = "";
@@ -461,7 +397,7 @@ function renderSummary(last) {
   note.textContent = legs ? `LATE PUSH · peak ${last.peak_at_pct ?? "–"}%, steady ${last.steady_peak_at_pct ?? "–"}%`
     : hasBal && bal <= -1 ? `FINISH ${signed(last.finish_pct, "%")} vs steady` : `${signed(Math.round(last.length_delta_cm), " cm")} vs steady · ${last.strokes} strokes · ${last.stroke_rate_spm} spm`;
   note.className = legs || (hasBal && bal <= -1) ? "note warn" : "note";
-  drawCurve($("sCurve"), last.curve, last.steady_curve, colour, legs ? "front" : "back");
+  drawCurve($("sCurve"), last.curve, last.steady_curve, colour, "both");
 }
 
 function renderRowing(st) {
@@ -663,7 +599,7 @@ function renderSession(s) {
   }).join("");
   for (const cv of $("ssCards").querySelectorAll("canvas")) {
     const i = iv.find((x) => x.index === Number(cv.dataset.i));
-    drawCurve(cv, i.curve, i.steady_curve, ratingColour(i), i.legs_late ? "front" : "back", false);
+    drawCurve(cv, i.curve, i.steady_curve, ratingColour(i), "both", false);
   }
   $("ssHint").textContent = "Finish = how much of the stroke's force comes in the back half of the drive, against your " +
     "steady rowing. Peak at = where in the drive the force peaks, ± how much that varies stroke to stroke " +
@@ -868,7 +804,7 @@ function shareImage(s) {
       text(`I${i.index} · ${fmtTime(i.duration_s)} · ${i.power_w} W`, x + 22, top + 46, 30, C.fg, true);
       text(signed(i.finish_pct, "%"), x + cardW - 22, top + 48, 40, ratingColour(i), true, "right");
       plotCurve(g, x + 6, top + 62, cardW - 12, 130, i.curve, i.steady_curve, ratingColour(i),
-                i.legs_late ? "front" : "back", false, 2);
+                "both", false, 2);
       const note = i.legs_late ? "late push" : `${Math.round(i.length_cm)} cm (${signed(Math.round(i.length_delta_cm), "")}) · ${i.stroke_rate_spm} spm` +
                    (i.hr_peak ? ` · ♥ ${i.hr_peak}` : "");
       text(note, x + 22, top + cardH - 22, 24, i.legs_late ? C.amber : C.dim, !!i.legs_late);
@@ -928,10 +864,10 @@ function drawPip() {
     text(fmtTime(live.elapsed_s), 16, 50, 58, C.fg);  // time and power the same size
     text(`${live.power_w} W`, W - 16, 50, 58, C.fg, "right");
     const hrNow = st.metrics && st.metrics.heart_rate_bpm;
-    text("catch", 16, 96, 18, C.dim, "left", false);
-    text("FORCE" + (hrNow ? `   ♥ ${hrNow}` : ""), W / 2, 96, 18, C.dim, "center");
-    text("finish", W - 16, 96, 18, C.dim, "right", false);
-    pipTrio(g, 16, 108, W - 16, 166, live.balance, live.length_balance, live.cue);
+    const [, curveColour] = CUES[live.cue] || ["", C.fg];
+    g.fillStyle = C.tile; g.beginPath(); g.roundRect(10, 86, W - 20, 82, 10); g.fill();
+    plotCurve(g, 10, 86, W - 20, 82, live.stroke_curve || live.curve, live.steady_curve, curveColour, "both", false);
+    if (hrNow) text(`♥ ${hrNow}`, W - 22, 100, 18, C.dim, "right", false);
     const [label, cueColour] = CUES[live.cue] || ["…", C.tile];
     g.fillStyle = cueColour; g.beginPath(); g.roundRect(10, 175, W - 20, 80, 14); g.fill();
     text(label, W / 2, 216, label.length > 14 ? 34 : 44, live.cue ? C.bg : C.dim, "center");
