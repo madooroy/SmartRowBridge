@@ -6,7 +6,9 @@ Made from the session's summary (sessions.build_record) and its strokes
 BSD). Contents:
 
 - one record per stroke: time, distance, speed, power, stroke rate (cadence), heart rate
-  (when the bridge had a strap) and stroke length;
+  (when the bridge had a strap) and stroke length; and, as developer fields, the stroke's
+  force curve with its drive length, average and peak force and where the peak lands
+  (see IN_STROKE_FIELDS);
 - laps: each interval the coach found, and the steady rowing between them, so the
   efforts show up as laps (intervals) in intervals.icu and Strava;
 - the session: indoor rowing, with totals and averages.
@@ -15,11 +17,16 @@ BSD). Contents:
 from __future__ import annotations
 
 import time
+import uuid
 
+from fit_tool.base_type import BaseType
+from fit_tool.developer_field import DeveloperField
 from fit_tool.fit_file_builder import FitFileBuilder
 from fit_tool.profile.messages.activity_message import ActivityMessage
+from fit_tool.profile.messages.developer_data_id_message import DeveloperDataIdMessage
 from fit_tool.profile.messages.device_info_message import DeviceInfoMessage
 from fit_tool.profile.messages.event_message import EventMessage
+from fit_tool.profile.messages.field_description_message import FieldDescriptionMessage
 from fit_tool.profile.messages.file_id_message import FileIdMessage
 from fit_tool.profile.messages.lap_message import LapMessage
 from fit_tool.profile.messages.record_message import RecordMessage
@@ -29,6 +36,27 @@ from fit_tool.profile.profile_type import (
 )
 
 from .activity import lap_strokes, laps  # noqa: E402,F401 (laps: also used by tests)
+from .coach import drive_end, peak_position  # noqa: E402
+
+# Per-stroke rowing data as developer fields, laid out as Open Rowing Monitor writes them,
+# which follows the rowing industry's draft for force curves in FIT files (Jaap van Ekris,
+# who is in that work group, on the intervals.icu forum): field number, name, base type,
+# scale, units, array size. Values are stored as value x scale, as the field descriptions say.
+# The SmartRow samples force at fixed distances along the stroke, so the abscissa is handle
+# travel (type 2, as ORM's) and the sample interval is the drive length over its samples.
+FORCE_POINTS = 24
+IN_STROKE_FIELDS = [
+    (0, "DriveLength", BaseType.UINT16, 100, "m", 1),
+    (6, "AverageDriveForce", BaseType.UINT16, 10, "N", 1),
+    (7, "PeakDriveForce", BaseType.UINT16, 10, "N", 1),
+    (17, "PeakForcePositionNorm", BaseType.UINT16, 100, "%", 1),
+    (90, "InstrokeAbscissaType", BaseType.UINT8, 1, "", 1),
+    (91, "InstrokeSampleInterval", BaseType.UINT16, 100, "cm", 1),
+    (92, "InstrokePointCount", BaseType.UINT8, 1, "", 1),
+    (60, "HandleForceCurve", BaseType.UINT16, 10, "N", FORCE_POINTS),
+]
+ABSCISSA_DISTANCE = 2
+APPLICATION_ID = uuid.UUID("116508c3-ea4e-4ec4-a0bc-dcaaafb2ce00")  # SmartRowBridge's own developer id
 
 PRODUCT = 0x5352  # "SR": SmartRowBridge, under the "development" manufacturer id
 SOFTWARE_VERSION = 1.0
@@ -79,6 +107,25 @@ def build(record: dict, strokes: list[dict]) -> bytes:
     dev.product_name = "SmartRowBridge"
     b.add(dev)
 
+    with_curves = any(s.get("force_n") for s in strokes)
+    if with_curves:
+        dd = DeveloperDataIdMessage()
+        dd.developer_data_index = 0
+        dd.application_id = list(APPLICATION_ID.bytes)
+        dd.application_version = 1
+        b.add(dd)
+        for num, name, base_type, scale, units, size in IN_STROKE_FIELDS:
+            fd = FieldDescriptionMessage()
+            fd.developer_data_index = 0
+            fd.field_definition_number = num
+            fd.fit_base_type_id = base_type.value
+            fd.field_name = name
+            fd.scale = scale
+            fd.units = units
+            if size > 1:
+                fd.array = size
+            b.add(fd)
+
     start = EventMessage()
     start.timestamp = _ms(t0)
     start.event = Event.TIMER
@@ -99,6 +146,8 @@ def build(record: dict, strokes: list[dict]) -> bytes:
             r.heart_rate = int(s["heart_rate"])
         if s.get("length_cm"):
             r.cycle_length16 = s["length_cm"] / 100
+        if with_curves and s.get("force_n"):
+            r.developer_fields = _in_stroke(s)
         b.add(r)
         prev_t, prev_d = t, s["distance_m"]
 
@@ -162,6 +211,34 @@ def build(record: dict, strokes: list[dict]) -> bytes:
     act.event_type = EventType.STOP
     b.add(act)
     return b.build().to_bytes()
+
+
+def _in_stroke(stroke: dict) -> list[DeveloperField]:
+    """The stroke's force curve and its summary, as developer fields (IN_STROKE_FIELDS)."""
+    force = list(stroke["force_n"])[:FORCE_POINTS]
+    force += [0] * (FORCE_POINTS - len(force))
+    count = drive_end(force) + 1
+    drive = force[:count]
+    length_cm = stroke.get("length_cm") or 0
+    values = {
+        0: length_cm / 100,
+        6: sum(drive) / count if count else 0,
+        7: max(drive) if drive else 0,
+        17: peak_position(force),
+        90: ABSCISSA_DISTANCE,
+        91: length_cm / count if count else 0,
+        92: count,
+        60: drive + [0] * (FORCE_POINTS - count),
+    }
+    out = []
+    for num, name, base_type, scale, units, size in IN_STROKE_FIELDS:
+        field = DeveloperField(field_id=num, name=name, base_type=base_type, scale=scale, offset=0, units=units,
+                               developer_data_index=0, size=base_type.size * size, growable=size > 1)
+        value = values[num]
+        for i, v in enumerate(value if isinstance(value, list) else [value]):
+            field.set_value(i, v)
+        out.append(field)
+    return out
 
 
 def _set_averages(m, st: dict) -> None:

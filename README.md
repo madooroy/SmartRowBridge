@@ -493,7 +493,10 @@ With the [interval coach](#optional-interval-coach-experimental) on, the bridge 
 itself, so the SmartRow app's own Strava link is no longer needed:
 
 - **intervals.icu:** the session as an activity, named like "Morning Row", with the coach's summary as its
-  description and the coach's intervals as laps. intervals.icu treats activities that start within a minute
+  description and the coach's intervals as laps. Each stroke also carries its force curve (with drive length,
+  average and peak force and where the peak lands) as FIT developer fields, laid out as Open Rowing Monitor
+  writes them, following the rowing industry's draft for force curves in FIT files; intervals.icu doesn't
+  show force curves yet, but the data is there for when it, or another tool, does. intervals.icu treats activities that start within a minute
   of each other, with distance and time within 1%, as the same one, and an uploaded copy takes the place of
   the one from Strava (as Garmin and Hammerhead uploads do), so a session shows once, linked to Strava.
   Activities that come from Strava can't be changed through the intervals.icu API (Strava's terms), which

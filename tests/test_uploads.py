@@ -10,7 +10,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from smartrow_bridge import intervals, sessions, strava, uploads
+from smartrow_bridge import coach as coach_mod, intervals, sessions, strava, uploads
 from tests.test_sessions import saturday
 
 try:
@@ -427,6 +427,40 @@ class FitFileTest(unittest.TestCase):
         self.assertEqual(laps[-1]["lap_trigger"], "session_end")
         self.assertEqual(laps[0]["lap_trigger"], "manual")
         self.assertEqual(found["record"][100]["power"], round(strokes[100]["power_w"]))
+
+    def test_force_curves_as_developer_fields(self):
+        r = saturday()
+        record = sessions.build_record(r.coach, 1_800_000_000.0, 1_800_001_000.0, True, 6000, 1000)
+        strokes = [dict(zip(sessions.STROKE_COLUMNS, row)) for row in sessions.stroke_rows(r.coach)]
+        data = fitfile.build(record, strokes)
+        described, records = {}, []
+        with fitdecode.FitReader(io.BytesIO(data), check_crc=fitdecode.CrcCheck.RAISE) as fr:
+            for fm in fr:
+                if isinstance(fm, fitdecode.FitDataMessage) and fm.name == "field_description":
+                    f = {x.name: x.value for x in fm.fields}
+                    described[f["field_name"]] = (f["field_definition_number"], f.get("scale"), f.get("units"))
+                elif isinstance(fm, fitdecode.FitDataMessage) and fm.name == "record":
+                    records.append({x.name: x.value for x in fm.fields})
+        self.assertEqual(described["HandleForceCurve"], (60, 10, "N"))
+        self.assertEqual(described["InstrokeAbscissaType"][0], 90)
+        s, rec = strokes[100], records[100]
+        count = coach_mod.drive_end(s["force_n"]) + 1
+        self.assertEqual(rec["InstrokePointCount"], count)
+        self.assertEqual(rec["InstrokeAbscissaType"], fitfile.ABSCISSA_DISTANCE)
+        # fitdecode gives the stored values (value x scale)
+        self.assertEqual(list(rec["HandleForceCurve"][:count]), [v * 10 for v in s["force_n"][:count]])
+        self.assertEqual(rec["DriveLength"], round(s["length_cm"]))
+        self.assertEqual(rec["PeakDriveForce"], max(s["force_n"]) * 10)
+        self.assertAlmostEqual(rec["InstrokeSampleInterval"] / 100, s["length_cm"] / count, delta=0.01)
+
+    def test_old_strokes_without_curves(self):
+        r = saturday()
+        record = sessions.build_record(r.coach, 1_800_000_000.0, 1_800_001_000.0, True, 6000, 1000)
+        strokes = [dict(zip(sessions.STROKE_COLUMNS[:-1], row[:-1])) for row in sessions.stroke_rows(r.coach)]
+        data = fitfile.build(record, strokes)  # saved before force curves were: no developer fields, still valid
+        with fitdecode.FitReader(io.BytesIO(data), check_crc=fitdecode.CrcCheck.RAISE) as fr:
+            names = {fm.name for fm in fr if isinstance(fm, fitdecode.FitDataMessage)}
+        self.assertNotIn("field_description", names)
 
     def test_distance_starts_at_zero(self):
         # A session that started part-way through the pulley's count (a long pause, same connection).
