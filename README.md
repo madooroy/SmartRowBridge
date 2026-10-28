@@ -362,7 +362,7 @@ hardware: `python3 -m smartrow_bridge.display --preview /tmp/screens` (needs Pil
 
 ## Optional: interval coach (experimental)
 
-<img src="docs/images/screen-interval.png" alt="Interval screen: time, watts, finish meter at -15% and a STRONGER FINISH cue" width="320"> <img src="docs/images/screen-interval-summary.png" alt="Interval summary: average force curve against steady, finish, length and peak" width="320">
+<img src="docs/images/screen-interval.png" alt="Interval screen: time, watts, the force bar towards the catch and a STRONGER FINISH cue" width="320"> <img src="docs/images/screen-interval-summary.png" alt="Interval summary: average force curve against steady, finish, length and peak" width="320">
 
 The pulley sends a force curve for every stroke (the SmartRow app draws it). The coach watches those curves
 for you while you row: it spots harder efforts by itself and tells you, in one word, when your stroke starts
@@ -378,9 +378,14 @@ then treats any stretch clearly harder than that (20 % and 15 W above, for at le
 as an interval. Everything is judged against *your own* steady rowing in that session, so it works the same
 at 70 W or 250 W.
 
-- **During an interval:** time into the effort, watts, a **finish meter** (how much of your last 8 strokes'
-  force comes in the back half of the drive, against your steady rowing: a big percentage and a bar with a
-  tick at steady, green / amber / red), and one cue in large type. Each cue is two words, what to do and
+- **During an interval:** time into the effort, watts, two bars and one cue in large type. Both bars grow
+  out from the middle, which is your steady stroke, over your last 8 strokes:
+  - **FORCE vs STEADY**: where in the drive the force sits. Left (towards *catch*): the finish is fading.
+    Right (towards *finish*): the push is coming late. In the middle: the same shape as steady.
+  - **LENGTH**: left is shorter strokes, right longer.
+
+  The dashed markers are where the cues start: green inside them, amber past them (longer strokes stay
+  green). No percentages to read while you row; the numbers are in the summary afterwards. Each cue is two words, what to do and
   the part of the stroke, so it reads at a glance when you're tired. They never name a muscle: the pulley
   measures the total force on the strap, and different causes look alike (an early arm pull, for one, can
   pass for a strong push off the catch). A cue flags a change against your own steady rowing; a video of
@@ -398,10 +403,9 @@ at 70 W or 250 W.
   shorter stroke shows as LONGER STROKES only, not as a weaker finish too.
 - **After an interval:** for 45 seconds, its duration and watts, its average force curve against your steady
   shape (the force missing in the back half filled in light grey, or in the front half after a late push),
-  and three numbers: **finish** (back-half force against steady: green within 5 %, amber to 12 %, red
-  beyond), **length** and **peak** force. After a late push the first number is **peak at** instead (where
-  in the drive the force peaked, with steady's alongside, marked *LATE PUSH*): a late push inflates the
-  finish figure. The same summary goes into the session record, one line per interval.
+  and three tiles: **shape** (STEADY, FADED or LATE, with a small version of the force bar), **length** and
+  **peak** force. Underneath, the finish figure when it faded (*FINISH −15% vs steady*), or where the force
+  peaked after a late push (*LATE PUSH · peak 52%, steady 41%*). The same summary goes into the session record, one line per interval.
 
 On the summary, the grey line is scaled to the same total force as the coloured curve, so the picture compares
 where in the drive the force comes, not how much there is. The difference is real but small on a 2" screen,

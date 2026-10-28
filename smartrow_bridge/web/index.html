@@ -71,6 +71,15 @@
   .bar .needle { position: absolute; top: -12px; width: 0; height: 0; margin-left: -8px;
     border-left: 8px solid transparent; border-right: 8px solid transparent; border-top: 10px solid var(--fg); }
   .meter .under { display: flex; justify-content: space-between; font-size: var(--label); color: var(--dim); }
+  /* Centre bars (as on the Pi's screen): your steady stroke in the middle, dashed markers where the cues start. */
+  .ends { display: flex; justify-content: space-between; align-items: baseline; font-size: var(--label); color: var(--dim); }
+  .ends b { color: var(--dim); letter-spacing: .04em; }
+  .cbar { position: relative; height: clamp(18px, 4.5vmin, 44px); background: var(--faint); margin: 8px 0 12px; }
+  .cbar.thin { height: clamp(6px, 1.4vmin, 12px); }
+  .cbar .fill { position: absolute; top: 0; bottom: 0; }
+  .cbar .mid { position: absolute; left: 50%; top: -6px; bottom: -6px; width: 3px; margin-left: -1px; background: var(--fg); }
+  .cbar .mark { position: absolute; top: -3px; bottom: -3px; border-left: 1px dashed var(--dim); }
+  .mini.cbar { height: 6px; margin: 8px 0 0; }
   .cue { border-radius: 12px; padding: var(--pad); text-align: center; font-weight: 700;
     font-size: clamp(24px, 7vmin, 72px); color: var(--bg); }
   .cue.none { background: var(--tile); color: var(--dim); }
@@ -177,9 +186,10 @@
       <div class="label" id="iTitle">INTERVAL</div>
       <div class="clockrow"><div class="value" id="iClock">0:00</div><div class="value watts" id="iWatts">0 W</div></div>
       <div class="tile meter">
-        <div class="top"><div class="label">FINISH vs STEADY</div><div class="value pct" id="iPct">…</div></div>
-        <div class="bar" id="iBar"></div>
-        <div class="under"><span id="iLen"></span><span>tick = steady</span></div>
+        <div class="ends"><span>catch</span><b>FORCE vs STEADY</b><span>finish</span></div>
+        <div class="cbar" id="iBal"></div>
+        <div class="ends"><span>shorter</span><b id="iLen">LENGTH</b><span>longer</span></div>
+        <div class="cbar thin" id="iLenBar"></div>
       </div>
       <div class="cue none" id="iCue">…</div>
       <div class="tile curve"><canvas id="iCurve"></canvas></div>
@@ -190,7 +200,7 @@
       <div class="tile curve"><canvas id="sCurve"></canvas></div>
       <div class="tiles3">
         <div class="tile"><div class="label" id="sFinishLabel">FINISH</div><div class="value" id="sFinish"></div>
-          <div class="mini" id="sMini"><div class="fill"></div><div class="tick"></div></div></div>
+          <div class="mini" id="sMini"></div></div>
         <div class="tile"><div class="label">LENGTH</div><div class="value" id="sLength"></div></div>
         <div class="tile"><div class="label">PEAK</div><div class="value" id="sPeak"></div></div>
       </div>
@@ -331,17 +341,37 @@ function plotCurve(g, bx, by, w, h, curve, steady, colour, gapHalf = "back", lab
 
 // ------------------------------------------------------------------ views
 
-function renderMeter(pct, colour) {
-  const bar = $("iBar");
-  const zones = [[METER_MIN, OK_PCT, C.red], [OK_PCT, GOOD_PCT, C.amber], [GOOD_PCT, METER_MAX, C.green]];
-  let html = zones.map(([lo, hi, c]) =>
-    `<div class="zone" style="left:${meterPos(lo)}%;width:${meterPos(hi) - meterPos(lo)}%;background:${c}"></div>`).join("");
-  if (pct !== null && pct !== undefined) {
-    html += `<div class="fill" style="width:${meterPos(pct)}%;background:${colour}"></div>`;
-    html += `<div class="needle" style="left:${meterPos(pct)}%"></div>`;
+// A bar that grows out from the middle (your steady stroke), as on the Pi's screen: value in
+// units of the cue threshold (coach.balance()), shown to +-2; green inside the markers at +-1,
+// amber beyond. warnAbove false: only the left side warns (longer strokes are fine).
+const BAR_RANGE = 2;
+// An interval's colour, by the same rule as the bars (older saved sessions: by their finish rating).
+function shapeColour(i) {
+  if (i.balance === null || i.balance === undefined) return i.legs_late ? C.amber : (RATING[i.rating] || C.fg);
+  return Math.abs(i.balance) >= 1 || (i.length_balance ?? 0) <= -1 ? C.amber : C.green;
+}
+function pipCentreBar(g, x0, y0, x1, y1, value, warnAbove = true) {
+  const mid = (x0 + x1) / 2, half = (x1 - x0) / 2;
+  const at = (v) => mid + half * Math.max(-BAR_RANGE, Math.min(BAR_RANGE, v)) / BAR_RANGE;
+  g.fillStyle = C.faint; g.fillRect(x0, y0, x1 - x0, y1 - y0);
+  if (value !== null && value !== undefined) {
+    g.fillStyle = value <= -1 || (warnAbove && value >= 1) ? C.amber : C.green;
+    const x = at(value); g.fillRect(Math.min(mid, x), y0, Math.abs(x - mid), y1 - y0);
   }
-  html += `<div class="tick" style="left:${meterPos(0)}%"></div>`;
-  bar.innerHTML = html;
+  g.fillStyle = C.dim;
+  for (const v of warnAbove ? [-1, 1] : [-1]) for (let y = y0 - 3; y < y1 + 3; y += 4) g.fillRect(at(v), y, 1, 2);
+  g.fillStyle = C.fg; g.fillRect(mid - 1, y0 - 5, 3, y1 - y0 + 10);
+}
+function centreBar(el, value, warnAbove = true) {
+  const at = (v) => 50 + 50 * Math.max(-BAR_RANGE, Math.min(BAR_RANGE, v)) / BAR_RANGE;
+  let html = "";
+  if (value !== null && value !== undefined) {
+    const colour = value <= -1 || (warnAbove && value >= 1) ? C.amber : C.green;
+    const x = at(value);
+    html += `<div class="fill" style="left:${Math.min(50, x)}%;width:${Math.abs(x - 50)}%;background:${colour}"></div>`;
+  }
+  for (const v of warnAbove ? [-1, 1] : [-1]) html += `<div class="mark" style="left:${at(v)}%"></div>`;
+  el.innerHTML = html + `<div class="mid"></div>`;
 }
 
 function renderInterval(live) {
@@ -350,13 +380,10 @@ function renderInterval(live) {
   $("iTitle").textContent = `INTERVAL ${live.index}` + (hr ? ` · ♥ ${hr}` : "");
   $("iClock").textContent = fmtTime(live.elapsed_s);
   $("iWatts").textContent = `${live.power_w} W`;
-  const legs = live.cue === "legs";
-  const pct = live.finish_pct;
-  const colour = legs ? C.amber : finishColour(pct);
-  $("iPct").textContent = pct === null || pct === undefined ? "…" : signed(pct, "%");
-  $("iPct").style.color = colour;
-  renderMeter(pct, colour);
-  $("iLen").textContent = live.length_delta_cm === undefined ? "" : `length ${signed(live.length_delta_cm, " cm")}`;
+  const judged = live.balance !== null && live.balance !== undefined;
+  centreBar($("iBal"), live.balance);
+  centreBar($("iLenBar"), live.length_balance, false);
+  $("iLen").textContent = judged ? `LENGTH ${signed(live.length_delta_cm, " cm")}` : "LENGTH";
   const cue = $("iCue"), [text, cueColour] = CUES[live.cue] || ["…", null];
   cue.textContent = text;
   cue.className = cueColour ? "cue" : "cue none";
@@ -367,20 +394,22 @@ function renderInterval(live) {
 function renderSummary(last) {
   show("summary");
   const legs = !!last.legs_late;
-  const colour = legs ? C.amber : (RATING[last.rating] || C.fg);
+  const bal = last.balance;
+  const hasBal = bal !== null && bal !== undefined;  // sessions saved before the shape bar: the finish figure
+  const colour = shapeColour(last);
   $("sTitle").textContent = `INTERVAL ${last.index}`;
   $("sHead").textContent = `${fmtTime(last.duration_s)} · ${last.power_w} W`;
-  $("sFinishLabel").textContent = legs ? "PEAK AT" : "FINISH";  // a late push inflates the finish figure
-  $("sFinish").textContent = legs ? `${last.peak_at_pct ?? "–"}%` : signed(last.finish_pct, "%");
+  $("sFinishLabel").textContent = hasBal ? "SHAPE" : "FINISH";
+  $("sFinish").textContent = hasBal ? (bal >= 1 ? "LATE" : bal <= -1 ? "FADED" : "STEADY") : signed(last.finish_pct, "%");
   $("sFinish").style.color = colour;
-  const mini = $("sMini");
-  mini.querySelector(".fill").style.cssText = `width:${meterPos(last.finish_pct)}%;background:${legs ? C.amber : finishColour(last.finish_pct)}`;
-  mini.querySelector(".tick").style.left = `${meterPos(0)}%`;
+  $("sMini").className = hasBal ? "mini cbar" : "mini";
+  if (hasBal) centreBar($("sMini"), bal); else $("sMini").innerHTML = "";
   $("sLength").textContent = `${Math.round(last.length_cm)} cm`;
   $("sPeak").textContent = `${last.peak_n} N`;
   const note = $("sNote");
-  note.textContent = legs ? `LATE PUSH · steady ${last.steady_peak_at_pct ?? "–"}%` : `${signed(Math.round(last.length_delta_cm), " cm")} vs steady · ${last.strokes} strokes · ${last.stroke_rate_spm} spm`;
-  note.className = legs ? "note warn" : "note";
+  note.textContent = legs ? `LATE PUSH · peak ${last.peak_at_pct ?? "–"}%, steady ${last.steady_peak_at_pct ?? "–"}%`
+    : hasBal && bal <= -1 ? `FINISH ${signed(last.finish_pct, "%")} vs steady` : `${signed(Math.round(last.length_delta_cm), " cm")} vs steady · ${last.strokes} strokes · ${last.stroke_rate_spm} spm`;
+  note.className = legs || (hasBal && bal <= -1) ? "note warn" : "note";
   drawCurve($("sCurve"), last.curve, last.steady_curve, colour, legs ? "front" : "back");
 }
 
@@ -407,7 +436,7 @@ function renderHistory(coach) {
   const layout = $("layout");
   layout.classList.toggle("with-history", items.length > 0);
   $("history").innerHTML = items.slice().reverse().map((i) => {
-    const colour = i.legs_late ? C.amber : (RATING[i.rating] || C.fg);
+    const colour = shapeColour(i);
     const flag = i.legs_late ? " · late push" : "";
     return `<div class="row"><span class="n">${i.index}</span>
       <span>${fmtTime(i.duration_s)} · ${i.power_w} W<div class="sub">${signed(Math.round(i.length_delta_cm), " cm")}${flag}</div></span>
@@ -488,7 +517,7 @@ function fmtWhen(epoch) {
   return `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}, ${h % 12 || 12}:${m} ${h < 12 ? "am" : "pm"}`;
 }
 const fmtKm = (m) => m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${m} m`;
-const ratingColour = (i) => i.legs_late ? C.amber : (RATING[i.rating] || C.fg);
+const ratingColour = shapeColour;
 
 async function loadSessions() {
   try {
@@ -845,22 +874,26 @@ function drawPip() {
   if (!st || st.stage === null || st.age_s > STALE_S) { text("Bridge not running", W / 2, H / 2, 36, C.red, "center"); return; }
   const coach = st.coach, live = coach && coach.live, last = coach && coach.last;
   if (live) {
-    const legs = live.cue === "legs", pct = live.finish_pct, colour = legs ? C.amber : finishColour(pct);
     text(fmtTime(live.elapsed_s), 16, 50, 64, C.fg);
     text(`${live.power_w} W`, W - 16, 50, 52, C.fg, "right");
     const hrNow = st.metrics && st.metrics.heart_rate_bpm;
-    text("FINISH" + (hrNow ? `   ♥ ${hrNow}` : ""), 16, 120, 22, C.dim, "left", false);
-    text(pct === null || pct === undefined ? "…" : signed(pct, "%"), W - 16, 120, 48, colour, "right");
+    text("catch", 16, 98, 18, C.dim, "left", false);
+    text("FORCE vs STEADY" + (hrNow ? `   ♥ ${hrNow}` : ""), W / 2, 98, 18, C.dim, "center");
+    text("finish", W - 16, 98, 18, C.dim, "right", false);
+    pipCentreBar(g, 16, 112, W - 16, 138, live.balance);
+    pipCentreBar(g, 16, 152, W - 16, 160, live.length_balance, false);
     const [label, cueColour] = CUES[live.cue] || ["…", C.tile];
     g.fillStyle = cueColour; g.beginPath(); g.roundRect(10, 175, W - 20, 80, 14); g.fill();
     text(label, W / 2, 216, label.length > 14 ? 34 : 44, live.cue ? C.bg : C.dim, "center");
   } else if (last && ((coach.show_summary && closedIndex !== last.index) || Date.now() / 1000 < recallUntil)) {
-    const colour = last.legs_late ? C.amber : (RATING[last.rating] || C.fg);
+    const colour = shapeColour(last), bal = last.balance, hasBal = bal !== null && bal !== undefined;
     text(`INTERVAL ${last.index}`, 16, 34, 22, C.dim);
     text(`${fmtTime(last.duration_s)} · ${last.power_w} W`, W / 2, 95, 50, C.fg, "center");
-    text(last.legs_late ? "PEAK AT" : "FINISH", 16, 175, 22, C.dim, "left", false);
-    text(last.legs_late ? `${last.peak_at_pct ?? "–"}%` : signed(last.finish_pct, "%"), W - 16, 175, 56, colour, "right");
-    text(last.legs_late ? `LATE PUSH · steady ${last.steady_peak_at_pct ?? "–"}%` : `length ${signed(Math.round(last.length_delta_cm), " cm")}`,
+    text(hasBal ? "SHAPE" : "FINISH", 16, 175, 22, C.dim, "left", false);
+    text(hasBal ? (bal >= 1 ? "LATE" : bal <= -1 ? "FADED" : "STEADY") : signed(last.finish_pct, "%"),
+         W - 16, 175, 56, colour, "right");
+    text(last.legs_late ? `LATE PUSH · peak ${last.peak_at_pct ?? "–"}%, steady ${last.steady_peak_at_pct ?? "–"}%`
+         : `length ${signed(Math.round(last.length_delta_cm), " cm")}`,
          W / 2, 240, 26, last.legs_late ? C.amber : C.dim, "center", !!last.legs_late);
   } else {
     const m = st.metrics || {}, rowing = !!st.rowing;

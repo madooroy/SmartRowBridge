@@ -358,6 +358,56 @@ def _finish_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct
         draw.text((bx0, by1 + 3), f"length {length_delta:+d} cm", font=font(11), fill=DIM, anchor="lt")
 
 
+BAR_RANGE = 2.0  # the bars show +-2 cue thresholds; the markers sit at +-1
+
+
+def _centre_bar(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], value: float | None,
+                pointer: bool = True, warn_above: bool = True) -> None:
+    """A bar that grows out from the middle (your steady stroke): green inside the markers at
+    +-1 (where the cues start), amber beyond. Clamped at +-BAR_RANGE, with an arrowhead.
+    warn_above=False: only the left side warns (longer strokes are fine)."""
+    x0, y0, x1, y1 = box
+    mid = (x0 + x1) / 2
+    half = (x1 - x0) / 2
+
+    def at(v: float) -> float:
+        return mid + half * max(-BAR_RANGE, min(BAR_RANGE, v)) / BAR_RANGE
+
+    draw.rectangle(box, fill=FAINT)
+    if value is not None:
+        colour = AMBER if value <= -1 or (warn_above and value >= 1) else GREEN
+        end = at(value)
+        if abs(end - mid) >= 2:
+            draw.rectangle((min(mid, end), y0, max(mid, end), y1), fill=colour)
+        if pointer and abs(value) >= BAR_RANGE:  # off the scale: an arrowhead at that end
+            tip, back = (x1, x1 - 9) if value > 0 else (x0, x0 + 9)
+            draw.polygon([(tip, (y0 + y1) / 2), (back, y0 - 3), (back, y1 + 3)], fill=colour)
+    for v in ((-1, 1) if warn_above else (-1,)):  # where the cues start
+        x = at(v)
+        for y in range(y0 - 3, y1 + 4, 4):
+            draw.line((x, y, x, y + 1), fill=DIM, width=1)
+    draw.line((mid, y0 - 4, mid, y1 + 4), fill=FG, width=2)
+
+
+def _shape_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], balance: float | None,
+                 length_balance: float | None, length_delta: int | None) -> None:
+    """During an effort: where the force sits in the drive (left: towards the catch, the finish
+    fading; right: towards the finish, a late push) and the stroke length (left: shorter), each
+    against your steady stroke in the middle."""
+    x0, y0, x1, y1 = box
+    draw.rounded_rectangle(box, radius=8, fill=TILE)
+    bx0, bx1 = x0 + 12, x1 - 12
+    draw.text((bx0, y0 + 5), "catch", font=font(12), fill=DIM)
+    draw.text(((bx0 + bx1) // 2, y0 + 5), "FORCE vs STEADY", font=font(12, True), fill=DIM, anchor="mt")
+    draw.text((bx1, y0 + 5), "finish", font=font(12), fill=DIM, anchor="rt")
+    _centre_bar(draw, (bx0, y0 + 24, bx1, y0 + 46), balance)
+    draw.text((bx0, y0 + 54), "shorter", font=font(12), fill=DIM)
+    label = "LENGTH" if length_delta is None else f"LENGTH {length_delta:+d} cm".replace("-", "\u2212")
+    draw.text(((bx0 + bx1) // 2, y0 + 54), label, font=font(12, True), fill=DIM, anchor="mt")
+    draw.text((bx1, y0 + 54), "longer", font=font(12), fill=DIM, anchor="rt")
+    _centre_bar(draw, (bx0, y0 + 71, bx1, y0 + 79), length_balance, pointer=False, warn_above=False)
+
+
 def _mini_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct: int,
                 colour: tuple | None = None) -> None:
     """A thin version of the finish meter's bar, for the summary's FINISH tile."""
@@ -380,8 +430,8 @@ def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
     draw.text((WIDTH - 6, 4), f"INTERVAL {live['index']}", font=font(15, True), fill=DIM, anchor="rt")
     draw.text((8, 58), format_time(live["elapsed_s"]), font=font(50, True), fill=FG, anchor="lm")
     draw.text((WIDTH - 8, 58), f"{live['power_w']} W", font=font(40, True), fill=FG, anchor="rm")
-    _finish_meter(draw, (4, 90, WIDTH - 4, 176), live.get("finish_pct"), live.get("length_delta_cm"),
-                  AMBER if live.get("cue") == "legs" else None)
+    _shape_meter(draw, (4, 90, WIDTH - 4, 176), live.get("balance"), live.get("length_balance"),
+                 live.get("length_delta_cm") if live.get("balance") is not None else None)
 
     text, colour = CUES.get(live.get("cue"), ("…", DIM))
     banner = (4, 181, WIDTH - 4, 215)
@@ -400,7 +450,11 @@ def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
     _hints(draw, "rowing", "Close")
     last = status["coach"]["last"]
     legs_late = bool(last.get("legs_late"))
-    colour = AMBER if legs_late else RATING_COLOURS.get(last.get("rating"), FG)
+    if last.get("balance") is not None:  # the same rule as the bars: green inside the cue markers
+        off = abs(last["balance"]) >= 1 or last.get("length_balance", 0) <= -1
+        colour = AMBER if off else GREEN
+    else:
+        colour = AMBER if legs_late else RATING_COLOURS.get(last.get("rating"), FG)
     draw.text((8, 28), f"INTERVAL {last['index']}", font=font(15, True), fill=DIM, anchor="lt")
     headline = f"{format_time(last['duration_s'])}  ·  {last['power_w']} W"
     draw.text((WIDTH // 2, 62), headline, font=_fit(draw, headline, 34, WIDTH - 16, True), fill=FG, anchor="mm")
@@ -410,8 +464,12 @@ def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
     delta = last.get("length_delta_cm", 0)
     # A late push: where the force peaked says more than the finish figure (which a late
     # push inflates).
-    first = (("PEAK AT", f"{last.get('peak_at_pct', 0)}%", AMBER) if legs_late
-             else ("FINISH", f"{last['finish_pct']:+d}%", colour))
+    bal = last.get("balance")
+    if bal is None:  # saved before the shape bar existed
+        first = ("FINISH", f"{last['finish_pct']:+d}%", colour)
+    else:
+        word = "LATE" if bal >= 1 else "FADED" if bal <= -1 else "STEADY"
+        first = ("SHAPE", word, GREEN if abs(bal) < 1 else AMBER)
     tiles = [
         first,
         ("LENGTH", f"{round(last['length_cm'])} cm", FG),
@@ -422,14 +480,21 @@ def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
         x0 = 5 + i * (tile_w + gap)
         draw.rounded_rectangle((x0, y0, x0 + tile_w, y1), radius=8, fill=TILE)
         draw.text((x0 + 8, y0 + 5), label, font=font(12), fill=DIM)
-        draw.text((x0 + tile_w // 2, y0 + 30), value, font=_fit(draw, value, 24, tile_w - 10, True),
+        size, at_y = (20, y0 + 26) if label == "SHAPE" else (24, y0 + 30)
+        draw.text((x0 + tile_w // 2, at_y), value, font=_fit(draw, value, size, tile_w - 10, True),
                   fill=value_colour, anchor="mm")
-        if label == "FINISH":
+        if label == "SHAPE":
+            _centre_bar(draw, (x0 + 10, y1 - 9, x0 + tile_w - 10, y1 - 5), bal, pointer=False)
+        elif label == "FINISH":
             _mini_meter(draw, (x0 + 8, y1 - 8, x0 + tile_w - 8, y1 - 4), last["finish_pct"],
                         AMBER if legs_late else None)
     if legs_late:
-        draw.text((WIDTH - 6, HEIGHT - 4), f"LATE PUSH \u00b7 steady {last.get('steady_peak_at_pct', 0)}%",
-                  font=font(13, True), fill=AMBER, anchor="rd")
+        draw.text((WIDTH - 6, HEIGHT - 4),
+                  f"LATE PUSH \u00b7 peak {last.get('peak_at_pct', 0)}%, steady {last.get('steady_peak_at_pct', 0)}%",
+                  font=font(12, True), fill=AMBER, anchor="rd")
+    elif bal is not None and bal <= -1:
+        draw.text((WIDTH - 6, HEIGHT - 4), f"FINISH {last['finish_pct']:+d}% vs steady".replace("-", "\u2212"),
+                  font=font(12, True), fill=AMBER, anchor="rd")
     else:
         draw.text((WIDTH - 6, HEIGHT - 4), f"{delta:+.0f} cm vs steady", font=font(12), fill=DIM, anchor="rd")
     return image

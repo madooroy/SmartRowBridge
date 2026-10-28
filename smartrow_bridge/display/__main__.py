@@ -191,17 +191,20 @@ def preview(directory: str) -> None:
                            "live": live, "last": last, "show_summary": show_summary}
         return status
 
-    def live(cue, curve, finish_pct=None, length_delta=None):
+    def live(cue, curve, finish_pct=None, length_delta=None, balance=None, length_balance=None):
         return {"index": 3, "elapsed_s": 72, "strokes": 25, "power_w": 154, "length_cm": 112, "cue": cue,
-                "finish_pct": finish_pct, "length_delta_cm": length_delta, "curve": curve, "steady_curve": steady}
+                "finish_pct": finish_pct, "length_delta_cm": length_delta, "curve": curve, "steady_curve": steady,
+                "balance": balance, "length_balance": length_balance}
 
     good_last = {"index": 2, "duration_s": 62, "strokes": 22, "power_w": 150, "stroke_rate_spm": 21.5,
                  "length_cm": 118.7, "length_delta_cm": 4.6, "peak_n": 623, "finish_pct": 0, "rating": "good",
-                 "fade_pct": -3, "curve": full, "steady_curve": steady}
+                 "fade_pct": -3, "curve": full, "steady_curve": steady, "balance": 0.2, "length_balance": 1.5}
     short_last = {**good_last, "index": 7, "duration_s": 182, "strokes": 64, "power_w": 156, "length_cm": 112.5,
-                  "length_delta_cm": -3.6, "peak_n": 719, "finish_pct": -15, "rating": "short", "curve": short}
+                  "length_delta_cm": -3.6, "peak_n": 719, "finish_pct": -15, "rating": "short", "curve": short,
+                  "balance": -1.4, "length_balance": -1.2}
     legs_last = {**good_last, "index": 4, "finish_pct": 14, "curve": late, "length_delta_cm": 0.0,
-                 "drive_late": 4.3, "legs_late": True, "peak_at_pct": 52, "steady_peak_at_pct": 41}
+                 "drive_late": 4.3, "legs_late": True, "peak_at_pct": 52, "steady_peak_at_pct": 41,
+                 "balance": 1.4, "length_balance": 0.0}
     shots = {
         "01-starting-up": screens.status_screen(None, now, 12.0, addr),
         "02-preparing": screens.status_screen(st("starting"), now, up, addr),
@@ -214,11 +217,11 @@ def preview(directory: str) -> None:
             st("connected", "SmartRow-34", True, True, False, **{**rowing, "power_w": 0, "stroke_rate_spm": 0,
                                                                 "pace_s_per_500m": 0}), now, up),
         "07a-interval-starting": screens.interval_screen(coached(live(None, full)), now, up),
-        "07b-interval-good": screens.interval_screen(coached(live("good", full, 2, 4)), now, up),
-        "07c-interval-finish-cue": screens.interval_screen(coached(live("finish", short, -15, -3)), now, up),
-        "07h-interval-legs-cue": screens.interval_screen(coached(live("legs", late, 14, 0)), now, up),
+        "07b-interval-good": screens.interval_screen(coached(live("good", full, 2, 4, 0.2, 1.5)), now, up),
+        "07c-interval-finish-cue": screens.interval_screen(coached(live("finish", short, -15, -3, -1.5, -1.0)), now, up),
+        "07h-interval-legs-cue": screens.interval_screen(coached(live("legs", late, 14, 0, 1.4, 0.0)), now, up),
         "07i-summary-legs-late": screens.summary_screen(coached(last=legs_last, show_summary=True), now, up),
-        "07d-interval-length-cue": screens.interval_screen(coached(live("length", full, -7, -5)), now, up),
+        "07d-interval-length-cue": screens.interval_screen(coached(live("length", full, -7, -5, -0.3, -1.7)), now, up),
         "07e-summary-good": screens.summary_screen(coached(last=good_last, show_summary=True), now, up),
         "07f-summary-short": screens.summary_screen(coached(last=short_last, show_summary=True), now, up),
         "07g-rowing-with-last": screens.rowing_screen(coached(last=short_last), now, up),

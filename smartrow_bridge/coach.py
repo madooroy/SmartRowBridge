@@ -196,6 +196,23 @@ def peak_stats(strokes) -> tuple[float, float]:
     return statistics.fmean(at), (statistics.pstdev(at) if len(at) > 1 else 0.0)
 
 
+def balance(finish_ratio: float, lateness: float, cues: CueThresholds) -> float:
+    """Where the force sits in the drive against steady, on one scale for the screens' shape bar.
+
+    0 is your steady stroke; negative is towards the catch (the finish fading), positive
+    towards the finish (the push coming late). In units of each cue's threshold, so +-1 is
+    where STRONGER FINISH and EARLIER PUSH start, whichever measure moved further.
+    """
+    toward_catch = (1 - finish_ratio) / (1 - cues.finish_cue) if finish_ratio < 1 else 0.0
+    toward_finish = lateness / cues.legs_cue if lateness > 0 else 0.0
+    return toward_finish if toward_finish >= toward_catch else -toward_catch
+
+
+def length_balance(length_delta_pct: float, cues: CueThresholds) -> float:
+    """Stroke length against steady for the screens' length bar: -1 is where LONGER STROKES starts."""
+    return length_delta_pct / cues.length_cue_pct
+
+
 def stroke_power(s: StrokeCurve) -> float:
     return s.work_j * s.stroke_rate_spm / 60.0 if s.work_j and s.stroke_rate_spm else float(s.power_w)
 
@@ -225,6 +242,7 @@ class IntervalSummary:
     last_third_back_share: float
     ended_at: float = 0.0
     legs_threshold: float = LEGS_CUE
+    cues: CueThresholds = DEFAULT_SETTINGS.cues  # for the screens' bars
     steady_power_w: float = 0.0
     started_at: float = 0.0  # time of its first stroke (same clock as the strokes)
     peak_at_pct: float = 0.0  # where the force peaks, % of the drive (mean over the strokes)
@@ -282,6 +300,8 @@ class IntervalSummary:
             "steady_power_w": round(self.steady_power_w),
             "drive_late": round(self.lateness, 2),
             "legs_late": self.legs_late,
+            "balance": round(balance(self.finish_ratio, self.lateness, self.cues), 2),
+            "length_balance": round(length_balance(self.length_delta_pct, self.cues), 2),
             "peak_at_pct": round(self.peak_at_pct),
             "peak_spread_pct": round(self.peak_spread_pct, 1),
             "steady_peak_at_pct": round(self.steady_peak_at_pct),
@@ -455,6 +475,7 @@ class IntervalCoach:
             last_third_back_share=back_share(mean_curve(strokes[-third:])),
             ended_at=now,
             legs_threshold=self.settings.cues.legs_cue,
+            cues=self.settings.cues,
             steady_power_w=self.steady_power(),
             started_at=strokes[0].time,
             peak_at_pct=peak_at,
@@ -468,18 +489,22 @@ class IntervalCoach:
     def _window(self) -> list[StrokeCurve]:
         return self.effort.strokes[-CUE_WINDOW:] if self.effort else []
 
+    def _window_measures(self) -> tuple[float, float, float]:
+        """The last few strokes against steady: finish ratio, lateness (% of drive), % shorter."""
+        window = self._window()
+        curve = mean_curve(window)
+        ratio = back_share(curve) / (self.steady_back_share() or 1)
+        steady_len = self.steady_length() or 1
+        short_by_pct = (steady_len - statistics.fmean(s.stroke_length_cm for s in window)) / steady_len * 100
+        return ratio, drive_lateness(curve, mean_curve(self.steady)), short_by_pct
+
     def _update_cue(self) -> None:
         e = self.effort
         if len(e.strokes) < CUE_MIN:
             e.cue = None
             return
         t = self.settings.cues
-        window = self._window()
-        curve = mean_curve(window)
-        ratio = back_share(curve) / (self.steady_back_share() or 1)
-        steady_len = self.steady_length() or 1
-        short_by_pct = (steady_len - statistics.fmean(s.stroke_length_cm for s in window)) / steady_len * 100
-        late = drive_lateness(curve, mean_curve(self.steady))
+        ratio, late, short_by_pct = self._window_measures()
         if ratio < t.finish_cue or (e.cue == "finish" and ratio < t.finish_clear):
             e.cue = "finish"
         elif late > t.legs_cue or (e.cue == "legs" and late > t.legs_clear):
@@ -536,6 +561,8 @@ class IntervalCoach:
             strokes = self.effort.strokes
             window = self._window()
             first = strokes[0]
+            judged = len(strokes) >= CUE_MIN
+            ratio, late, short_by_pct = self._window_measures() if judged else (1.0, 0.0, 0.0)
             out["live"] = {
                 "index": len(self.intervals) + 1,
                 "elapsed_s": round(max(0.0, now - first.time)),
@@ -546,6 +573,9 @@ class IntervalCoach:
                 "finish_pct": round((back_share(mean_curve(window)) / (self.steady_back_share() or 1) - 1) * 100)
                 if len(strokes) >= CUE_MIN else None,
                 "length_delta_cm": round(statistics.fmean(s.stroke_length_cm for s in window) - self.steady_length()),
+                # The screens' two bars (see balance()): None until there is enough to judge.
+                "balance": round(balance(ratio, late, self.settings.cues), 2) if judged else None,
+                "length_balance": round(length_balance(-short_by_pct, self.settings.cues), 2) if judged else None,
                 "curve": [round(v) for v in mean_curve(window)],
                 "steady_curve": [round(v) for v in mean_curve(self.steady)],
             }
