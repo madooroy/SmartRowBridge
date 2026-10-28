@@ -33,6 +33,14 @@ def coached(live=None, last=None, show_summary=False, age=0.0):
 
 @unittest.skipIf(screens is None, "Pillow not installed")
 class ScreensTest(unittest.TestCase):
+
+    def test_status_screen_heart_rate_row(self):
+        from smartrow_bridge.display import screens
+        base = {"version": 1, "time": 1000.0, "stage": "connected", "pulley": "SmartRow-34", "smartrow_app": True,
+                "fitness_app": True, "fitness_name": "PiRower", "metrics": {"heart_rate_bpm": 96}}
+        for hr in (None, {"name": None, "connected": False}, {"name": "COROS HRM 8A2F", "connected": True}):
+            image = screens.status_screen({**base, "heart_rate": hr}, 1000.0, 600.0, "a\nb")
+            self.assertEqual(image.size, (screens.WIDTH, screens.HEIGHT))
     def test_bridge_state(self):
         self.assertEqual(screens.bridge_state(status(), NOW, UPTIME), "ok")
         self.assertEqual(screens.bridge_state(status(age=10), NOW, UPTIME), "down")

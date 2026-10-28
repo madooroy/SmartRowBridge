@@ -228,6 +228,16 @@ def preview(directory: str) -> None:
         "12-bridge-not-running": screens.status_screen(None, now, up, addr),
         "13-both-apps-no-web-page": screens.status_screen(st("connected", "SmartRow-34", True, True), now, up,
                                                           address_lines("raspberrypi", "192.168.1.23", None)),
+        "14-strap-waiting": screens.status_screen({**st("searching"), "heart_rate": {"name": None,
+                                                                                     "connected": False}}, now, up, addr),
+        "15-strap-looking": screens.status_screen({**st("connected", "SmartRow-34", True, True),
+                                                   "heart_rate": {"name": None, "connected": False}}, now, up, addr),
+        "16-strap-connected": screens.status_screen({**st("connected", "SmartRow-34", True, True, heart_rate_bpm=96),
+                                                     "heart_rate": {"name": "COROS HRM 8A2F", "connected": True}},
+                                                    now, up, addr),
+        "17-strap-no-web-page": screens.status_screen({**st("connected", "SmartRow-34", True, False, heart_rate_bpm=96),
+                                                       "heart_rate": {"name": "COROS HRM 8A2F", "connected": True}},
+                                                      now, up, address_lines("raspberrypi", "192.168.1.23", None)),
     }
     for name, image in shots.items():
         image.save(out / f"{name}.png")

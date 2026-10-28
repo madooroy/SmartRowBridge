@@ -194,13 +194,27 @@ def status_screen(status: dict | None, now: float, uptime: float, address: str =
         app_row("SmartRow app", bool(status.get("smartrow_app"))),
         app_row(f"{status.get('fitness_name') or 'PiRower'} (fitness app)", bool(status.get("fitness_app"))),
     ]
+    hr = status.get("heart_rate")  # only when the bridge reads a strap (SRB_HEART_RATE)
+    if hr is not None:
+        bpm = (status.get("metrics") or {}).get("heart_rate_bpm")
+        label = hr.get("name") or "Heart rate strap"  # its own name once found, like the pulley's
+        if not connected:
+            rows.append((label, "After the pulley connects", FAINT))
+        elif hr.get("connected"):
+            rows.append((label, f"Connected \u00b7 \u2665 {bpm} bpm" if bpm else "Connected \u00b7 \u2665", GREEN))
+        else:
+            rows.append((label, "Looking - put it on, wet it", AMBER))
     two_line_address = "\n" in address
-    y, step = (26, 55) if two_line_address else (30, 60)  # room for the web page's address below
+    if len(rows) > 3:  # four rows: a little smaller, so they fit above the web page's address
+        y, step, big, small, gap, dot = (22, 43, 18, 15, 21, 16) if two_line_address else (24, 48, 19, 16, 23, 16)
+    else:
+        y, step, big, small, gap, dot = (26, 55, 21, 18, 28, 18) if two_line_address else (30, 60, 21, 18, 28, 18)
     for label, text, colour in rows:
-        draw.ellipse((14, y + 8, 32, y + 26), fill=colour if colour != FAINT else None,
+        top = y + (big - dot) // 2 + 2
+        draw.ellipse((14, top, 14 + dot, top + dot), fill=colour if colour != FAINT else None,
                      outline=colour, width=2)
-        draw.text((44, y), label, font=_fit(draw, label, 21, WIDTH - 54, bold=True), fill=FG)
-        draw.text((44, y + 28), text, font=_fit(draw, text, 18, WIDTH - 54), fill=colour)
+        draw.text((44, y), label, font=_fit(draw, label, big, WIDTH - 54, bold=True), fill=FG)
+        draw.text((44, y + gap), text, font=_fit(draw, text, small, WIDTH - 54), fill=colour)
         y += step
     return image
 
