@@ -154,7 +154,7 @@ class ReplayToolTest(unittest.TestCase):
             with redirect_stdout(out):
                 self.assertEqual(replay_tool.main([str(export)]), 0)
         text = out.getvalue()
-        self.assertIn("101 strokes, steady about 110 W", text)
+        self.assertIn("101 strokes, Easy about 110 W", text)
         self.assertIn("Interval 1: 1:00, 21 strokes, 152 W", text)
         self.assertIn("live cue: LOOKS GOOD", text)
 
