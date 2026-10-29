@@ -69,6 +69,19 @@ def describe_error(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
+FTP_SPORTS = ("Rowing", "VirtualRow")
+
+
+def rowing_ftp(key: str) -> float | None:
+    """Your rowing FTP from intervals.icu's sport settings (the indoor one when set), or None."""
+    me = _request("GET", "/athlete/0", key)
+    for sport in me.get("sportSettings") or []:
+        if any(t in FTP_SPORTS for t in sport.get("types") or []):
+            ftp = sport.get("indoor_ftp") or sport.get("ftp")
+            return float(ftp) if ftp else None
+    return None
+
+
 def athlete_name(key: str) -> str:
     me = _request("GET", "/athlete/0", key)
     return me.get("name") or me.get("id") or "?"
@@ -107,6 +120,8 @@ def note_for(record: dict) -> dict:
                    f"finish {_signed(i['finish_pct'])}%  length {_signed(round(i['length_delta_cm']))} cm")
             if "peak_at_pct" in i:
                 row += f"  peak {i['peak_at_pct']}% \u00b1{round(i['peak_spread_pct'])}"
+            if i.get("ftp_pct"):
+                row += f"  {i['ftp_pct']}% FTP"
             if i.get("hr_peak"):
                 row += f"  HR peak {i['hr_peak']}"
             if i.get("legs_late"):
@@ -177,6 +192,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     try:
         print(f"intervals.icu: connected as {athlete_name(key)}")
+        ftp = rowing_ftp(key)
+        print(f"Rowing FTP: {ftp:.0f} W (the coach uses it unless SRB_COACH_FTP is set)" if ftp else
+              "Rowing FTP: none set on intervals.icu (Settings, Rowing); the coach works without it")
         return 0
     except Exception as exc:  # noqa: BLE001
         print(describe_error(exc), file=sys.stderr)

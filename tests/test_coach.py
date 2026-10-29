@@ -25,8 +25,8 @@ PERIOD = 60 / RATE
 class Rower:
     """Feeds strokes to a coach, 21 spm."""
 
-    def __init__(self, settings: coach.CoachSettings = coach.DEFAULT_SETTINGS) -> None:
-        self.coach = IntervalCoach(settings)
+    def __init__(self, settings: coach.CoachSettings = coach.DEFAULT_SETTINGS, ftp=None) -> None:
+        self.coach = IntervalCoach(settings, ftp=ftp)
         self.t = 0.0
         self.count = 0
         self.summaries = []
@@ -185,6 +185,32 @@ class CoachTest(unittest.TestCase):
         r.row(1, 110)
         st = r.state()
         self.assertEqual((st["mode"], st["intervals"], st["last"]), ("warmup", 0, None))
+
+
+class FtpTest(unittest.TestCase):
+    def test_long_effort_counts_with_an_ftp(self):
+        """A 6-minute effort: a new steady pace without an FTP, an interval with one."""
+        for ftp, found in ((None, 0), (185, 1)):
+            r = Rower(ftp=ftp)
+            r.row(60, 105)
+            r.row(130, 145)  # about 6 minutes at 21 spm
+            r.row(30, 105)
+            self.assertEqual(len(r.summaries), found, ftp)
+        self.assertEqual(r.summaries[0].as_dict()["ftp_pct"], 78)
+        self.assertIn("Efforts at 78% of FTP.", coach.findings([{**r.summaries[0].as_dict(), "started_at_s": 0}]))
+
+    def test_warmup_below_the_floor_is_not_an_effort(self):
+        r = Rower(ftp=185)
+        r.row(40, 80)  # easy start
+        r.row(200, 105)  # into steady rowing: 31 % more, but under 65 % of FTP (120 W)
+        self.assertEqual(r.summaries, [])
+        self.assertIsNone(r.state().get("live"))
+
+    def test_fixed_ftp_setting(self):
+        from smartrow_bridge.bridge import _fixed_ftp
+        self.assertEqual(_fixed_ftp("185"), 185.0)
+        for unset in ("", "auto", "off", "0"):
+            self.assertIsNone(_fixed_ftp(unset))
 
 
 class PeakTest(unittest.TestCase):

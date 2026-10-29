@@ -31,6 +31,19 @@ STATS_INTERVAL_S = 60.0
 STATUS_INTERVAL_S = 1.0
 
 
+FTP_REFRESH_S = 6 * 3600.0  # read the rowing FTP from intervals.icu again this often
+FTP_RETRY_S = 600.0
+
+
+def _fixed_ftp(setting: str) -> float | None:
+    """SRB_COACH_FTP: watts, or empty / "auto" (from intervals.icu, later) / "off": none for now."""
+    try:
+        ftp = float(setting.strip())
+    except ValueError:
+        return None
+    return ftp if ftp > 0 else None
+
+
 class Bridge:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
@@ -39,7 +52,7 @@ class Bridge:
         if cfg.coach and cfg.status_file.lower() != "off":
             self.coach = coach.IntervalCoach(coach.CoachSettings(
                 start_pct=cfg.coach_start_pct, max_effort_s=cfg.coach_max_min * 60,
-                sensitivity=cfg.coach_sensitivity))
+                sensitivity=cfg.coach_sensitivity), ftp=_fixed_ftp(cfg.coach_ftp))
             self.parser.on_stroke = self.coach.add
         self.hr_link = None  # heartrate.HeartRateLink, created once the pulley's adapter is known
         self.recorder: sessions.SessionRecorder | None = None
@@ -231,15 +244,42 @@ class Bridge:
                     log.exception("Uploads failed")
             await asyncio.sleep(STATUS_INTERVAL_S)
 
+    async def _ftp_loop(self) -> None:
+        """No SRB_COACH_FTP: read the rowing FTP from intervals.icu (when set up), now and every few hours."""
+        from . import intervals
+        warned = False
+        while True:
+            key = intervals.read_key(self.cfg.intervals_key_file)
+            wait = FTP_REFRESH_S
+            if key:
+                try:
+                    ftp = await asyncio.to_thread(intervals.rowing_ftp, key)
+                    warned = False
+                    if ftp and ftp != self.coach.ftp:
+                        log.info("Rowing FTP from intervals.icu: %.0f W (efforts from %.0f W)", ftp,
+                                 ftp * self.coach.settings.ftp_floor_pct / 100)
+                    self.coach.ftp = ftp or self.coach.ftp
+                except Exception as exc:  # noqa: BLE001 - offline: the coach carries on with what it has
+                    if not warned:
+                        log.warning("Could not read the rowing FTP from intervals.icu: %s",
+                                    intervals.describe_error(exc))
+                    warned, wait = True, FTP_RETRY_S
+            await asyncio.sleep(wait)
+
     async def run(self) -> None:
         status_task = None
         if self.cfg.status_file.lower() != "off":
             status_task = asyncio.create_task(self._status_loop())
+        ftp_task = None
+        if self.coach and self.cfg.coach_ftp.strip().lower() in ("", "auto"):
+            ftp_task = asyncio.create_task(self._ftp_loop())
         try:
             await self._run()
         finally:
             if status_task is not None:
                 status_task.cancel()
+            if ftp_task is not None:
+                ftp_task.cancel()
             if self.recorder is not None:
                 try:
                     self.recorder.close(self.parser.metrics)  # stopping: save the session as it is

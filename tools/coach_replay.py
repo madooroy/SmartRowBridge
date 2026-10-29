@@ -74,9 +74,9 @@ def export_totals(path: Path) -> dict:
             "distance_m": int(float(last["Distance (m)"])), "elapsed_s": int(float(last["Second (#)"]))}
 
 
-def replay(path: Path, settings: CoachSettings, save_dir: Path | None = None) -> dict:
+def replay(path: Path, settings: CoachSettings, save_dir: Path | None = None, ftp: float | None = None) -> dict:
     """Run one export through a fresh coach. Returns its intervals and live-cue counts."""
-    coach = IntervalCoach(settings)
+    coach = IntervalCoach(settings, ftp=ftp)
     cues: dict[int, Counter] = {}
     for stroke in strokes_from_csv(path):
         coach.add(stroke)
@@ -120,6 +120,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="longest effort, in minutes, to count as an interval (default 5)")
     p.add_argument("--sensitivity", choices=("low", "normal", "high"), default="normal",
                    help="how readily the technique cues speak up (default normal)")
+    p.add_argument("--ftp", type=float, help="your rowing FTP in watts (as SRB_COACH_FTP): efforts must reach "
+                   "65%% of it, and may last up to 20 minutes")
     p.add_argument("--save", type=Path, metavar="DIR",
                    help="also write each session's summary file into DIR, as the bridge does")
     args = p.parse_args(argv)
@@ -129,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     status = 0
     for path in args.csv:
         try:
-            print(describe(path, replay(path, settings, args.save)))
+            print(describe(path, replay(path, settings, args.save, args.ftp)))
         except (OSError, KeyError, ValueError) as exc:
             print(f"{path.name}: can't read it as a SmartRow export ({exc})", file=sys.stderr)
             status = 1

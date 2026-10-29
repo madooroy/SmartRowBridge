@@ -472,12 +472,23 @@ none in steady-only sessions, and cued only the efforts that went short. Expect 
 The leg-drive cue is set well clear of anything in those sessions, as none had a weak leg drive; it has not
 yet been seen on one.
 
+**With your FTP.** On its own the coach judges efforts against your recent steady rowing, and has to treat
+anything longer than 5 minutes as a new steady pace (otherwise a warm-up ramping into the main set could pass
+for one long effort), which cuts off longer efforts. With your rowing FTP, an effort must also reach 65 % of
+it: a warm-up stays below that, so efforts may last up to 20 minutes. On a 45-minute class (FTP 185 W:
+steady rowing 98-109 W, efforts 130-150 W, the last one 6 minutes) this found all eight efforts, where
+without an FTP the six-minute one was taken for a new steady pace; earlier sessions came out the same. The
+summary then says at what % of FTP the efforts were. The FTP comes from intervals.icu by itself (your rowing
+sport settings), or set `SRB_COACH_FTP`. To check what intervals.icu has:
+`sudo /opt/smartrow-bridge/venv/bin/python -m smartrow_bridge.intervals --test`.
+
 **Settings** (in `/etc/default/smartrow-bridge`, all optional):
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `SRB_COACH_START_PCT` | `20` | An interval is at least this % above your steady power (and 15 W) |
-| `SRB_COACH_MAX_MIN` | `5` | Longest effort, in minutes, to count as an interval; longer is a new steady pace |
+| `SRB_COACH_MAX_MIN` | `5` | Longest effort, in minutes, to count as an interval; longer is a new steady pace (without an FTP) |
+| `SRB_COACH_FTP` | empty: from intervals.icu | Your rowing FTP in watts. With it, an effort must also reach 65 % of it, and may last up to 20 minutes. Empty: read from intervals.icu (Settings, Rowing, indoor FTP if set) once [uploads](#optional-uploads-to-intervalsicu-and-strava) are set up, every few hours; `off`: none |
 | `SRB_COACH_SENSITIVITY` | `normal` | How readily the cues speak up: `low`, `normal` or `high` |
 | `SRB_SESSION_DIR` | `/var/lib/smartrow-bridge/sessions` | Where session summaries are saved; `off` disables |
 | `SRB_HEART_RATE`, `SRB_HEART_RATE_TO_FITNESS` | `off`, `1` | [Heart rate strap](#optional-heart-rate-strap) read by the bridge, and whether it goes to the fitness app |

@@ -108,8 +108,12 @@ class CoachSettings:
     start_min_w: float = 15.0  # ... and at least this many watts
     end_pct: float = 10.0  # it ends when power falls back below steady + this %
     min_effort_strokes: int = 8  # shorter is a burst, not an interval
-    max_effort_s: float = 300.0  # longer is a new steady pace, not an interval
+    max_effort_s: float = 300.0  # longer is a new steady pace, not an interval (without an FTP)
     sensitivity: str = "normal"  # how readily the cues speak up: low, normal or high
+    # With your FTP known (IntervalCoach.ftp): an effort must also reach this % of it, so a
+    # warm-up ramping into steady rowing can't pass for one, and so efforts may last longer.
+    ftp_floor_pct: float = 65.0
+    ftp_max_effort_s: float = 1200.0
 
     def __post_init__(self) -> None:
         if self.sensitivity not in SENSITIVITY:
@@ -243,6 +247,7 @@ class IntervalSummary:
     ended_at: float = 0.0
     legs_threshold: float = LEGS_CUE
     cues: CueThresholds = DEFAULT_SETTINGS.cues  # for the screens' bars
+    ftp: float | None = None
     steady_power_w: float = 0.0
     started_at: float = 0.0  # time of its first stroke (same clock as the strokes)
     peak_at_pct: float = 0.0  # where the force peaks, % of the drive (mean over the strokes)
@@ -300,6 +305,7 @@ class IntervalSummary:
             "steady_power_w": round(self.steady_power_w),
             "drive_late": round(self.lateness, 2),
             "legs_late": self.legs_late,
+            "ftp_pct": round(self.power_w / self.ftp * 100) if self.ftp else None,
             "balance": round(balance(self.finish_ratio, self.lateness, self.cues), 2),
             "length_balance": round(length_balance(self.length_delta_pct, self.cues), 2),
             "peak_at_pct": round(self.peak_at_pct),
@@ -330,10 +336,20 @@ class _Effort:
 
 
 class IntervalCoach:
-    def __init__(self, settings: CoachSettings = DEFAULT_SETTINGS) -> None:
+    def __init__(self, settings: CoachSettings = DEFAULT_SETTINGS, ftp: float | None = None) -> None:
         self.settings = settings
+        self.ftp = ftp  # rowing FTP, W (SRB_COACH_FTP, or from intervals.icu); None: efforts by steady alone
         self.session = 0
         self.reset()
+
+    @property
+    def effort_floor_w(self) -> float:
+        """With an FTP: the least power an effort must reach (ftp_floor_pct of it); else 0."""
+        return self.ftp * self.settings.ftp_floor_pct / 100 if self.ftp else 0.0
+
+    @property
+    def max_effort_s(self) -> float:
+        return self.settings.ftp_max_effort_s if self.ftp else self.settings.max_effort_s
 
     def reset(self) -> None:
         self.steady: deque[StrokeCurve] = deque(maxlen=STEADY_WINDOW)
@@ -395,7 +411,7 @@ class IntervalCoach:
 
         if self.effort is None:
             base = self.steady_power()
-            start_at = max(base * self.settings.start_ratio, base + self.settings.start_min_w)
+            start_at = max(base * self.settings.start_ratio, base + self.settings.start_min_w, self.effort_floor_w)
             if self.ready and len(self.recent) >= 3 and smoothed >= start_at:
                 # Back-date to the first hard stroke among the recent ones.
                 recent = list(self.recent)
@@ -407,7 +423,7 @@ class IntervalCoach:
                 self._learn(s, base)
         else:
             self.effort.strokes.append(s)
-            if s.time - self.effort.strokes[0].time > self.settings.max_effort_s:
+            if s.time - self.effort.strokes[0].time > self.max_effort_s:
                 self._rebaseline()
             elif smoothed < self.steady_power() * self.settings.end_ratio:
                 finished = self._finish(s.time) or finished
@@ -476,6 +492,7 @@ class IntervalCoach:
             ended_at=now,
             legs_threshold=self.settings.cues.legs_cue,
             cues=self.settings.cues,
+            ftp=self.ftp,
             steady_power_w=self.steady_power(),
             started_at=strokes[0].time,
             peak_at_pct=peak_at,
@@ -534,7 +551,9 @@ class IntervalCoach:
             "steady_power_w": round(self.steady_power()),
             "steady_length_cm": round(self.steady_length(), 1),
             "steady_curve": [round(v) for v in mean_curve(self.steady)],
-            "settings": {"start_pct": self.settings.start_pct, "max_effort_min": self.settings.max_effort_s / 60,
+            "ftp": round(self.ftp) if self.ftp else None,
+            "settings": {"start_pct": self.settings.start_pct, "max_effort_min": self.max_effort_s / 60,
+                         "ftp_floor_pct": self.settings.ftp_floor_pct if self.ftp else None,
                          "sensitivity": self.settings.sensitivity},
             "intervals": intervals,
             "heart_rate": hr,
@@ -551,6 +570,7 @@ class IntervalCoach:
         out: dict = {
             "mode": "warmup" if not self.ready else "interval" if self.effort else "steady",
             "session_strokes": self.strokes_total,  # strokes in this session (the screen offers Y: Done)
+            "ftp": round(self.ftp) if self.ftp else None,
             "steady_power_w": round(self.steady_power()),
             "intervals": len(self.intervals),
             "last": last.as_dict() if last else None,
@@ -658,6 +678,11 @@ def findings(intervals: list[dict]) -> list[str]:
         steady_spread = wander[0].get("steady_peak_spread_pct", 0)
         out.append(f"The force peak landed less consistently from stroke to stroke in {_names(wander)} "
                    f"({spreads} of the drive, against \u00b1{steady_spread:.0f}% in steady rowing).")
+
+    pcts = [i["ftp_pct"] for i in intervals if i.get("ftp_pct")]
+    if pcts:
+        span = f"{min(pcts)}%" if min(pcts) == max(pcts) else f"{min(pcts)}\u2013{max(pcts)}%"
+        out.append(f"Efforts at {span} of FTP.")
 
     steady = [i["steady_power_w"] for i in intervals if i.get("steady_power_w")]
     if len(steady) >= 2 and min(steady):

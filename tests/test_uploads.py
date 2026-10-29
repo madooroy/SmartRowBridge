@@ -49,7 +49,9 @@ class FakeServices:
                     return self._answer(fake.fail[1], {"error": "nope"})
                 p = self.path
                 if p == "/api/v1/athlete/0":
-                    return self._answer(200, {"id": "i1001", "name": "Test Rower"})
+                    return self._answer(200, {"id": "i1001", "name": "Test Rower", "sportSettings": [
+                        {"types": ["Ride", "VirtualRide"], "ftp": 305},
+                        {"types": ["Rowing"], "ftp": 200, "indoor_ftp": 185}]})
                 if p.startswith("/api/v1/athlete/0/events"):
                     return self._answer(200, {"id": 4242, "category": "NOTE"})
                 if p == "/api/v1/athlete/0/activities":
@@ -160,6 +162,9 @@ class UploadsTest(unittest.TestCase):
         body = json.loads(put[3])
         self.assertTrue(body["name"].endswith(" Row"))
         self.assertIn("What the coach saw:", body["description"])
+
+    def test_rowing_ftp_from_intervals(self):
+        self.assertEqual(intervals.rowing_ftp("secret-key"), 185.0)  # the indoor FTP when set
 
     def test_note_mode(self):
         self.set_up_intervals("note", when=time.time() - 86400)

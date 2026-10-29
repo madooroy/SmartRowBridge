@@ -32,6 +32,7 @@ class Config:
     coach_start_pct: float
     coach_max_min: float
     coach_sensitivity: str
+    coach_ftp: str
     session_dir: str
     heart_rate: str
     heart_rate_to_fitness: bool
@@ -100,6 +101,9 @@ def parse(argv: list[str] | None = None) -> Config:
     p.add_argument("--coach-sensitivity", choices=("low", "normal", "high"),
                    default=_env("SRB_COACH_SENSITIVITY", "normal"),
                    help="coach: how readily the technique cues speak up (default normal)")
+    p.add_argument("--coach-ftp", default=_env("SRB_COACH_FTP", ""),
+                   help="coach: your rowing FTP in watts; empty = read it from intervals.icu (when set up), "
+                        "off = none. With it, efforts must reach 65%% of it and may last up to 20 minutes")
     p.add_argument("--session-dir", default=_env("SRB_SESSION_DIR", sessions.DEFAULT_DIR),
                    help="coach: where each session's summary is saved, for the web page ('off' to disable)")
     p.add_argument("--heart-rate", default=_env("SRB_HEART_RATE", "off"),
