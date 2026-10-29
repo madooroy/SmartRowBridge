@@ -89,6 +89,9 @@ PROVISIONAL_MIN = 30  # with nothing saved: fresh strokes before a provisional r
 FRESH_MAX_AGE_DAYS = 30
 LENGTH_SAME_CM = 3.0
 
+SHAPE_MIN = 20  # Easy strokes after the warm-up needed before efforts are judged against them alone
+SPLIT_MIN_STROKES = 15  # an effort that steps up (or down) an intensity for this long is split in two
+
 CUE_WINDOW = 8  # strokes in the live cue
 CUE_MIN = 6  # strokes into an effort before the first cue
 DRIVE_END_FRACTION = 0.05  # the drive ends at the last sample above this share of the stroke's peak
@@ -426,6 +429,9 @@ class IntervalCoach:
 
     def reset(self) -> None:
         self.steady: deque[StrokeCurve] = deque(maxlen=STEADY_WINDOW)
+        # The same, without the warm-up (its shorter strokes look like a stronger finish): what
+        # efforts are judged against once there are SHAPE_MIN of them.
+        self.shape: deque[StrokeCurve] = deque(maxlen=STEADY_WINDOW)
         self.recent: deque[StrokeCurve] = deque(maxlen=SMOOTH)
         self.effort: _Effort | None = None
         self.recovery_left = 0
@@ -469,10 +475,15 @@ class IntervalCoach:
         return statistics.median(stroke_power(s) for s in recent) if recent else 0.0
 
     def steady_length(self) -> float:
-        return statistics.fmean(s.stroke_length_cm for s in self.steady) if self.steady else 0.0
+        ref = self.shape_strokes()
+        return statistics.fmean(s.stroke_length_cm for s in ref) if ref else 0.0
 
     def steady_back_share(self) -> float:
-        return back_share(mean_curve(self.steady))
+        return back_share(mean_curve(self.shape_strokes()))
+
+    def shape_strokes(self) -> list[StrokeCurve]:
+        """The Easy strokes efforts are judged against: after the warm-up when there are enough."""
+        return list(self.shape) if len(self.shape) >= SHAPE_MIN else list(self.steady)
 
     # ------------------------------------------------------------ input
 
@@ -533,6 +544,8 @@ class IntervalCoach:
             return
         self.steady.append(s)
         elapsed = s.time - self.first_time
+        if elapsed >= FRESH_FROM_S:
+            self.shape.append(s)
         if FRESH_FROM_S <= elapsed < FRESH_TO_S and (not self.ready or self.intensity(stroke_power(s)) == "Easy"):
             self.fresh.append(s)
             if self.baseline is None and len(self.fresh) >= PROVISIONAL_MIN:
@@ -575,13 +588,15 @@ class IntervalCoach:
         log.info("Steady pace moved up to about %.0f W; no interval recorded",
                  statistics.median(stroke_power(s) for s in self.effort.strokes))
         self.steady.extend(self.effort.strokes)
+        self.shape.extend(self.effort.strokes)
         self.effort = None
 
     def _drop_from_steady(self, strokes: list[StrokeCurve]) -> None:
         ids = {id(s) for s in strokes}
-        kept = [s for s in self.steady if id(s) not in ids]
-        self.steady.clear()
-        self.steady.extend(kept)
+        for ref in (self.steady, self.shape):
+            kept = [s for s in ref if id(s) not in ids]
+            ref.clear()
+            ref.extend(kept)
 
     def _finish(self, now: float) -> IntervalSummary | None:
         effort, self.effort = self.effort, None
@@ -594,17 +609,53 @@ class IntervalCoach:
         self.recovery_left = RECOVERY_STROKES
         if len(strokes) < self.settings.min_effort_strokes:
             return None
-        summary = self._summarise(strokes, now)
-        self.intervals.append(summary)
-        log.info(summary.log_line())
+        summary = None
+        parts = self._intensity_parts(strokes)
+        for k, part in enumerate(parts):
+            end = now if k == len(parts) - 1 else parts[k + 1][0].time
+            summary = self._summarise(part, end)
+            self.intervals.append(summary)
+            log.info(summary.log_line())
         return summary
+
+    def _intensity_parts(self, strokes: list[StrokeCurve]) -> list[list[StrokeCurve]]:
+        """An effort split where it steps to another intensity (Moderate, then Challenging) and stays
+        there for SPLIT_MIN_STROKES; shorter changes stay part of the run around them."""
+        smoothed = [statistics.median(stroke_power(x) for x in strokes[max(0, i - SMOOTH // 2):i + SMOOTH // 2 + 1])
+                    for i in range(len(strokes))]
+        labels = [self.intensity(w) for w in smoothed]
+        labels = [k if k in ("Moderate", "Challenging", "Max") else "Moderate" for k in labels]
+        runs: list[list] = []  # [label, first index, last index]
+        for i, k in enumerate(labels):
+            if runs and runs[-1][0] == k:
+                runs[-1][2] = i
+            else:
+                runs.append([k, i, i])
+        changed = True
+        while changed and len(runs) > 1:  # fold the shortest too-short run into a neighbour
+            changed = False
+            short = [j for j, r in enumerate(runs) if r[2] - r[1] + 1 < SPLIT_MIN_STROKES]
+            if short:
+                j = min(short, key=lambda j: runs[j][2] - runs[j][1])
+                n = j - 1 if j > 0 else j + 1
+                lo, hi = min(runs[j][1], runs[n][1]), max(runs[j][2], runs[n][2])
+                runs[n][1:] = [lo, hi]
+                del runs[j]
+                merged = []
+                for r in runs:
+                    if merged and merged[-1][0] == r[0]:
+                        merged[-1][2] = r[2]
+                    else:
+                        merged.append(r)
+                runs, changed = merged, True
+        return [strokes[r[1]:r[2] + 1] for r in runs]
 
     def _summarise(self, strokes: list[StrokeCurve], now: float) -> IntervalSummary:
         n = len(strokes)
         period = 60.0 / statistics.fmean(s.stroke_rate_spm for s in strokes)
         third = max(1, n // 3)
         peak_at, peak_spread = peak_stats(strokes)
-        steady_at, steady_spread = peak_stats(self.steady)
+        steady_at, steady_spread = peak_stats(self.shape_strokes())
         return IntervalSummary(
             index=len(self.intervals) + 1,
             duration_s=strokes[-1].time - strokes[0].time + period,
@@ -617,7 +668,7 @@ class IntervalCoach:
             steady_back_share=self.steady_back_share(),
             steady_length_cm=self.steady_length(),
             curve=mean_curve(strokes),
-            steady_curve=mean_curve(self.steady),
+            steady_curve=mean_curve(self.shape_strokes()),
             first_third_back_share=back_share(mean_curve(strokes[:third])),
             last_third_back_share=back_share(mean_curve(strokes[-third:])),
             ended_at=now,
@@ -645,7 +696,7 @@ class IntervalCoach:
         ratio = back_share(curve) / (self.steady_back_share() or 1)
         steady_len = self.steady_length() or 1
         short_by_pct = (steady_len - statistics.fmean(s.stroke_length_cm for s in window)) / steady_len * 100
-        return ratio, drive_lateness(curve, mean_curve(self.steady)), short_by_pct
+        return ratio, drive_lateness(curve, mean_curve(self.shape_strokes())), short_by_pct
 
     def _judge(self, previous: str | None, ratio: float, late: float, short_by_pct: float) -> str:
         """The cue for a window of strokes against a reference (with a little hysteresis)."""
@@ -801,7 +852,7 @@ class IntervalCoach:
                 "length_balance": round(length_balance(-short_by_pct, self.settings.cues), 2) if judged else None,
                 "curve": [round(v) for v in mean_curve(window)],
                 "stroke_curve": list(strokes[-1].force_n),  # the latest stroke, drawn live over steady
-                "steady_curve": [round(v) for v in mean_curve(self.steady)],
+                "steady_curve": [round(v) for v in mean_curve(self.shape_strokes())],
             }
         return out
 

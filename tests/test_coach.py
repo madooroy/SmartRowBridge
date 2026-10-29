@@ -237,6 +237,25 @@ class FtpReadOnceTest(unittest.TestCase):
 
 
 class IntensityTest(unittest.TestCase):
+    def test_effort_that_steps_up_is_split(self):
+        r = Rower(ftp=185)
+        r.row(80, 105)
+        r.row(50, 145)  # Moderate ...
+        r.row(20, 190)  # ... then Challenging
+        r.row(20, 105)
+        self.assertEqual([(s.intensity, s.strokes) for s in r.summaries[-1:]], [("Challenging", 20)])
+        self.assertEqual([s.intensity for s in r.coach.intervals], ["Moderate", "Challenging"])
+        self.assertAlmostEqual(r.coach.intervals[0].strokes, 50, delta=2)
+
+    def test_short_surge_stays_in_the_effort(self):
+        r = Rower(ftp=185)
+        r.row(80, 105)
+        r.row(30, 145)
+        r.row(8, 190)  # a short push: not a step
+        r.row(30, 145)
+        r.row(20, 105)
+        self.assertEqual([s.intensity for s in r.coach.intervals], ["Moderate"])
+
     def test_stray_pulls_before_a_pause_are_dropped(self):
         r = Rower()
         r.row(1, 60)
