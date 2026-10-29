@@ -167,10 +167,8 @@ class UploadsTest(unittest.TestCase):
         self.assertEqual(put[1], "/api/v1/activity/i777")
         body = json.loads(put[3])
         self.assertTrue(body["name"].endswith(" Row"))
-        self.assertEqual(len(body["description"].splitlines()), 2)  # short: the full report is on the web page
-        self.assertTrue(body["description"].startswith("Rowed using SmartRow\n"))
+        self.assertEqual(body["description"], "Rowed using SmartRow")  # the report goes to Strava
         self.assertNotIn("FTP", body["description"])
-        self.assertTrue(body["description"].splitlines()[1].startswith("Coach: "))
 
     def test_efforts_marked_as_the_only_intervals(self):
         self.set_up_intervals(when=time.time() - 86400)
@@ -289,7 +287,7 @@ class UploadsTest(unittest.TestCase):
                          ("abc123", "read,activity:write"))
         self.assertEqual(strava.code_from("  abc123 "), ("abc123", ""))
         self.assertEqual(strava.code_from(""), (None, ""))
-        self.assertIn("scope=read%2Cactivity%3Awrite", strava.authorize_url("123"))
+        self.assertIn("scope=read%2Cactivity%3Aread_all%2Cactivity%3Awrite", strava.authorize_url("123"))
         self.assertIn("redirect_uri=http%3A%2F%2Flocalhost%2Fexchange_token", strava.authorize_url("123"))
 
     # ------------------------------------------------------------ when sessions are sent
@@ -463,7 +461,7 @@ class UploadsTest(unittest.TestCase):
             self.assertIn("intervals.icu activity i777: description updated", out.getvalue())
             self.assertIn("Strava activity 31337: description and type updated", out.getvalue())
             puts = {r[1].split("?")[0]: json.loads(r[3]) for r in self.fake.requests if r[0] == "PUT"}
-            self.assertEqual(len(puts["/api/v1/activity/i777"]["description"].splitlines()), 2)
+            self.assertEqual(puts["/api/v1/activity/i777"]["description"], "Rowed using SmartRow")
             self.assertIn("What the coach saw:", puts["/api/v3/activities/31337"]["description"])
             self.assertEqual(puts["/api/v3/activities/31337"]["sport_type"], "Rowing")
         finally:

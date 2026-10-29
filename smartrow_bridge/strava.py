@@ -45,7 +45,9 @@ AUTHORIZE_URL = "https://www.strava.com/oauth/authorize"
 TOKEN_URL = "https://www.strava.com/oauth/token"
 API = "https://www.strava.com/api/v3"
 REDIRECT_URI = "http://localhost/exchange_token"
-SCOPE = "read,activity:write"
+# activity:write to upload; activity:read_all too, as without it Strava answers 404 ("Record Not
+# Found") when the uploaded activity's type or description is set afterwards.
+SCOPE = "read,activity:read_all,activity:write"
 REFRESH_MARGIN_S = 300  # renew a token this long before it expires
 POLL_S = 2.0
 POLL_TRIES = 20
@@ -212,6 +214,9 @@ def setup(path: str) -> int:
         print('Strava gave no permission to upload: tick "Upload your activities" when authorizing.',
               file=sys.stderr)
         return 1
+    if scope and "activity:read_all" not in scope:
+        print('Note: without "View data about your private activities" ticked, the activity type and the '
+              "coach's description can't be set after an upload.", file=sys.stderr)
     try:
         answer = exchange_code(client_id, client_secret, code)
     except Exception as exc:  # noqa: BLE001

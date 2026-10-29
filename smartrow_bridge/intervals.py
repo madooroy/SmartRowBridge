@@ -198,9 +198,10 @@ def coach_line(record: dict) -> str:
 
 
 def summary_text(record: dict) -> str:
-    """The intervals.icu activity's description: short, as it shows on the calendar ("Rowed using
-    SmartRow" and one line from the coach)."""
-    return f"Rowed using SmartRow\n{coach_line(record)}"
+    """The intervals.icu activity's description: just "Rowed using SmartRow", so the calendar shows
+    "Evening Row ~ Rowed using SmartRow", as for the SmartRow app's own activities. The efforts are
+    its intervals; the coach's report goes to Strava (full_text) and the bridge's web page."""
+    return "Rowed using SmartRow"
 
 
 def full_text(record: dict) -> str:

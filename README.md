@@ -538,8 +538,8 @@ showing, so you can see what it would have told you, and pick settings, before r
 With the [interval coach](#optional-interval-coach-experimental) on, the bridge can upload each session
 itself, so the SmartRow app's own Strava link is no longer needed:
 
-- **intervals.icu:** the session as an activity, named like "Morning Row", with the coach's summary as its
-  description. Its intervals are the coach's efforts only (Moderate and harder), set through the API after
+- **intervals.icu:** the session as an activity, named like "Morning Row", with "Rowed using SmartRow" as its
+  description (so the calendar reads "Morning Row ~ Rowed using SmartRow"). Its intervals are the coach's efforts only (Moderate and harder), set through the API after
   the upload, so the Easy and Recovery rowing between them doesn't clutter the activity; leave intervals.icu's
   *Use laps for intervals* (Sport Settings, Rowing) off, or a later re-analysis puts every lap back. The
   files (FIT here, TCX to Strava, and so on to TrainerRoad) have a lap for each effort and one for the rowing
@@ -555,12 +555,15 @@ itself, so the SmartRow app's own Strava link is no longer needed:
   Activities that come from Strava can't be changed through the intervals.icu API (Strava's terms), which
   is why the bridge uploads its own copy. `SRB_INTERVALS_UPLOAD=note` puts the summary on that day of your
   calendar as a note instead.
-- **Strava:** the same activity, type Rowing (indoor), with the coach's summary as its description. This
+- **Strava:** the same activity, type Rowing (indoor), with the coach's full report as its description. This
   needs your own Strava API application, which Strava offers to every account with a subscription; it
   stays in "single-player mode" (only your account can use it).
   Strava gets it as a TCX file naming no device, like the SmartRow app's own uploads. Strava doesn't
   show the name of a personal API application on the activity, so the description starts with
-  "Rowed using SmartRow" instead.
+  "Rowed using SmartRow" instead. When authorizing, leave every box ticked: setting the type and the
+  description after the upload needs "View data about your private activities" as well as "Upload".
+  To rewrite activities already uploaded (after a coach update):
+  `sudo /opt/smartrow-bridge/venv/bin/python -m smartrow_bridge.uploads --update SESSION`.
 
 ```bash
 sudo bash ~/smartrow-bridge/tools/setup_intervals.sh     # your intervals.icu API key (Settings, Developer settings)
