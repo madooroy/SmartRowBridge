@@ -138,6 +138,21 @@ class StravaAccount:
     def _auth(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.token()}"}
 
+    def _set_type(self, activity_id, sport_type: str, poll_s: float) -> None:
+        """Set the new activity's type, waiting a little while Strava still says it isn't there."""
+        for attempt in range(SET_TYPE_TRIES):
+            try:
+                webapi.request("PUT", f"{API}/activities/{activity_id}", self._auth(),
+                               json_body={"sport_type": sport_type})
+                return
+            except Exception as exc:  # noqa: BLE001 - the activity is there; only its type is off
+                if _is_not_found(exc) and attempt + 1 < SET_TYPE_TRIES:
+                    time.sleep(poll_s * (attempt + 1))
+                    continue
+                log.warning("Strava activity %s uploaded, but its type wasn't set to %s: %s",
+                            activity_id, sport_type, describe_error(exc))
+                return
+
     def athlete_name(self) -> str:
         me = webapi.request("GET", f"{API}/athlete", self._auth())
         return " ".join(x for x in (me.get("firstname"), me.get("lastname")) if x) or str(me.get("id", "?"))
@@ -153,12 +168,7 @@ class StravaAccount:
             if status.get("activity_id"):
                 activity_id = status["activity_id"]
                 if sport_type and (data_type != "fit" or sport_type != "Rowing"):  # the upload can't set it
-                    try:
-                        webapi.request("PUT", f"{API}/activities/{activity_id}", self._auth(),
-                                       json_body={"sport_type": sport_type})
-                    except Exception as exc:  # noqa: BLE001 - the activity is there; only its type is off
-                        log.warning("Strava activity %s uploaded, but its type wasn't set to %s: %s",
-                                    activity_id, sport_type, describe_error(exc))
+                    self._set_type(activity_id, sport_type, poll_s)
                 return {"activity_id": activity_id}
             error = status.get("error")
             if error:
@@ -168,6 +178,13 @@ class StravaAccount:
             time.sleep(poll_s)
             status = webapi.request("GET", f"{API}/uploads/{status['id']}", self._auth())
         raise RuntimeError("Strava is still processing the upload; trying again later")
+
+
+SET_TYPE_TRIES = 5  # just after an upload Strava can still answer 404 for the new activity
+
+
+def _is_not_found(exc: BaseException) -> bool:
+    return isinstance(exc, urllib.error.HTTPError) and exc.code == 404
 
 
 def setup(path: str) -> int:

@@ -27,6 +27,7 @@ class FakeServices:
         self.requests = []
         self.fail = None  # (path prefix, HTTP status)
         self.strava_duplicate = False
+        self.activity_404s = 0  # Strava: answer 404 to this many activity updates first
         self.polls = 0
         fake = self
 
@@ -63,6 +64,9 @@ class FakeServices:
                 if p == "/oauth/token":
                     return self._answer(200, {"access_token": "fresh-token", "refresh_token": "new-refresh",
                                               "expires_at": int(time.time()) + 21600})
+                if p.startswith("/api/v3/activities/") and fake.activity_404s > 0:
+                    fake.activity_404s -= 1
+                    return self._answer(404, {"message": "Record Not Found", "errors": []})
                 if p.startswith("/api/v3/activities/"):
                     return self._answer(200, {"id": 31337})
                 if p == "/api/v3/athlete":
@@ -263,6 +267,13 @@ class UploadsTest(unittest.TestCase):
         self.assertIn(b'filename="e.tcx"', upload[3])
         put = [r for r in self.fake.requests if r[0] == "PUT"]
         self.assertEqual(json.loads(put[0][3]), {"sport_type": "Rowing"})
+
+    def test_strava_type_set_once_the_activity_is_there(self):
+        self.set_up_strava(expires_at=int(time.time()) + 9999)
+        self.fake.activity_404s = 2  # just uploaded: not found yet
+        strava.StravaAccount(str(self.strava_file)).upload(b"<x/>", "e", "n", "d", poll_s=0.01)
+        put = [r for r in self.fake.requests if r[0] == "PUT"]
+        self.assertEqual(len(put), 3)
 
     def test_strava_duplicate_counts_as_done(self):
         self.set_up_strava(expires_at=int(time.time()) + 9999)
