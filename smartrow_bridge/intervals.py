@@ -181,7 +181,8 @@ def coach_line(record: dict) -> str:
             kinds.append(f"{n} {k}")
     watts = [round(i["power_w"]) for i in efforts]
     span = f"{min(watts)} W" if min(watts) == max(watts) else f"{min(watts)}\u2013{max(watts)} W"
-    head = f"Coach: {' and '.join(kinds)} effort{'s' if len(efforts) > 1 else ''} ({span})"
+    listed = kinds[0] if len(kinds) == 1 else ", ".join(kinds[:-1]) + " and " + kinds[-1]
+    head = f"Coach: {listed} effort{'s' if len(efforts) > 1 else ''} ({span})"
     eased = [i for i in efforts if i.get("rating") in ("ok", "short")]
     shorter = [i for i in efforts if i.get("length_delta_cm", 0) <= SHORTER_CM]
     notes = []

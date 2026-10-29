@@ -198,6 +198,9 @@ class UploadsTest(unittest.TestCase):
         self.assertEqual(intervals.coach_line({"intervals": [e(1, 140)]}),
                          "Coach: 1 Moderate effort (140 W); it kept its shape.")
         self.assertEqual(intervals.coach_line({"intervals": []}), "Coach: Easy rowing, no efforts.")
+        mixed = [e(1, 146), {**e(2, 196), "intensity": "Challenging"}, {**e(3, 309), "intensity": "Max"}]
+        self.assertTrue(intervals.coach_line({"intervals": mixed}).startswith(
+            "Coach: 1 Moderate, 1 Challenging and 1 Max efforts (146\u2013309 W)"))
 
     def test_effort_line(self):
         i = {"index": 3, "intensity": "Moderate", "duration_s": 56, "power_w": 132, "rating": "ok",
