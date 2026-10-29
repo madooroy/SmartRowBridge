@@ -197,7 +197,7 @@ class FtpTest(unittest.TestCase):
             r.row(30, 105)
             self.assertEqual(len(r.summaries), found, ftp)
         self.assertEqual(r.summaries[0].as_dict()["ftp_pct"], 78)
-        self.assertIn("Efforts: 1 Moderate at 78% of FTP.", coach.findings([{**r.summaries[0].as_dict(), "started_at_s": 0}]))
+        self.assertIn("Efforts: 1 Moderate (145 W).", coach.findings([{**r.summaries[0].as_dict(), "started_at_s": 0}]))
 
     def test_warmup_below_the_floor_is_not_an_effort(self):
         r = Rower(ftp=185)
@@ -237,6 +237,12 @@ class FtpReadOnceTest(unittest.TestCase):
 
 
 class IntensityTest(unittest.TestCase):
+    def test_bands_in_watts(self):
+        self.assertEqual(coach.bands_text(185, None), "Recovery under 81 W, Easy 81\u2013124 W, "
+                         "Moderate 124\u2013165 W, Challenging 165\u2013209 W, Max over 209 W")
+        self.assertTrue(coach.bands_text(None, 100).startswith("Recovery under 80 W, Easy 80\u2013122 W"))
+        self.assertEqual(coach.bands_text(None, None), "")
+
     def test_labels_by_percent_of_ftp(self):
         c = IntervalCoach(ftp=185)
         for watts, label in ((70, "Recovery"), (100, "Easy"), (145, "Moderate"), (185, "Challenging"),

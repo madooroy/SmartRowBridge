@@ -34,7 +34,7 @@ class FindingsTest(unittest.TestCase):
         summary = saturday().coach.session_summary()
         self.assertEqual(len(summary["intervals"]), 4)
         text = " ".join(summary["findings"])
-        self.assertIn("2 of 4 kept their shape and length (I1 and I2)", text)
+        self.assertIn("2 of 4 efforts kept their shape and length (I1 and I2)", text)
         self.assertIn("Strokes were shorter than Easy in I3 and I4", text)
         self.assertNotIn("finish faded", text)  # shorter strokes are not a fading finish
         self.assertIn("were the longer efforts", text)
@@ -69,7 +69,7 @@ class FindingsTest(unittest.TestCase):
         self.assertNotIn("leg drive", text.lower())  # describes the curve, not muscles
         self.assertIn("I1 faded within itself: finish −9%", text)
         self.assertIn("Easy pace went from 100 W to 120 W", text)
-        self.assertIn("1 of 2 kept their shape and length (I2)", text)  # late legs don't count as kept
+        self.assertIn("1 of 2 efforts kept their shape and length (I2)", text)  # late legs don't count as kept
 
 
 class RecorderTest(unittest.TestCase):

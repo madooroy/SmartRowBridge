@@ -165,6 +165,8 @@ class UploadsTest(unittest.TestCase):
         self.assertTrue(body["name"].endswith(" Row"))
         self.assertIn("What the coach saw:", body["description"])
         self.assertTrue(body["description"].startswith("Rowed using SmartRow\n"))
+        self.assertNotIn("FTP", body["description"])
+        self.assertIn("Intensities, set from Easy rowing at", body["description"])
 
     def test_efforts_marked_as_the_only_intervals(self):
         self.set_up_intervals(when=time.time() - 86400)

@@ -498,8 +498,8 @@ anything longer than 5 minutes as a new Easy pace (otherwise a warm-up ramping i
 for one long effort), which cuts off longer efforts. With your rowing FTP, an effort is anything Moderate or
 harder (67 % of FTP and up), with **no time limit**: it lasts until you drop back to Recovery or Easy. On a 45-minute
 class (FTP 185 W: Easy rowing 98-109 W, efforts 130-150 W, the last one 6 minutes) this found all eight
-efforts, where without an FTP the six-minute one was taken for a new Easy pace. The summary then gives each
-effort's label and % of FTP, and the uploaded activity marks the efforts as its work intervals. The FTP comes from intervals.icu by itself (your rowing
+efforts, where without an FTP the six-minute one was taken for a new Easy pace. The summary then lists the
+intensity ranges in watts and each effort's label (no FTP: rowing doesn't really have one), and the uploaded activity marks the efforts as its work intervals. The FTP comes from intervals.icu by itself (your rowing
 sport settings), read once each time the bridge starts (so after changing it there, restart the Pi or
 `sudo systemctl restart smartrow-bridge`), or set `SRB_COACH_FTP`. To check what intervals.icu has:
 `sudo /opt/smartrow-bridge/venv/bin/python -m smartrow_bridge.intervals --test`.

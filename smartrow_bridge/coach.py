@@ -91,6 +91,26 @@ PEAK_SPREAD_RATIO, PEAK_SPREAD_MIN = 1.5, 3.0  # peak spread flagged above both:
 INTENSITIES = ("Recovery", "Easy", "Moderate", "Challenging", "Max")
 FTP_BOUNDS_PCT = (44.0, 67.0, 89.0, 113.0)
 EASY_BOUNDS = tuple(round(b / 55.0, 2) for b in FTP_BOUNDS_PCT)  # 0.80, 1.22, 1.62, 2.05
+
+
+def intensity_bands(ftp: float | None, easy_w: float | None) -> list[tuple[str, int | None, int | None]]:
+    """(label, from W, to W) for each intensity: from the FTP (Challenging's middle) or Easy power."""
+    if ftp:
+        cuts = [round(ftp * b / 100) for b in FTP_BOUNDS_PCT]
+    elif easy_w:
+        cuts = [round(easy_w * b) for b in EASY_BOUNDS]
+    else:
+        return []
+    return list(zip(INTENSITIES, [None, *cuts], [*cuts, None]))
+
+
+def bands_text(ftp: float | None, easy_w: float | None) -> str:
+    """'Recovery under 81 W, Easy 81-124 W, ..., Max over 209 W' (empty without either)."""
+    parts = []
+    for label, lo, hi in intensity_bands(ftp, easy_w):
+        parts.append(f"{label} under {hi} W" if lo is None else f"{label} over {lo} W" if hi is None
+                     else f"{label} {lo}\u2013{hi} W")
+    return ", ".join(parts)
 SHORTER_CM = -2.0  # an interval's strokes this much shorter than steady are called out
 SUMMARY_SHOW_S = 45.0  # how long the summary is shown after an effort
 
@@ -333,8 +353,7 @@ class IntervalSummary:
 
     def log_line(self) -> str:
         m, s = divmod(round(self.duration_s), 60)
-        label = f" {self.intensity}" + (f" ({round(self.power_w * 100 / self.ftp)}% FTP)" if self.ftp else "") \
-            if self.intensity else ""
+        label = f" {self.intensity}" if self.intensity else ""
         return (f"Interval {self.index}: {m}:{s:02d}, {self.strokes} strokes, {self.power_w:.0f} W{label}, "
                 f"{self.stroke_rate_spm:.1f} spm, length {self.length_cm:.0f} cm ({self.length_delta_cm:+.0f}), "
                 f"peak {self.peak_n:.0f} N at {self.peak_at_pct:.0f}% \u00b1{self.peak_spread_pct:.1f} "
@@ -732,10 +751,21 @@ def findings(intervals: list[dict]) -> list[str]:
     ok = [i for i in intervals if i["rating"] == "ok"]
     n = len(intervals)
 
+    kinds = [k for k in INTENSITIES if any(i.get("intensity") == k for i in intervals)]
+    if kinds:
+        parts = []
+        for k in kinds:
+            these = [i for i in intervals if i.get("intensity") == k]
+            watts = [round(i["power_w"]) for i in these if i.get("power_w")]
+            span = "" if not watts else f" ({min(watts)} W)" if min(watts) == max(watts) \
+                else f" ({min(watts)}\u2013{max(watts)} W)"
+            parts.append(f"{len(these)} {k}{span}")
+        out.append("Efforts: " + ", ".join(parts) + ".")
+
     if len(good) == n:
         out.append(f"All {n} efforts kept their shape and length: finish within 5% of Easy.")
     elif good:
-        out.append(f"{len(good)} of {n} kept their shape and length ({_names(good)}).")
+        out.append(f"{len(good)} of {n} efforts kept their shape and length ({_names(good)}).")
     if faded:
         lo, hi = min(i["finish_pct"] for i in faded), max(i["finish_pct"] for i in faded)
         span = _pct(lo) if lo == hi else f"{_pct(hi)} to {_pct(lo)}"
@@ -774,16 +804,6 @@ def findings(intervals: list[dict]) -> list[str]:
         out.append(f"The force peak landed less consistently from stroke to stroke in {_names(wander)} "
                    f"({spreads} of the drive, against \u00b1{steady_spread:.0f}% in Easy rowing).")
 
-    kinds = [k for k in INTENSITIES if any(i.get("intensity") == k for i in intervals)]
-    if kinds:
-        parts = []
-        for k in kinds:
-            these = [i for i in intervals if i.get("intensity") == k]
-            pcts = [i["ftp_pct"] for i in these if i.get("ftp_pct")]
-            span = (f" at {min(pcts)}%" if min(pcts) == max(pcts) else f" at {min(pcts)}\u2013{max(pcts)}%") \
-                + " of FTP" if pcts else ""
-            parts.append(f"{len(these)} {k}{span}")
-        out.append("Efforts: " + "; ".join(parts) + ".")
 
     steady = [i["steady_power_w"] for i in intervals if i.get("steady_power_w")]
     if len(steady) >= 2 and min(steady):

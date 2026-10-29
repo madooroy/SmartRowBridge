@@ -40,6 +40,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import sessions, webapi
+from .coach import bands_text
 
 log = logging.getLogger(__name__)
 
@@ -116,12 +117,15 @@ def note_for(record: dict) -> dict:
         title += f", {faded} faded" if faded else ", all kept their shape"
     lines = ["Rowed using SmartRow", "",
              f"Rowed at {started.strftime('%H:%M')}: {record.get('avg_power_w', 0)} W average, "
-             f"Easy {record.get('steady_power_w', 0)} W, {record.get('strokes', 0)} strokes."]
-    if record.get("ftp"):
-        lines[-1] += f" FTP {record['ftp']} W."
+             f"Easy rowing {record.get('steady_power_w', 0)} W, {record.get('strokes', 0)} strokes."]
     hr = record.get("heart_rate")
     if hr:
         lines[-1] += f" Heart rate {hr['avg']} average, {hr['max']} max."
+    bands = bands_text(record.get("ftp"), record.get("steady_power_w"))
+    if bands and intervals:
+        source = (f"set from Challenging at {round(record['ftp'])} W" if record.get("ftp")
+                  else f"set from Easy rowing at {record.get('steady_power_w')} W")
+        lines += ["", f"Intensities, {source}: {bands}."]
     lines += ["", "What the coach saw:"] + [f"- {f}" for f in record.get("findings", [])]
     if intervals:
         lines += ["", "Efforts (finish = force in the back half of the drive against Easy; peak = where in "
@@ -132,8 +136,6 @@ def note_for(record: dict) -> dict:
                    f"finish {_signed(i['finish_pct'])}%  length {_signed(round(i['length_delta_cm']))} cm")
             if "peak_at_pct" in i:
                 row += f"  peak {i['peak_at_pct']}% \u00b1{round(i['peak_spread_pct'])}"
-            if i.get("ftp_pct"):
-                row += f"  {i['ftp_pct']}% FTP"
             if i.get("hr_peak"):
                 row += f"  HR peak {i['hr_peak']}"
             if i.get("legs_late"):
