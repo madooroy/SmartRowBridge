@@ -163,10 +163,10 @@ class UploadsTest(unittest.TestCase):
         self.assertEqual(put[1], "/api/v1/activity/i777")
         body = json.loads(put[3])
         self.assertTrue(body["name"].endswith(" Row"))
-        self.assertIn("What the coach saw:", body["description"])
+        self.assertEqual(len(body["description"].splitlines()), 2)  # short: the full report is on the web page
         self.assertTrue(body["description"].startswith("Rowed using SmartRow\n"))
         self.assertNotIn("FTP", body["description"])
-        self.assertIn("Intensities, set from Easy rowing at", body["description"])
+        self.assertTrue(body["description"].splitlines()[1].startswith("Coach: "))
 
     def test_efforts_marked_as_the_only_intervals(self):
         self.set_up_intervals(when=time.time() - 86400)
@@ -183,6 +183,17 @@ class UploadsTest(unittest.TestCase):
             self.assertEqual(mark["label"], iv["intensity"])
             self.assertAlmostEqual(5 + mark["start_index"], iv["started_at_s"] + offset, delta=1)
             self.assertAlmostEqual(mark["end_index"] - mark["start_index"], iv["duration_s"], delta=1.5)
+
+    def test_coach_line(self):
+        e = lambda n, w, r="good", cm=1: {"index": n, "intensity": "Moderate", "power_w": w, "rating": r,
+                                          "length_delta_cm": cm}
+        self.assertEqual(intervals.coach_line({"intervals": [e(1, 147, "ok"), e(2, 145, "ok"), e(3, 156, "ok")]}),
+                         "Coach: 3 Moderate efforts (145\u2013156 W); the finish eased in all three.")
+        self.assertEqual(intervals.coach_line({"intervals": [e(1, 140), e(2, 132, "ok", -4)]}),
+                         "Coach: 2 Moderate efforts (132\u2013140 W); the finish eased in I2; strokes were shorter in I2.")
+        self.assertEqual(intervals.coach_line({"intervals": [e(1, 140)]}),
+                         "Coach: 1 Moderate effort (140 W); it kept its shape.")
+        self.assertEqual(intervals.coach_line({"intervals": []}), "Coach: Easy rowing, no efforts.")
 
     def test_effort_line(self):
         i = {"index": 3, "intensity": "Moderate", "duration_s": 56, "power_w": 132, "rating": "ok",

@@ -138,7 +138,9 @@ def build(record: dict, strokes: list[dict]) -> bytes:
         t = t0 + s["t"]
         r.timestamp = _ms(t)
         r.distance = float(max(0, s["distance_m"] - offset))
-        if prev_t is not None and t > prev_t:
+        if s["power_w"] > 0:  # the pulley's own pace, as power (Concept2: W = 2.8 / (s/m)^3)
+            r.speed = (s["power_w"] / 2.8) ** (1 / 3)
+        elif prev_t is not None and t > prev_t:
             r.speed = max(0.0, (s["distance_m"] - prev_d) / (t - prev_t))
         r.power = round(s["power_w"])
         r.cadence = round(s["spm"])

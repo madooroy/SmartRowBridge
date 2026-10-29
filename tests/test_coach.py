@@ -237,6 +237,14 @@ class FtpReadOnceTest(unittest.TestCase):
 
 
 class IntensityTest(unittest.TestCase):
+    def test_stray_pulls_before_a_pause_are_dropped(self):
+        r = Rower()
+        r.row(1, 60)
+        r.t += 100  # setting up: a pull on the handle, then the class starts
+        r.row(5, 105)
+        self.assertEqual(r.coach.strokes_total, 5)
+        self.assertAlmostEqual(r.coach.first_time, r.t - 4 * PERIOD)
+
     def test_bands_in_watts(self):
         self.assertEqual(coach.bands_text(185, None), "Recovery under 81 W, Easy 81\u2013124 W, "
                          "Moderate 124\u2013165 W, Challenging 165\u2013209 W, Max over 209 W")

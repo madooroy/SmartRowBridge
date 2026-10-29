@@ -165,9 +165,39 @@ def activity_name(record: dict) -> str:
     return f"{part} Row"
 
 
+def _count(n: int) -> str:
+    return {1: "one", 2: "both", 3: "all three"}.get(n, f"all {n}")
+
+
+def coach_line(record: dict) -> str:
+    """One line on what the coach saw: 'Coach: 3 Moderate efforts (145-156 W); the finish eased in all three.'"""
+    efforts = record.get("intervals") or []
+    if not efforts:
+        return "Coach: Easy rowing, no efforts."
+    kinds = []
+    for k in ("Moderate", "Challenging", "Max"):
+        n = sum(1 for i in efforts if (i.get("intensity") or "Moderate") == k)
+        if n:
+            kinds.append(f"{n} {k}")
+    watts = [round(i["power_w"]) for i in efforts]
+    span = f"{min(watts)} W" if min(watts) == max(watts) else f"{min(watts)}\u2013{max(watts)} W"
+    head = f"Coach: {' and '.join(kinds)} effort{'s' if len(efforts) > 1 else ''} ({span})"
+    eased = [i for i in efforts if i.get("rating") in ("ok", "short")]
+    shorter = [i for i in efforts if i.get("length_delta_cm", 0) <= SHORTER_CM]
+    notes = []
+    for label, these in (("the finish eased", eased), ("strokes were shorter", shorter)):
+        if these:
+            where = (_count(len(these)) if len(these) == len(efforts) and len(efforts) <= 3 else
+                     ", ".join(f"I{i['index']}" for i in these))
+            notes.append(f"{label} in {where}")
+    kept = "it kept its shape" if len(efforts) == 1 else "all kept their shape"
+    return head + ("; " + "; ".join(notes) if notes else f"; {kept}") + "."
+
+
 def summary_text(record: dict) -> str:
-    """The coach's summary as plain text: the description of an uploaded activity."""
-    return note_for(record)["description"]
+    """The description of an uploaded activity: short, as the SmartRow app's ("Rowed using SmartRow")
+    plus one line from the coach. The full report is on the bridge's web page (and in a note)."""
+    return f"Rowed using SmartRow\n{coach_line(record)}"
 
 
 def send_note(record: dict, key: str) -> dict:

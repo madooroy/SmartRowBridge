@@ -75,6 +75,7 @@ RECOVERY_STROKES = 12  # after an effort, not used for the steady reference
 EASY_RATIO = 0.80  # strokes this far below steady (easy paddling) are ignored too
 GAP_S = 10.0  # no stroke for this long ends an effort
 NEW_SESSION_S = 300.0  # no stroke for this long starts over
+LEAD_GAP_S, LEAD_STROKES = 30.0, 10  # a few pulls, then a pause this long: the row starts after it
 
 # The fresh Easy stroke: Easy strokes from FRESH_FROM_S to FRESH_TO_S into the row (after the
 # warm-up, whose strokes are shorter, before fatigue; efforts, Recovery and the strokes just after
@@ -480,8 +481,9 @@ class IntervalCoach:
         finished = None
         if self.last_time is not None:
             gap = s.time - self.last_time
-            if gap > NEW_SESSION_S or s.stroke_count < self.last_count:
-                self.reset()
+            if gap > NEW_SESSION_S or s.stroke_count < self.last_count or \
+                    (gap > LEAD_GAP_S and self.strokes_total < LEAD_STROKES):
+                self.reset()  # (a stray pull or two while setting up is not the start of the row)
             elif gap > GAP_S:
                 finished = self._finish(self.last_time)
                 self.recent.clear()
