@@ -153,6 +153,11 @@ class StravaAccount:
                             activity_id, sport_type, describe_error(exc))
                 return
 
+    def update(self, activity_id, name: str, description: str, sport_type: str = "Rowing") -> None:
+        """Rewrite an activity already on Strava: name, description and type."""
+        webapi.request("PUT", f"{API}/activities/{activity_id}", self._auth(),
+                       json_body={"name": name, "description": description, "sport_type": sport_type})
+
     def athlete_name(self) -> str:
         me = webapi.request("GET", f"{API}/athlete", self._auth())
         return " ".join(x for x in (me.get("firstname"), me.get("lastname")) if x) or str(me.get("id", "?"))

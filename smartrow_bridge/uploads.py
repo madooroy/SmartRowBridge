@@ -362,6 +362,38 @@ def _status(settings: Settings) -> int:
     return 0
 
 
+def _update(settings: Settings, session: str, intervals_id: str | None, strava_id: str | None) -> int:
+    """Rewrite activities already uploaded, from the session's record as it is now."""
+    record = sessions.read_session(settings.session_dir, session)
+    if record is None:
+        print(f"No saved session {session} in {settings.session_dir}", file=sys.stderr)
+        return 1
+    strokes = sessions.read_strokes(settings.session_dir, session)
+    intervals_id = intervals_id or (_mark(record, "intervals_activity") or {}).get("activity_id")
+    strava_id = strava_id or (_mark(record, "strava") or {}).get("activity_id")
+    if not intervals_id and not strava_id:
+        print("No activity to update: give --intervals-id and/or --strava-id.", file=sys.stderr)
+        return 1
+    status = 0
+    if intervals_id:
+        try:
+            n = intervals.update_activity(intervals_id, record, strokes,
+                                          intervals.read_key(settings.intervals_key_file))
+            print(f"intervals.icu activity {intervals_id}: description updated, {n} efforts marked")
+        except Exception as exc:  # noqa: BLE001
+            print(f"intervals.icu: {intervals.describe_error(exc)}", file=sys.stderr)
+            status = 1
+    if strava_id:
+        try:
+            strava.StravaAccount(settings.strava_file).update(
+                strava_id, intervals.activity_name(record), intervals.full_text(record), settings.strava_sport_type)
+            print(f"Strava activity {strava_id}: description and type updated")
+        except Exception as exc:  # noqa: BLE001
+            print(f"Strava: {strava.describe_error(exc)}", file=sys.stderr)
+            status = 1
+    return status
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="smartrow-uploads", description=__doc__.splitlines()[0])
     group = p.add_mutually_exclusive_group(required=True)
@@ -369,12 +401,19 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--send", metavar="ID", help="send a saved session now, to every set-up destination")
     group.add_argument("--fit", nargs=2, metavar=("ID", "OUT"), help="write a session's FIT file (intervals.icu's)")
     group.add_argument("--tcx", nargs=2, metavar=("ID", "OUT"), help="write a session's TCX file (Strava's)")
+    group.add_argument("--update", metavar="ID", help="rewrite the activities a session was sent as (description, "
+                       "intervals) from the session as it is now, without uploading again")
     p.add_argument("--to", choices=("intervals", "strava"), help="with --send: only this destination")
+    p.add_argument("--intervals-id", help="with --update: the intervals.icu activity (e.g. i203354284), "
+                   "if not the one the session was sent as")
+    p.add_argument("--strava-id", help="with --update: the Strava activity (the number in its address)")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     settings = Settings.from_env()
     if args.status:
         return _status(settings)
+    if args.update:
+        return _update(settings, args.update, args.intervals_id, args.strava_id)
     out_file = args.fit or args.tcx
     session = out_file[0] if out_file else args.send
     record = sessions.read_session(settings.session_dir, session)

@@ -283,6 +283,13 @@ def upload_activity(record: dict, fit: bytes, key: str, strokes: list[dict] | No
     return {"activity_id": activity_id}
 
 
+def update_activity(activity_id: str, record: dict, strokes: list[dict] | None, key: str) -> int:
+    """Rewrite an activity already on intervals.icu: name, description and the efforts as its
+    intervals. Returns how many efforts were marked."""
+    _request("PUT", f"/activity/{activity_id}", key, {"name": activity_name(record), "description": summary_text(record)})
+    return mark_efforts(activity_id, record, strokes, key) if strokes and record.get("intervals") else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="smartrow-intervals", description=__doc__.splitlines()[0])
     p.add_argument("--key-file", default=os.environ.get("SRB_INTERVALS_KEY_FILE", "").strip() or DEFAULT_KEY_FILE)

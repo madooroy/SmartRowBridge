@@ -455,6 +455,17 @@ class UploadsTest(unittest.TestCase):
             self.assertIn("Strava: sent", text)
             self.assertIn("already sent, not again", text)
             self.assertEqual(fit_path.read_bytes()[8:12], b".FIT")
+            # Rewrite them in place: intervals.icu short, Strava the full report.
+            self.fake.requests.clear()
+            out = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                self.assertEqual(uploads.main(["--update", record["id"], "--strava-id", "31337"]), 0)
+            self.assertIn("intervals.icu activity i777: description updated", out.getvalue())
+            self.assertIn("Strava activity 31337: description and type updated", out.getvalue())
+            puts = {r[1].split("?")[0]: json.loads(r[3]) for r in self.fake.requests if r[0] == "PUT"}
+            self.assertEqual(len(puts["/api/v1/activity/i777"]["description"].splitlines()), 2)
+            self.assertIn("What the coach saw:", puts["/api/v3/activities/31337"]["description"])
+            self.assertEqual(puts["/api/v3/activities/31337"]["sport_type"], "Rowing")
         finally:
             for k, v in old.items():
                 if v is None:
