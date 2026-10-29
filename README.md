@@ -518,7 +518,7 @@ sport settings), read once each time the bridge starts (so after changing it the
 | `SRB_COACH_FTP` | empty: from intervals.icu | Your rowing FTP in watts (the middle of Challenging). With it, intensities are labelled by % of FTP, and an effort is Moderate or harder (67 % and up) with no time limit. Empty: read from intervals.icu (Settings, Rowing, indoor FTP if set) each time the bridge starts, once [uploads](#optional-uploads-to-intervalsicu-and-strava) are set up; `off`: none |
 | `SRB_COACH_SENSITIVITY` | `normal` | How readily the cues speak up: `low`, `normal` or `high` |
 | `SRB_SESSION_DIR` | `/var/lib/smartrow-bridge/sessions` | Where session summaries are saved; `off` disables |
-| `SRB_HEART_RATE`, `SRB_HEART_RATE_TO_FITNESS` | `off`, `1` | [Heart rate strap](#optional-heart-rate-strap) read by the bridge, and whether it goes to the fitness app |
+| `SRB_HEART_RATE`, `SRB_HEART_RATE_TO_FITNESS` | `off`, `0` | [Heart rate strap](#optional-heart-rate-strap) read by the bridge, and whether it also goes to the fitness app (off: Peloton ignored the rowing data with it) |
 | `SRB_INTERVALS_KEY_FILE`, `SRB_INTERVALS_UPLOAD` | `/etc/smartrow-bridge/intervals.key`, `activity` | intervals.icu API key (`tools/setup_intervals.sh`); upload the session as an `activity`, a calendar `note`, or `off` |
 | `SRB_STRAVA_FILE`, `SRB_STRAVA_SPORT_TYPE` | `/etc/smartrow-bridge/strava.json`, `Rowing` | Strava authorization (`tools/setup_strava.sh`); activity type `Rowing` or `VirtualRow` |
 
@@ -607,8 +607,10 @@ the rowing data. Straps that take several connections at once can stay paired wi
 In `/etc/default/smartrow-bridge`, set `SRB_HEART_RATE` to `auto` (the first strap found advertising heart
 rate), part of the strap's name (`COROS`), or its MAC address (best where other people's straps are in range),
 then `sudo systemctl restart smartrow-bridge`. The strap is looked for once the pulley is connected, in short
-scans that leave the radio to the pulley in between; put it on to wake it. `SRB_HEART_RATE_TO_FITNESS=0`
-keeps it out of the fitness app's data, if the app is paired with the strap directly. `tools/health_check.sh`
+scans that leave the radio to the pulley in between; put it on to wake it. The heart rate stays out of
+the rowing data sent to the fitness app: with it in, Peloton showed only the heart rate and ignored pace,
+distance and stroke rate, so pair the strap with Peloton directly (the COROS takes three connections).
+`SRB_HEART_RATE_TO_FITNESS=1` puts it in, for an app that wants it there. `tools/health_check.sh`
 has a *Heart rate strap* section.
 
 ## Optional: a web page for phones and tablets

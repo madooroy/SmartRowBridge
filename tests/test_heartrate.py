@@ -52,9 +52,9 @@ class FitnessAppTest(unittest.TestCase):
 
     def test_settings(self):
         cfg = config.parse([])
-        self.assertEqual((cfg.heart_rate, cfg.heart_rate_to_fitness), ("off", True))
-        cfg = config.parse(["--heart-rate", "COROS", "--no-heart-rate-to-fitness"])
-        self.assertEqual((cfg.heart_rate, cfg.heart_rate_to_fitness), ("COROS", False))
+        self.assertEqual((cfg.heart_rate, cfg.heart_rate_to_fitness), ("off", False))  # Peloton: off
+        cfg = config.parse(["--heart-rate", "COROS", "--heart-rate-to-fitness"])
+        self.assertEqual((cfg.heart_rate, cfg.heart_rate_to_fitness), ("COROS", True))
 
     def test_status_carries_strap(self):
         s = status.build(status.CONNECTED, None, False, False, None, "PiRower", RowingMetrics(heart_rate_bpm=99),

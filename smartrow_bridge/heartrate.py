@@ -15,8 +15,9 @@ The strap shares the built-in radio with the pulley. To keep the pulley first:
   cancels it;
 - a lost strap is looked for again, the same way, until it comes back.
 
-The bridge uses the heart rate for the coach and its session summaries, and passes it
-to the fitness app in the FTMS Rower Data (SRB_HEART_RATE_TO_FITNESS).
+The bridge uses the heart rate for the coach and its session summaries. It can also pass it
+to the fitness app in the FTMS Rower Data (SRB_HEART_RATE_TO_FITNESS=1), but doesn't by
+default: Peloton ignored the rowing data once it carried heart rate.
 """
 
 from __future__ import annotations

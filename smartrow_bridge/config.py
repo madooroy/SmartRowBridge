@@ -109,9 +109,13 @@ def parse(argv: list[str] | None = None) -> Config:
     p.add_argument("--heart-rate", default=_env("SRB_HEART_RATE", "off"),
                    help="heart rate strap for the bridge: off, auto (first strap found), a MAC address, "
                         "or part of its name such as COROS")
-    p.add_argument("--no-heart-rate-to-fitness", dest="heart_rate_to_fitness", action="store_false",
-                   default=_env("SRB_HEART_RATE_TO_FITNESS", "1") not in ("0", "false", "no"),
-                   help="don't pass the strap's heart rate on to the fitness app")
+    # Off by default: Peloton ignored the rowing data once it carried heart rate (Oct 29, 2026);
+    # pair the strap with the fitness app directly instead.
+    p.add_argument("--heart-rate-to-fitness", dest="heart_rate_to_fitness", action="store_true",
+                   default=_env("SRB_HEART_RATE_TO_FITNESS", "0") in ("1", "true", "yes"),
+                   help="also pass the strap's heart rate on to the fitness app (off by default: Peloton "
+                        "then ignored the rowing data)")
+    p.add_argument("--no-heart-rate-to-fitness", dest="heart_rate_to_fitness", action="store_false")
     p.add_argument("--intervals-key-file", default=_env("SRB_INTERVALS_KEY_FILE", "/etc/smartrow-bridge/intervals.key"),
                    help="intervals.icu API key (tools/setup_intervals.sh); with it, sessions go to intervals.icu")
     p.add_argument("--intervals-upload", choices=("activity", "note", "off"),
