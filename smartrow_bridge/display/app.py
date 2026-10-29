@@ -10,6 +10,9 @@
   uploads it straight away (not FINAL_AFTER_S later); the screen shows each upload as it
   goes. Rowing again after that is a new session. Offered (the Y tab) once a session has
   MIN_SESSION_STROKES strokes.
+- Holding X for X_HOLD_S seconds (2): discard this session (a warm-up you don't want kept):
+  the bridge deletes its files, so it is neither kept nor uploaded, and starts over. A
+  quick tap of X still brings back or closes the interval summary (on release).
 - Holding A for SRB_DISPLAY_HOLD_S seconds (2) switches the Pi off; letting go
   earlier cancels. A only counts once it has been seen released: a button that reads
   as pressed from the start (stuck, shorted, HAT seated a row off) must never be able
@@ -29,9 +32,14 @@ from PIL import Image
 
 from . import screens
 
+RED_HOLD = screens.RED
+
 BACK_TO_STATUS_S = 60.0
 RECALL_S = 20.0  # X shows the last interval summary this long
 Y_HOLD_S = 1.0  # hold Y this long: done
+X_HOLD_S = 2.0  # hold X this long: discard the session
+X_TAP_S = 0.6  # X let go before this: a tap (the interval summary); longer shows the discard hold
+DISCARD_SHOW_S = 6.0
 MIN_SESSION_STROKES = 30  # as sessions.MIN_STROKES: fewer is not a session
 ACK_WAIT_S = 10.0  # the bridge answers a request within a second or two; don't wait longer than this
 FINISH_SHOW_S = 20.0  # the "Session finished" screen stays this long once its uploads are through
@@ -98,6 +106,9 @@ class Controller:
         self._y_since: float | None = None
         self.y_armed = False  # Y has been seen released since start (as A)
         self._finish: dict | None = None  # Y: {"token", "at", "settled_at"} while its screen shows
+        self._x_since: float | None = None
+        self.x_armed = False  # X has been seen released since start (as A)
+        self._discard: dict | None = None  # X held: {"token", "at"} while its screen shows
         self._off: dict | None = None  # A with uploads to go: {"token", "at", "closing_at", "a_up"}
 
     def _rowing_recently(self, now: float) -> bool:
@@ -113,12 +124,10 @@ class Controller:
             return self._manual
         return "rowing" if self._rowing_recently(now) else "status"
 
-    def _rowing_image(self, status: dict | None, now: float, uptime: float, x_down: bool) -> Image.Image:
+    def _rowing_image(self, status: dict | None, now: float, uptime: float, x_pressed: bool) -> Image.Image:
         """The plain rowing screen, or the interval coach's live or summary screen."""
         coach = (status or {}).get("coach") or {}
         last = coach.get("last")
-        x_pressed = x_down and not self._x_was_down
-        self._x_was_down = x_down
         if coach.get("live"):
             self._recall_until = -1e9
             self.screen = "interval"
@@ -228,6 +237,34 @@ class Controller:
             if frame is not None:
                 return frame
 
+        # X: a tap (on release) for the interval summary; held X_HOLD_S: discard the session.
+        x_down, x_tap = buttons.get("X", False), False
+        if not x_down:
+            if self._x_since is not None and self.x_armed and now - self._x_since < X_TAP_S:
+                x_tap = True
+            self.x_armed = True
+            self._x_since = None
+        elif self.x_armed and fresh:
+            self._x_since = now if self._x_since is None else self._x_since
+            held = now - self._x_since
+            if held >= X_HOLD_S:
+                self.x_armed, self._x_since = False, None
+                token = self._token(now)
+                self._discard = {"token": token, "at": now}
+                return Frame(screens.discard_screen(status, False), led, request={"action": "discard", "token": token})
+            if held >= X_TAP_S:
+                return Frame(screens.hold_screen((held - X_TAP_S) / (X_HOLD_S - X_TAP_S),
+                                                 "Keep holding: discard session", RED_HOLD), led)
+        self._x_was_down = x_down
+
+        if self._discard is not None:
+            if now - self._discard["at"] > DISCARD_SHOW_S or x_tap or (buttons.get("B") and not self._b_was_down):
+                self._discard = None
+                x_tap = False
+            else:
+                acked = ((status or {}).get("finish") or {}).get("token") == self._discard["token"]
+                return Frame(screens.discard_screen(status, acked), led)
+
         b_down = buttons.get("B", False)
         if b_down and not self._b_was_down:
             self._manual = "status" if self.view == "rowing" else "rowing"
@@ -255,9 +292,13 @@ class Controller:
         self._a_since = None
 
         if self.view == "rowing":
-            image = self._rowing_image(status, now, uptime, buttons.get("X", False) if fresh else False)
+            image = self._rowing_image(status, now, uptime, x_tap and fresh)
             if fresh and self.screen != "summary" and _session_open(status):
                 image = screens.add_tab(image, "Y", "check", "Hold: done")
+            coach = (status or {}).get("coach") or {}
+            if fresh and self.screen == "rowing" and not coach.get("last") \
+                    and coach.get("session_strokes", 0) > 0:
+                image = screens.add_tab(image, "X", "close", "Hold: discard")
         else:
             self.screen = "status"
             image = screens.status_screen(status, now, uptime, address)

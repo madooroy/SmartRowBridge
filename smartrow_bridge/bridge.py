@@ -172,7 +172,21 @@ class Bridge:
     def _handle_request(self) -> None:
         """Requests from the screen (status.send_request): "finish" = button Y, you're done."""
         request = status.take_request(self.cfg.status_file)
-        if not request or request.get("action") != "finish":
+        if not request:
+            return
+        if request.get("action") == "discard":
+            session, sent = self.recorder.discard() if self.recorder else (None, [])
+            if self.coach and self.coach.strokes_total:
+                self.coach.reset()  # rowing again is a new session
+            if session:
+                log.info("Session discarded: %s (from the screen)%s", session,
+                         f"; already uploaded to {', '.join(sent)}" if sent else "")
+            if self.uploader:
+                self.uploader.check_now(request.get("token"))
+            self._finish_result = {"token": request.get("token"), "session": session, "action": "discard",
+                                   "uploaded": sent}
+            return
+        if request.get("action") != "finish":
             return
         session = self.recorder.finish(self.parser.metrics) if self.recorder else None
         if session:

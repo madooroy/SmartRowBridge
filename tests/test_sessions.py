@@ -157,6 +157,32 @@ class RecorderTest(unittest.TestCase):
         b._handle_request()  # nothing waiting: nothing happens
         self.assertEqual(b._finish_result["token"], token)
 
+    def test_bridge_discards_from_the_screen(self):
+        from types import SimpleNamespace
+        from smartrow_bridge import status
+        from smartrow_bridge.bridge import Bridge
+        r = saturday()
+        rec = self.recorder(r)
+        rec.update(RowingMetrics(distance_m=6000), mono_now=r.t, wall_now=1_800_000_000.0)
+        session = rec._id
+        self.assertTrue((self.dir / f"{session}.json").exists())
+        b = object.__new__(Bridge)
+        b.cfg = SimpleNamespace(status_file=str(Path(self.tmp.name) / "status.json"), session_dir=str(self.dir))
+        b.recorder, b.coach, b.uploader, b._finish_result = rec, r.coach, None, None
+        b.parser = SimpleNamespace(metrics=RowingMetrics(distance_m=6000))
+        token = status.send_request(b.cfg.status_file, "discard")
+        b._handle_request()
+        self.assertEqual(b._finish_result, {"token": token, "session": session, "action": "discard", "uploaded": []})
+        self.assertFalse((self.dir / f"{session}.json").exists())
+        self.assertFalse((self.dir / f"{session}.strokes.json").exists())
+        self.assertEqual(r.coach.strokes_total, 0)
+        # Rowing on: a new session, a new file, the discarded one stays gone.
+        from tests.test_coach import STEADY
+        r.row(40, 110, STEADY, 115)
+        path = rec.update(RowingMetrics(distance_m=400), mono_now=r.t, wall_now=1_800_000_900.0)
+        self.assertNotEqual(path.stem, session)
+        self.assertFalse((self.dir / f"{session}.json").exists())
+
     def test_clock_set_mid_session_keeps_the_file(self):
         r = saturday()
         rec = self.recorder(r)

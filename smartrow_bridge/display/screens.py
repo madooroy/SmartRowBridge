@@ -472,14 +472,14 @@ def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
     return image
 
 
-def hold_screen(progress: float, title: str = "Keep holding to switch off") -> Image.Image:
+def hold_screen(progress: float, title: str = "Keep holding to switch off", colour: tuple | None = None) -> Image.Image:
     image, draw = _canvas()
     _centered(draw, [(title, 22, True, FG), ("Let go to cancel", 16, False, DIM)], centre_y=96)
     x0, y0, x1, y1 = 30, 150, WIDTH - 30, 174
     draw.rounded_rectangle((x0, y0, x1, y1), radius=12, outline=DIM, width=2)
     filled = x0 + int((x1 - x0) * max(0.0, min(1.0, progress)))
     if filled > x0 + 6:
-        draw.rounded_rectangle((x0, y0, filled, y1), radius=12, fill=AMBER)
+        draw.rounded_rectangle((x0, y0, filled, y1), radius=12, fill=colour or AMBER)
     return image
 
 
@@ -526,6 +526,27 @@ def finish_screen(status: dict | None, session: str | None, acked: bool) -> Imag
     if y == 80:
         _centered(draw, [("Saved on the Pi", 18, True, FG), ("Summary on the web page", 15, False, DIM)],
                   centre_y=130)
+    return image
+
+
+UPLOAD_NAMES = {"intervals_activity": "intervals.icu", "intervals_note": "intervals.icu", "strava": "Strava"}
+
+
+def discard_screen(status: dict | None, acked: bool) -> Image.Image:
+    """After X was held: the session deleted (or there was none), and what that does not undo."""
+    image, draw = _canvas()
+    if not acked:
+        _centered(draw, [("Discarding\u2026", 26, True, FG)], centre_y=110)
+        return image
+    result = (status or {}).get("finish") or {}
+    lines = [("Session discarded", 24, True, AMBER),
+             ("Not kept, not uploaded" if result.get("session") else "Nothing was saved yet", 16, False, FG)]
+    sent = sorted({UPLOAD_NAMES.get(d, d) for d in result.get("uploaded") or []})
+    if sent:
+        lines.append((f"Already on {' and '.join(sent)}: delete it there", 15, False, AMBER))
+    lines.append(("Start a new workout in the SmartRow app", 14, False, DIM))
+    lines.append(("to reset the pulley's metres", 14, False, DIM))
+    _centered(draw, lines, centre_y=120)
     return image
 
 

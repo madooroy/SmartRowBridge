@@ -118,11 +118,12 @@ class ControllerTest(unittest.TestCase):
             return c.screen
 
         self.assertEqual(at(0), "rowing")
-        self.assertEqual(at(1, X=True), "summary")
-        self.assertEqual(at(2, X=True), "summary")  # still held: no change
+        self.assertEqual(at(1, X=True), "rowing")  # a tap counts when let go
+        self.assertEqual(at(1.2), "summary")
         self.assertEqual(at(3 + app.RECALL_S), "rowing")  # recall times out
         self.assertEqual(at(30, show_summary=True), "summary")
-        self.assertEqual(at(31, show_summary=True, X=True), "rowing")  # closed early
+        at(31, show_summary=True, X=True)
+        self.assertEqual(at(31.2, show_summary=True), "rowing")  # closed early
         self.assertEqual(at(32, show_summary=True), "rowing")
 
     def test_rowing_switches_view_and_back_after_a_minute(self):
@@ -300,12 +301,42 @@ class DoneAndOffTest(unittest.TestCase):
         self.step(c, session_status(0, uploads=ups({})), 0, A=True)
         self.assertTrue(self.step(c, session_status(2, uploads=ups({})), 2, A=True).switch_off)
 
+    def test_hold_x_discards(self):
+        c = app.Controller()
+        self.step(c, session_status(0), 0)  # X seen released
+        self.step(c, session_status(1), 1, X=True)
+        self.assertIsNone(self.step(c, session_status(1.4), 1.4, X=True).request)  # tap length: nothing yet
+        frame = self.step(c, session_status(2), 2.0, X=True)  # past a tap: the hold shows
+        self.assertIsNone(frame.request)
+        frame = self.step(c, session_status(3), 3.0, X=True)
+        self.assertEqual(frame.request["action"], "discard")
+        token = frame.request["token"]
+        self.assertIsNone(self.step(c, session_status(3.5), 3.5, X=True).request)  # once per hold
+        done = session_status(4, strokes=0, finish={"token": token, "session": "s", "action": "discard",
+                                                    "uploaded": ["strava"]})
+        self.step(c, done, 4)
+        self.assertIsNotNone(c._discard)
+        self.step(c, done, 4 + app.DISCARD_SHOW_S + 1)
+        self.assertIsNone(c._discard)
+        self.assertNotEqual(c.screen, "summary")  # the long press was not a tap
+
+    def test_x_tap_still_recalls_with_a_session(self):
+        c = app.Controller()
+        st = lambda t: {**session_status(t), "coach": {**session_status(t)["coach"], "last": LAST}}  # noqa: E731
+        self.step(c, st(0), 0)
+        self.step(c, st(1), 1, X=True)
+        self.step(c, st(1.3), 1.3)
+        self.assertEqual(c.screen, "summary")
+
     def test_new_screens_draw(self):
         st = session_status(0, uploads=ups({"intervals.icu activity": "sent", "Strava": "retrying"}, retrying=1),
                             finish={"token": "t", "session": "x"})
         for image in (screens.finish_screen(st, "x", True), screens.finish_screen(st, None, True),
                       screens.finish_screen(st, None, False), screens.upload_off_screen(st, False),
-                      screens.upload_off_screen(st, True), screens.hold_screen(0.5, "Keep holding: done rowing")):
+                      screens.upload_off_screen(st, True), screens.hold_screen(0.5, "Keep holding: done rowing"),
+                      screens.discard_screen(st, False),
+                      screens.discard_screen({"finish": {"session": "x", "uploaded": ["strava"]}}, True),
+                      screens.discard_screen({"finish": {"session": None}}, True)):
             self.assertEqual(image.size, (screens.WIDTH, screens.HEIGHT))
 
 

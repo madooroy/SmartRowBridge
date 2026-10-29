@@ -336,9 +336,14 @@ without a phone:
   you're done. The session is saved as finished and uploaded straight away (instead of about seven minutes
   after the last stroke), and the screen shows *Session finished* with each upload as it goes; X closes it.
   Rowing again after that starts a new session.
+- **Discard:** rowed a warm-up you don't want kept? Hold button **X** for 2 seconds. The Pi deletes that
+  session, so it is neither kept nor uploaded, and starts a new one when you row on. (A quick tap of X still
+  brings back the interval summary.) The pulley's own metres, which the SmartRow app and the rowing screen
+  show, reset when you start a new workout in the SmartRow app. If the session had already been uploaded,
+  the screen says where, so you can delete it there.
 - **Buttons:** small tabs in the screen's corners show what each does: a power symbol on A, on B the screen
-  it switches to, on X once there is an interval to look back at, and a tick on Y (*Hold: done*) once there
-  is a session to finish.
+  it switches to, on X once there is an interval to look back at (or *Hold: discard* before then), and a tick on Y
+  (*Hold: done*) once there is a session to finish.
 - **LED:** dim red while the bridge starts and waits for the pulley (or is not running), dim green
   when ready, and off while you row, until the screen goes back to the status.
 - **Interval coach** (experimental, off unless you turn it on): the screen shows each interval's

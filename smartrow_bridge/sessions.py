@@ -115,6 +115,19 @@ class SessionRecorder:
             return None
         return self._id
 
+    def discard(self) -> tuple[str | None, list[str]]:
+        """You don't want this session (X held on the screen): delete its files, so it is neither
+        kept nor uploaded. Returns its id (None if it was too short to be saved) and the
+        destinations it had already been uploaded to (those copies stay there)."""
+        c = self.coach
+        if self._id is None or c.session != self._session:
+            return None, []
+        session, self._id, self._session, self._written = self._id, None, None, None
+        record = read_session(str(self.directory), session) or {}
+        sent = [d for d, mark in (record.get("uploads") or {}).items() if mark and not mark.get("failed")]
+        delete(str(self.directory), session)
+        return session, sent
+
     def _write(self, metrics: RowingMetrics, complete: bool, wall_now: float) -> Path | None:
         rows = stroke_rows(self.coach)
         distance = metrics.distance_m - distance_offset([r[1] for r in rows])
@@ -211,6 +224,14 @@ def save(directory: Path | str, record: dict, strokes: list[list] | None = None)
         old.unlink(missing_ok=True)
         (directory / f"{old.stem}.strokes.json").unlink(missing_ok=True)
     return path
+
+
+def delete(directory: str, session: str) -> None:
+    """Remove a saved session and its strokes."""
+    if not ID_PATTERN.match(session):
+        return
+    for name in (f"{session}.json", f"{session}.strokes.json"):
+        (Path(directory) / name).unlink(missing_ok=True)
 
 
 def mark_finished(directory: str, session: str) -> None:
