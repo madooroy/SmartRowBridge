@@ -16,8 +16,10 @@ RECOVERY_MIN_S = 15.0  # shorter dips stay part of the Easy rowing around them
 SMOOTH = 5  # strokes (median) to judge each stroke's power by
 
 
-def laps(record: dict, strokes: list[dict]) -> list[dict]:
-    """Contiguous laps: steady rowing, each interval, steady rowing... (times from the first stroke)."""
+def laps(record: dict, strokes: list[dict], split_easy: bool = False) -> list[dict]:
+    """Contiguous laps: the rowing before the first effort, each effort, the rowing between...
+    (times from the first stroke). The rowing between efforts is one lap ("Easy"), or with
+    split_easy, Easy and Recovery laps of their own."""
     end = strokes[-1]["t"]
     cuts = []  # (start, end, is_interval, index)
     for i in record.get("intervals") or []:
@@ -45,8 +47,10 @@ def laps(record: dict, strokes: list[dict]) -> list[dict]:
     for lap in out:
         if lap["interval"] is not None:
             split.append({**lap, "kind": kinds.get(lap["interval"], "Moderate")})
-        else:
+        elif split_easy:
             split += _easy_and_recovery(lap, strokes, recovery_w)
+        else:
+            split.append({**lap, "kind": "Easy"})
     return split
 
 

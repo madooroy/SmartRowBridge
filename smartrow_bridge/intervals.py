@@ -169,6 +169,8 @@ def send_note(record: dict, key: str) -> dict:
 
 
 WORK_INTENSITIES = ("Moderate", "Challenging", "Max")
+DEVICE_NAME = "Rowed using SmartRow"  # shown after the name ("Morning Row ~ Rowed using SmartRow"), as
+# intervals.icu shows activities the SmartRow app sends to Strava; otherwise it says "~ Upload"
 STREAM_TRIES, STREAM_WAIT_S = 4, 5.0  # the time stream can take a moment after the upload
 
 
@@ -223,7 +225,8 @@ def upload_activity(record: dict, fit: bytes, key: str, strokes: list[dict] | No
     if activity_id:
         try:
             _request("PUT", f"/activity/{activity_id}", key,
-                     {"name": activity_name(record), "description": summary_text(record)})
+                     {"name": activity_name(record), "description": summary_text(record),
+                      "device_name": DEVICE_NAME})
         except Exception as exc:  # noqa: BLE001 - the activity is there; only its text is missing
             log.warning("intervals.icu activity %s uploaded, but its description wasn't set: %s",
                         activity_id, describe_error(exc))
@@ -267,6 +270,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"No saved session {session} with strokes in {args.session_dir}", file=sys.stderr)
             return 1
         try:
+            _request("PUT", f"/activity/{activity_id}", key, {"device_name": DEVICE_NAME})
             n = mark_efforts(activity_id, record, strokes, key)
         except Exception as exc:  # noqa: BLE001
             print(describe_error(exc), file=sys.stderr)

@@ -165,9 +165,11 @@ def build(record: dict, strokes: list[dict]) -> bytes:
         m.lap_trigger = LapTrigger.SESSION_END if n == len(lap_list) - 1 else LapTrigger.MANUAL
         m.sport = Sport.ROWING
         m.sub_sport = SubSport.INDOOR_ROWING
-        # Moderate and above: interval; Easy: active; Recovery: recovery.
+        # Efforts (Moderate and above): interval; the rowing before the first: warm-up; after the
+        # last: cool-down; in between: recovery. Work intervals stand out, as in a workout file.
         m.intensity = (Intensity.INTERVAL if lap["interval"] else
-                       Intensity.RECOVERY if lap.get("kind") == "Recovery" else Intensity.ACTIVE)
+                       Intensity.WARMUP if n == 0 else
+                       Intensity.COOLDOWN if n == len(lap_list) - 1 else Intensity.RECOVERY)
         m.total_elapsed_time = lap["end"] - lap["start"]
         m.total_timer_time = lap["end"] - lap["start"]
         end_d = float(max(0, inside[-1]["distance_m"] - offset)) if inside else prev_end_d

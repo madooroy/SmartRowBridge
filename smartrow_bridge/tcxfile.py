@@ -3,8 +3,8 @@
 
 Shaped like the SmartRow app's own Strava uploads: no device ("Creator") in the file and
 Sport "Other", the activity type being set on Strava afterwards (strava.py); the description
-starts "Rowed using SmartRow". Unlike SmartRow's, it has a point per stroke and a lap for each
-stretch: Easy, each effort, Recovery (activity.py). Standard library only.
+starts "Rowed using SmartRow". Unlike SmartRow's, it has a point per stroke, a lap for each
+effort (Active) and one for the rowing between them (Resting) (activity.py). Standard library only.
 
 Per point: time, distance from the session's start, heart rate (when the bridge had a
 strap), power and stroke rate (as RunCadence, as SmartRow does).
@@ -52,7 +52,7 @@ def build(record: dict, strokes: list[dict]) -> bytes:
         if hrs:
             out += [f"    <AverageHeartRateBpm><Value>{round(sum(hrs) / len(hrs))}</Value></AverageHeartRateBpm>",
                     f"    <MaximumHeartRateBpm><Value>{max(hrs)}</Value></MaximumHeartRateBpm>"]
-        out += [f'    <Intensity>{"Resting" if lap.get("kind") == "Recovery" else "Active"}</Intensity>',
+        out += [f'    <Intensity>{"Active" if lap["interval"] else "Resting"}</Intensity>',
                 "    <TriggerMethod>Manual</TriggerMethod>",
                 "    <Track>"]
         for s in inside:

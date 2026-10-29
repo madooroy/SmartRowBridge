@@ -499,8 +499,7 @@ for one long effort), which cuts off longer efforts. With your rowing FTP, an ef
 harder (67 % of FTP and up), with **no time limit**: it lasts until you drop back to Recovery or Easy. On a 45-minute
 class (FTP 185 W: Easy rowing 98-109 W, efforts 130-150 W, the last one 6 minutes) this found all eight
 efforts, where without an FTP the six-minute one was taken for a new Easy pace. The summary then gives each
-effort's label and % of FTP, and the uploaded activity has a lap for each stretch (Easy, Moderate,
-Recovery ...). The FTP comes from intervals.icu by itself (your rowing
+effort's label and % of FTP, and the uploaded activity marks the efforts as its work intervals. The FTP comes from intervals.icu by itself (your rowing
 sport settings), read once each time the bridge starts (so after changing it there, restart the Pi or
 `sudo systemctl restart smartrow-bridge`), or set `SRB_COACH_FTP`. To check what intervals.icu has:
 `sudo /opt/smartrow-bridge/venv/bin/python -m smartrow_bridge.intervals --test`.
@@ -538,7 +537,8 @@ itself, so the SmartRow app's own Strava link is no longer needed:
   description. Its intervals are the coach's efforts only (Moderate and harder), set through the API after
   the upload, so the Easy and Recovery rowing between them doesn't clutter the activity; leave intervals.icu's
   *Use laps for intervals* (Sport Settings, Rowing) off, or a later re-analysis puts every lap back. The
-  file itself has a lap for each stretch (Easy, efforts, Recovery) for other tools. To mark the efforts on
+  files (FIT here, TCX to Strava, and so on to TrainerRoad) have a lap for each effort and one for the rowing
+  between, marked as rest, so other tools see the work intervals too. To mark the efforts on
   an activity already there:
   `sudo /opt/smartrow-bridge/venv/bin/python -m smartrow_bridge.intervals --mark-efforts SESSION i123456789`
   (the session as listed on the web page's Sessions, the activity id from its intervals.icu address). Each stroke also carries its force curve (with drive length,

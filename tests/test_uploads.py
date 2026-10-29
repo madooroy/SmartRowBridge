@@ -165,6 +165,7 @@ class UploadsTest(unittest.TestCase):
         self.assertTrue(body["name"].endswith(" Row"))
         self.assertIn("What the coach saw:", body["description"])
         self.assertTrue(body["description"].startswith("Rowed using SmartRow\n"))
+        self.assertEqual(body["device_name"], "Rowed using SmartRow")
 
     def test_efforts_marked_as_the_only_intervals(self):
         self.set_up_intervals(when=time.time() - 86400)
@@ -449,7 +450,10 @@ class FitFileTest(unittest.TestCase):
         efforts = [lap for lap in laps if lap["intensity"] == "interval"]
         self.assertEqual(len(efforts), len(record["intervals"]))  # one lap per effort ...
         self.assertGreaterEqual(len(laps), 2 * len(record["intervals"]) + 1)  # ... with Easy / Recovery around them
-        self.assertEqual({lap["intensity"] for lap in laps} - {"interval", "active", "recovery"}, set())
+        self.assertEqual(len(laps), 2 * len(record["intervals"]) + 1)  # efforts, and the rowing between
+        self.assertEqual((laps[0]["intensity"], laps[-1]["intensity"]), ("warmup", "cooldown"))
+        self.assertEqual({lap["intensity"] for lap in laps[1:-1:2]}, {"interval"})
+        self.assertEqual({lap["intensity"] for lap in laps[2:-1:2]}, {"recovery"})
         self.assertAlmostEqual(sum(lap["total_elapsed_time"] for lap in laps), session["total_elapsed_time"], delta=0.01)
         self.assertEqual(sum(lap["total_strokes"] for lap in laps), len(strokes))  # each stroke in one lap
         self.assertAlmostEqual(sum(lap["total_distance"] for lap in laps), session["total_distance"], delta=0.01)
@@ -471,7 +475,7 @@ class FitFileTest(unittest.TestCase):
         light = [s for s in strokes if end < s["t"] <= end + 120]
         for s in light:
             s["power_w"] = easy * 0.5
-        kinds = [lap["kind"] for lap in laps(record, strokes)]
+        kinds = [lap["kind"] for lap in laps(record, strokes, split_easy=True)]
         self.assertIn("Recovery", kinds)
         self.assertEqual(kinds[0], "Easy")
 
