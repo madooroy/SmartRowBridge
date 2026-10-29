@@ -237,6 +237,36 @@ class FtpReadOnceTest(unittest.TestCase):
 
 
 class IntensityTest(unittest.TestCase):
+    def test_challenging_judged_against_its_usual_shape(self):
+        """A 10 % lighter finish is usual at Challenging: no cue; the same at Moderate is one."""
+        lighter = [round(v * (0.88 if 11 <= i <= 19 else 1)) for i, v in enumerate(STEADY)]  # ~10 % less back half
+        for watts, cue in ((190, "good"), (145, None)):
+            r = Rower(ftp=185)
+            r.row(80, 105)
+            r.row(20, watts, lighter)
+            live = r.state()["live"]
+            if cue:
+                self.assertEqual(live["cue"], cue, watts)
+            self.assertEqual(r.coach.expected(live["intensity"]), 0.90 if watts == 190 else 1.0)
+
+    def test_usual_finish_learned_from_saved_rows(self):
+        import tempfile
+        import time as _time
+        from smartrow_bridge import sessions
+        with tempfile.TemporaryDirectory() as d:
+            now = _time.time()
+            for k, ratio in enumerate((0.82, 0.86, 0.84, 0.95)):
+                started = now - (k + 1) * 86400
+                sessions.save(d, {"id": sessions.session_id(started), "started_at": started,
+                                  "fresh_easy": saved_stroke() if k == 0 else None,
+                                  "intervals": [{"intensity": "Challenging", "easy_finish_ratio": ratio},
+                                                {"intensity": "Moderate", "easy_finish_ratio": 0.99}]})
+            self.assertEqual(sessions.learned_finish(d, now), {"Challenging": 0.85, "Moderate": 0.99})
+            ref = sessions.latest_fresh_easy(d, now)
+            self.assertEqual(ref["expect"]["Challenging"], 0.85)
+            c = IntervalCoach(ftp=185, reference=lambda: ref)
+            self.assertEqual((c.expected("Challenging"), c.expected("Max")), (0.85, 0.85))
+
     def test_effort_that_steps_up_is_split(self):
         r = Rower(ftp=185)
         r.row(80, 105)

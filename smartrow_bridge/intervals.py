@@ -112,6 +112,8 @@ def effort_line(i: dict) -> str:
         notes.append(f"finish {_signed(i['finish_pct'])}%")
     if i.get("length_delta_cm", 0) <= SHORTER_CM:
         notes.append(f"strokes {abs(round(i['length_delta_cm']))} cm shorter")
+    if i.get("fade_pct", 0) <= -10:
+        notes.append(f"faded {abs(i['fade_pct'])}% over the effort")
     if i.get("legs_late"):
         notes.append("late push")
     if i.get("peak_wanders"):
@@ -146,7 +148,7 @@ def note_for(record: dict) -> dict:
         lines += ["", f"Intensities, {source}: {bands}."]
     lines += ["", "What the coach saw:"] + [f"- {f}" for f in record.get("findings", [])]
     if intervals:
-        lines += ["", "Efforts:"] + [effort_line(i) for i in intervals]
+        lines += ["", "Efforts (finish against your usual stroke at that intensity):"] + [effort_line(i) for i in intervals]
     lines += ["", "Coached by SmartRowBridge."]
     return {
         "category": "NOTE",
@@ -196,9 +198,14 @@ def coach_line(record: dict) -> str:
 
 
 def summary_text(record: dict) -> str:
-    """The description of an uploaded activity: short, as the SmartRow app's ("Rowed using SmartRow")
-    plus one line from the coach. The full report is on the bridge's web page (and in a note)."""
+    """The intervals.icu activity's description: short, as it shows on the calendar ("Rowed using
+    SmartRow" and one line from the coach)."""
     return f"Rowed using SmartRow\n{coach_line(record)}"
+
+
+def full_text(record: dict) -> str:
+    """The Strava activity's description: the coach's full report."""
+    return note_for(record)["description"]
 
 
 def send_note(record: dict, key: str) -> dict:

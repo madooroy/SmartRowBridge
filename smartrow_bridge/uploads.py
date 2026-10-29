@@ -163,7 +163,7 @@ class Destinations:
         return strava.StravaAccount(self.s.strava_file).upload(
             tcxfile.build(record, strokes), external_id=f"smartrowbridge-{record['id']}",
             name=intervals.activity_name(record),
-            description=intervals.summary_text(record), sport_type=self.s.strava_sport_type)
+            description=intervals.full_text(record), sport_type=self.s.strava_sport_type)
 
     def describe_error(self, dest: str, exc: BaseException) -> str:
         return strava.describe_error(exc) if dest == "strava" else intervals.describe_error(exc)

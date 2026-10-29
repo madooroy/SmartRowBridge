@@ -52,12 +52,12 @@ class FindingsTest(unittest.TestCase):
     def test_all_good(self):
         self.assertEqual(coach.findings([{"index": 1, "rating": "good", "finish_pct": 1, "duration_s": 60,
                                           "length_delta_cm": 1, "fade_pct": 0}])[0],
-                         "All 1 efforts kept their shape and length: finish within 5% of Easy.")
+                         "All 1 efforts kept their shape and length: finish within 5% of your usual at that intensity.")
 
     def test_faded_finish(self):
         iv = [{"index": 1, "rating": "short", "finish_pct": -15, "duration_s": 120, "length_delta_cm": 0,
                "fade_pct": 0}]
-        self.assertIn("The finish faded in I1: \u221215% against Easy.", coach.findings(iv))
+        self.assertIn("The finish faded in I1: \u221215% against your usual at that intensity.", coach.findings(iv))
 
     def test_legs_and_fade(self):
         iv = [{"index": 1, "rating": "good", "finish_pct": 8, "duration_s": 120, "length_delta_cm": 0,

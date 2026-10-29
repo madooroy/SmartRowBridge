@@ -89,6 +89,14 @@ PROVISIONAL_MIN = 30  # with nothing saved: fresh strokes before a provisional r
 FRESH_MAX_AGE_DAYS = 30
 LENGTH_SAME_CM = 3.0
 
+# Your stroke from Challenging up is shaped differently from your Easy one, and that is not a fading
+# finish: the drive comes harder off the catch and the peak earlier, so less of the force falls in
+# the back half (Oct 2026 rows: Moderate about the same as Easy, Challenging about 10 % less, Max
+# about 15 % less). An effort's finish is judged against this share of the Easy finish; learned from
+# your saved rows once there are EXPECT_MIN efforts at an intensity (sessions.latest_fresh_easy).
+EXPECTED_FINISH = {"Moderate": 1.0, "Challenging": 0.90, "Max": 0.85}
+EXPECT_RANGE = (0.80, 1.05)
+EXPECT_MIN = 3
 SHAPE_MIN = 20  # Easy strokes after the warm-up needed before efforts are judged against them alone
 SPLIT_MIN_STROKES = 15  # an effort that steps up (or down) an intensity for this long is split in two
 
@@ -297,6 +305,7 @@ class IntervalSummary:
     intensity: str = ""  # Moderate, Challenging or Max (INTENSITIES)
     steady_power_w: float = 0.0
     started_at: float = 0.0  # time of its first stroke (same clock as the strokes)
+    expected_finish: float = 1.0  # the usual finish at this intensity, as a share of the Easy one
     peak_at_pct: float = 0.0  # where the force peaks, % of the drive (mean over the strokes)
     peak_spread_pct: float = 0.0  # ... and how much that varies from stroke to stroke (std dev)
     steady_peak_at_pct: float = 0.0
@@ -318,6 +327,13 @@ class IntervalSummary:
 
     @property
     def finish_ratio(self) -> float:
+        """The finish against your usual stroke at this intensity (1.0 = as usual)."""
+        expected = self.steady_back_share * (self.expected_finish or 1.0)
+        return self.back_share / expected if expected else 1.0
+
+    @property
+    def easy_finish_ratio(self) -> float:
+        """The finish against your Easy stroke, whatever the intensity (what is learned from)."""
         return self.back_share / self.steady_back_share if self.steady_back_share else 1.0
 
     @property
@@ -348,6 +364,8 @@ class IntervalSummary:
             "length_delta_cm": round(self.length_delta_cm, 1),
             "peak_n": round(self.peak_n),
             "finish_pct": self.finish_pct,
+            "expected_finish": round(self.expected_finish, 3),
+            "easy_finish_ratio": round(self.easy_finish_ratio, 3),
             "rating": self.rating,
             "steady_power_w": round(self.steady_power_w),
             "drive_late": round(self.lateness, 2),
@@ -374,7 +392,8 @@ class IntervalSummary:
                 f"{self.stroke_rate_spm:.1f} spm, length {self.length_cm:.0f} cm ({self.length_delta_cm:+.0f}), "
                 f"peak {self.peak_n:.0f} N at {self.peak_at_pct:.0f}% \u00b1{self.peak_spread_pct:.1f} "
                 f"(Easy {self.steady_peak_at_pct:.0f}% \u00b1{self.steady_peak_spread_pct:.1f}), "
-                f"finish {self.finish_pct:+d}% vs Easy ({self.rating})"
+                f"finish {self.finish_pct:+d}% vs usual {self.intensity or 'Easy'} ({self.rating}), "
+                f"over the effort {round((self.last_third_back_share / (self.first_third_back_share or 1) - 1) * 100):+d}%"
                 + (f", late push ({self.lateness:+.1f}% of the drive)" if self.legs_late else ""))
 
 
@@ -392,6 +411,7 @@ class IntervalCoach:
         self.settings = settings
         self.ftp = ftp  # rowing FTP, W (SRB_COACH_FTP, or from intervals.icu); None: efforts by steady alone
         self.reference = reference
+        self.expect = dict(EXPECTED_FINISH)
         self.session = 0
         self.reset()
 
@@ -444,6 +464,7 @@ class IntervalCoach:
             except Exception:  # noqa: BLE001 - no saved stroke: learn today's
                 log.exception("Could not read the last session's Easy stroke")
         self.baseline: dict | None = dict(self.saved_ref) if self.saved_ref else None
+        self.expect = {**EXPECTED_FINISH, **((self.saved_ref or {}).get("expect") or {})}
         self.fresh: list[StrokeCurve] = []
         self.fresh_done = False
         self.fresh_result: dict | None = None
@@ -480,6 +501,19 @@ class IntervalCoach:
 
     def steady_back_share(self) -> float:
         return back_share(mean_curve(self.shape_strokes()))
+
+    def effort_ref(self) -> dict:
+        """What efforts are judged against: your fresh Easy stroke (last session's, or today's once
+        learned), else the Easy strokes after the warm-up."""
+        if self.baseline:
+            return self.baseline
+        ref = self.shape_strokes()
+        curve = mean_curve(ref)
+        return {"curve": curve, "back_share": back_share(curve),
+                "length_cm": statistics.fmean(s.stroke_length_cm for s in ref) if ref else 0.0}
+
+    def expected(self, intensity: str) -> float:
+        return self.expect.get(intensity, 1.0)
 
     def shape_strokes(self) -> list[StrokeCurve]:
         """The Easy strokes efforts are judged against: after the warm-up when there are enough."""
@@ -656,6 +690,8 @@ class IntervalCoach:
         third = max(1, n // 3)
         peak_at, peak_spread = peak_stats(strokes)
         steady_at, steady_spread = peak_stats(self.shape_strokes())
+        ref = self.effort_ref()
+        intensity = self.intensity(statistics.fmean(stroke_power(s) for s in strokes))
         return IntervalSummary(
             index=len(self.intervals) + 1,
             duration_s=strokes[-1].time - strokes[0].time + period,
@@ -665,17 +701,18 @@ class IntervalCoach:
             length_cm=statistics.fmean(s.stroke_length_cm for s in strokes),
             peak_n=statistics.fmean(max(s.force_n) for s in strokes),
             back_share=back_share(mean_curve(strokes)),
-            steady_back_share=self.steady_back_share(),
-            steady_length_cm=self.steady_length(),
+            steady_back_share=ref["back_share"],
+            steady_length_cm=ref["length_cm"],
             curve=mean_curve(strokes),
-            steady_curve=mean_curve(self.shape_strokes()),
+            steady_curve=list(ref["curve"]),
             first_third_back_share=back_share(mean_curve(strokes[:third])),
             last_third_back_share=back_share(mean_curve(strokes[-third:])),
             ended_at=now,
             legs_threshold=self.settings.cues.legs_cue,
             cues=self.settings.cues,
             ftp=self.ftp,
-            intensity=self.intensity(statistics.fmean(stroke_power(s) for s in strokes)),
+            intensity=intensity,
+            expected_finish=self.expected(intensity),
             steady_power_w=self.steady_power(),
             started_at=strokes[0].time,
             peak_at_pct=peak_at,
@@ -693,10 +730,12 @@ class IntervalCoach:
         """The last few strokes against steady: finish ratio, lateness (% of drive), % shorter."""
         window = self._window()
         curve = mean_curve(window)
-        ratio = back_share(curve) / (self.steady_back_share() or 1)
-        steady_len = self.steady_length() or 1
-        short_by_pct = (steady_len - statistics.fmean(s.stroke_length_cm for s in window)) / steady_len * 100
-        return ratio, drive_lateness(curve, mean_curve(self.shape_strokes())), short_by_pct
+        ref = self.effort_ref()
+        expect = self.expected(self.intensity(statistics.fmean(stroke_power(s) for s in window)))
+        ratio = back_share(curve) / ((ref["back_share"] * expect) or 1)
+        ref_len = ref["length_cm"] or 1
+        short_by_pct = (ref_len - statistics.fmean(s.stroke_length_cm for s in window)) / ref_len * 100
+        return ratio, drive_lateness(curve, ref["curve"]), short_by_pct
 
     def _judge(self, previous: str | None, ratio: float, late: float, short_by_pct: float) -> str:
         """The cue for a window of strokes against a reference (with a little hysteresis)."""
@@ -844,15 +883,15 @@ class IntervalCoach:
                 "power_w": round(statistics.fmean(stroke_power(s) for s in strokes[-3:])),
                 "length_cm": round(statistics.fmean(s.stroke_length_cm for s in window)),
                 "cue": self.effort.cue,
-                "finish_pct": round((back_share(mean_curve(window)) / (self.steady_back_share() or 1) - 1) * 100)
-                if len(strokes) >= CUE_MIN else None,
-                "length_delta_cm": round(statistics.fmean(s.stroke_length_cm for s in window) - self.steady_length()),
+                "finish_pct": round((ratio - 1) * 100) if judged else None,
+                "length_delta_cm": round(statistics.fmean(s.stroke_length_cm for s in window)
+                                         - self.effort_ref()["length_cm"]),
                 # The screens' two bars (see balance()): None until there is enough to judge.
                 "balance": round(balance(ratio, late, self.settings.cues), 2) if judged else None,
                 "length_balance": round(length_balance(-short_by_pct, self.settings.cues), 2) if judged else None,
                 "curve": [round(v) for v in mean_curve(window)],
                 "stroke_curve": list(strokes[-1].force_n),  # the latest stroke, drawn live over steady
-                "steady_curve": [round(v) for v in mean_curve(self.shape_strokes())],
+                "steady_curve": [round(v) for v in self.effort_ref()["curve"]],
             }
         return out
 
@@ -898,13 +937,13 @@ def findings(intervals: list[dict]) -> list[str]:
         out.append("Efforts: " + ", ".join(parts) + ".")
 
     if len(good) == n:
-        out.append(f"All {n} efforts kept their shape and length: finish within 5% of Easy.")
+        out.append(f"All {n} efforts kept their shape and length: finish within 5% of your usual at that intensity.")
     elif good:
         out.append(f"{len(good)} of {n} efforts kept their shape and length ({_names(good)}).")
     if faded:
         lo, hi = min(i["finish_pct"] for i in faded), max(i["finish_pct"] for i in faded)
         span = _pct(lo) if lo == hi else f"{_pct(hi)} to {_pct(lo)}"
-        out.append(f"The finish faded in {_names(faded)}: {span} against Easy.")
+        out.append(f"The finish faded in {_names(faded)}: {span} against your usual at that intensity.")
     if ok:
         pcts = ", ".join(_pct(i["finish_pct"]) for i in ok)
         out.append(f"The finish eased a little in {_names(ok)} ({pcts}).")

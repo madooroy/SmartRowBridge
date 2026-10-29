@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import re
+import statistics
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -291,8 +292,30 @@ def latest_fresh_easy(directory: str, now: float | None = None, max_age_days: fl
             return None  # newest first: the rest are older still
         fresh = record.get("fresh_easy")
         if fresh and fresh.get("curve"):
-            return {**fresh, "session": record.get("id", path.stem)}
+            return {**fresh, "session": record.get("id", path.stem), "expect": learned_finish(directory, now)}
     return None
+
+
+def learned_finish(directory: str, now: float | None = None, days: float = 60, last: int = 20) -> dict:
+    """Your usual finish at each intensity, as a share of your Easy one: the median of your last
+    `last` efforts at it (within `days`), once there are coach.EXPECT_MIN. Empty without enough."""
+    from .coach import EXPECT_MIN, EXPECT_RANGE
+    now = time.time() if now is None else now
+    seen: dict[str, list[float]] = {}
+    for path in sorted(Path(directory).glob("*.json"), reverse=True):
+        if not ID_PATTERN.match(path.stem):
+            continue
+        record = read_session(directory, path.stem)
+        if not record:
+            continue
+        if now - record.get("started_at", 0) > days * 86400:
+            break
+        for i in reversed(record.get("intervals") or []):
+            k, r = i.get("intensity"), i.get("easy_finish_ratio")
+            if k and r and len(seen.setdefault(k, [])) < last:
+                seen[k].append(r)
+    lo, hi = EXPECT_RANGE
+    return {k: round(min(hi, max(lo, statistics.median(v))), 3) for k, v in seen.items() if len(v) >= EXPECT_MIN}
 
 
 def read_session(directory: str, session: str) -> dict | None:
