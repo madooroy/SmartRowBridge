@@ -285,7 +285,8 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
             draw.text((WIDTH // 2, 199), text, font=_fit(draw, text, 26, WIDTH - 24, True), fill=BG, anchor="mm")
         else:
             draw.rounded_rectangle(banner, radius=8, fill=TILE)
-            draw.text((WIDTH // 2, 199), "learning your Easy stroke", font=font(16), fill=DIM, anchor="mm")
+            waiting = "warming up" if coach.get("warming_up") else "learning your Easy stroke"
+            draw.text((WIDTH // 2, 199), waiting, font=font(16), fill=DIM, anchor="mm")
         return image
 
     tiles = [

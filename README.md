@@ -488,10 +488,15 @@ targets:
 Without an FTP the same ratios are taken from your Easy power (Easy is 55 % of FTP).
 
 **Coaching in every interval but Recovery.** Efforts (Moderate and up) are coached as above, against your
-Easy shape. Easy rowing is coached too: the first minute of Easy strokes becomes your reference (shown in
-grey), and later Easy strokes are judged against it with the same cues, so a finish that fades as you tire
-shows up there as well. Recovery gets the numbers only. The summary adds how the last minutes of Easy rowing
-compared with the first.
+Easy shape (the Easy rowing just before). Easy rowing is coached too, against your **fresh Easy stroke**:
+your Easy strokes from 2 to 8 minutes into a row (after the warm-up, whose strokes are shorter, and before
+you tire; efforts, Recovery and the strokes just after an effort left out). Each session saves it, and the
+next one (within a month) is judged against it from the start, shown in grey, so a finish that is weak
+from the first stroke or fades as you tire shows up. The first 2 minutes are the warm-up (*warming up*, no
+cues). With nothing saved, today's is learned instead. Stroke length is calibrated at 8 minutes: within
+3 cm of last time's, last time's stays; clearly longer, today's becomes the reference; clearly shorter, last
+time's stays, so LONGER STROKES speaks up, and the summary says so. Recovery gets the numbers only. The
+summary adds how the last minutes of Easy rowing compared with the fresh ones.
 
 **With your FTP.** On its own the coach judges efforts against your recent Easy rowing, and has to treat
 anything longer than 5 minutes as a new Easy pace (otherwise a warm-up ramping into the main set could pass

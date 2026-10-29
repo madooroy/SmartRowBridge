@@ -277,6 +277,24 @@ def list_sessions(directory: str) -> list[dict]:
     return out
 
 
+def latest_fresh_easy(directory: str, now: float | None = None, max_age_days: float = 30) -> dict | None:
+    """The fresh Easy stroke of the most recent saved session that has one, if it is no older than
+    max_age_days (coach.FRESH_MAX_AGE_DAYS): what the next session's Easy rowing is judged against."""
+    now = time.time() if now is None else now
+    for path in sorted(Path(directory).glob("*.json"), reverse=True):
+        if not ID_PATTERN.match(path.stem):
+            continue
+        record = read_session(directory, path.stem)
+        if not record:
+            continue
+        if now - record.get("started_at", 0) > max_age_days * 86400:
+            return None  # newest first: the rest are older still
+        fresh = record.get("fresh_easy")
+        if fresh and fresh.get("curve"):
+            return {**fresh, "session": record.get("id", path.stem)}
+    return None
+
+
 def read_session(directory: str, session: str) -> dict | None:
     """One saved session, or None. The id is checked, so it can't reach outside the directory."""
     if not ID_PATTERN.match(session):

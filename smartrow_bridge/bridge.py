@@ -49,9 +49,12 @@ class Bridge:
         self.parser = protocol.SmartRowParser()
         self.coach: coach.IntervalCoach | None = None
         if cfg.coach and cfg.status_file.lower() != "off":
+            saved = cfg.session_dir.lower() != "off"
             self.coach = coach.IntervalCoach(coach.CoachSettings(
                 start_pct=cfg.coach_start_pct, max_effort_s=cfg.coach_max_min * 60,
-                sensitivity=cfg.coach_sensitivity), ftp=_fixed_ftp(cfg.coach_ftp))
+                sensitivity=cfg.coach_sensitivity), ftp=_fixed_ftp(cfg.coach_ftp),
+                reference=(lambda: sessions.latest_fresh_easy(cfg.session_dir, max_age_days=coach.FRESH_MAX_AGE_DAYS))
+                if saved else None)
             self.parser.on_stroke = self.coach.add
         self.hr_link = None  # heartrate.HeartRateLink, created once the pulley's adapter is known
         self.recorder: sessions.SessionRecorder | None = None

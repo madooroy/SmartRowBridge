@@ -269,15 +269,79 @@ class IntensityTest(unittest.TestCase):
         self.assertIsNone(r.state()["cue"])  # no cues in Recovery
 
 
+def saved_stroke(length=115.0, curve=STEADY):
+    return {"curve": list(map(float, curve)), "back_share": back_share(curve), "length_cm": length, "strokes": 80}
+
+
 class EasyCueTest(unittest.TestCase):
-    def test_easy_strokes_judged_against_the_first_minute(self):
+    def test_nothing_saved_learns_todays_fresh_stroke(self):
         r = Rower(ftp=185)
-        r.row(70, 105)
+        r.row(40, 105)  # the warm-up: no Easy cues in the first 2 minutes
+        self.assertIsNone(r.state()["cue"])
+        self.assertTrue(r.state()["warming_up"])
+        r.row(40, 105)  # 30 strokes after 2:00: a provisional reference
         self.assertEqual(r.state()["cue"], "good")
+        self.assertEqual(r.state()["easy_reference"], "today")
         r.row(10, 105, FADED)
         self.assertEqual(r.state()["cue"], "finish")
         r.row(10, 105, length=110)
         self.assertEqual(r.state()["cue"], "length")
+
+    def test_last_sessions_stroke_from_the_start(self):
+        r = Rower(ftp=185)
+        r.coach = IntervalCoach(ftp=185, reference=lambda: saved_stroke())
+        r.row(40, 105)
+        self.assertIsNone(r.state()["cue"])  # still warming up
+        self.assertEqual(r.state()["easy_reference"], "last session")
+        r.row(10, 105)
+        self.assertEqual(r.state()["cue"], "good")  # at 2:00, no learning needed
+        r.row(10, 105, FADED)
+        self.assertEqual(r.state()["cue"], "finish")
+
+    def _calibrate(self, today_cm, saved_cm=115.0):
+        r = Rower(ftp=185)
+        r.coach = IntervalCoach(ftp=185, reference=lambda: saved_stroke(saved_cm))
+        r.row(180, 105, length=today_cm)  # past 8:00
+        return r.coach
+
+    def test_length_calibration(self):
+        c = self._calibrate(116)  # within 3 cm: last time's length stays
+        self.assertEqual(c.baseline["length_cm"], 115)
+        self.assertIsNone(c.length_note)
+        self.assertEqual(c.session_summary()["fresh_easy"]["length_cm"], 115)
+        c = self._calibrate(121)  # clearly longer: the new reference, and saved for next time
+        self.assertEqual(c.baseline["length_cm"], 121)
+        self.assertIn("Fresh Easy strokes were 6 cm longer than last time: the new length reference.",
+                      c.session_summary()["findings"])
+        self.assertEqual(c.session_summary()["fresh_easy"]["length_cm"], 121)
+        c = self._calibrate(110)  # clearly shorter: last time's stays, so the cue speaks up
+        self.assertEqual(c.baseline["length_cm"], 115)
+        summary = c.session_summary()
+        self.assertIn("Fresh Easy strokes were 5 cm shorter than last time; the coach kept last time's length.",
+                      summary["findings"])
+        self.assertEqual((summary["fresh_easy"]["length_cm"], summary["fresh_easy"]["measured_length_cm"]),
+                         (115, 110))
+
+    def test_fresh_stroke_leaves_out_the_warm_up(self):
+        r = Rower(ftp=185)
+        r.row(40, 105, length=105)  # short warm-up strokes
+        r.row(140, 105, length=118)
+        fresh = r.coach.session_summary()["fresh_easy"]
+        self.assertEqual(fresh["length_cm"], 118)
+        self.assertGreaterEqual(fresh["strokes"], 60)
+
+    def test_latest_fresh_easy_from_saved_sessions(self):
+        import tempfile
+        import time as _time
+        from smartrow_bridge import sessions
+        with tempfile.TemporaryDirectory() as d:
+            now = _time.time()
+            for days_ago, fresh in ((40, saved_stroke(110)), (10, saved_stroke(118)), (2, None)):
+                started = now - days_ago * 86400
+                record = {"id": sessions.session_id(started), "started_at": started, "fresh_easy": fresh}
+                sessions.save(d, record)
+            self.assertEqual(sessions.latest_fresh_easy(d, now)["length_cm"], 118)  # skips the one without
+            self.assertIsNone(sessions.latest_fresh_easy(d, now + 25 * 86400))  # older than a month
 
 
 class PeakTest(unittest.TestCase):

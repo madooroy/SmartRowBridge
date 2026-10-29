@@ -32,7 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from smartrow_bridge import sessions  # noqa: E402
-from smartrow_bridge.coach import CoachSettings, IntervalCoach  # noqa: E402
+from smartrow_bridge.coach import FRESH_MAX_AGE_DAYS, CoachSettings, IntervalCoach  # noqa: E402
 from smartrow_bridge.protocol import FORCE_SAMPLES, StrokeCurve  # noqa: E402
 
 CUE_NAMES = {"good": "LOOKS GOOD", "finish": "STRONGER FINISH", "legs": "EARLIER PUSH", "length": "LONGER STROKES",
@@ -74,9 +74,11 @@ def export_totals(path: Path) -> dict:
             "distance_m": int(float(last["Distance (m)"])), "elapsed_s": int(float(last["Second (#)"]))}
 
 
-def replay(path: Path, settings: CoachSettings, save_dir: Path | None = None, ftp: float | None = None) -> dict:
-    """Run one export through a fresh coach. Returns its intervals and live-cue counts."""
-    coach = IntervalCoach(settings, ftp=ftp)
+def replay(path: Path, settings: CoachSettings, save_dir: Path | None = None, ftp: float | None = None,
+           reference: dict | None = None) -> dict:
+    """Run one export through a fresh coach (reference: the last session's fresh Easy stroke).
+    Returns its intervals, live-cue counts and today's fresh Easy stroke."""
+    coach = IntervalCoach(settings, ftp=ftp, reference=(lambda: reference) if reference else None)
     cues: dict[int, Counter] = {}
     for stroke in strokes_from_csv(path):
         coach.add(stroke)
@@ -93,12 +95,24 @@ def replay(path: Path, settings: CoachSettings, save_dir: Path | None = None, ft
         record = sessions.build_record(coach, totals["started_at"], totals["started_at"] + totals["elapsed_s"],
                                        True, totals["distance_m"], totals["elapsed_s"], source="replay")
         saved = sessions.save(save_dir, record, sessions.stroke_rows(coach))
+    summary = coach.session_summary()
     return {"intervals": coach.intervals, "cues": cues, "steady_power_w": coach.steady_power(),
-            "strokes": coach.last_count, "saved": saved}
+            "strokes": coach.last_count, "saved": saved, "fresh_easy": summary.get("fresh_easy"),
+            "reference": reference, "length_note": coach.length_note}
 
 
 def describe(path: Path, result: dict) -> str:
     lines = [f"{path.name}: {result['strokes']} strokes, Easy about {result['steady_power_w']:.0f} W"]
+    fresh, ref = result.get("fresh_easy"), result.get("reference")
+    if fresh:
+        lines.append(f"  fresh Easy stroke: finish {fresh['back_share']:.3f}, "
+                     f"length {fresh.get('measured_length_cm', fresh['length_cm']):.0f} cm, {fresh['strokes']} strokes"
+                     + (f" (last session: finish {ref['back_share']:.3f}, length {ref['length_cm']:.0f} cm)" if ref else
+                        " (nothing earlier: learned today)"))
+    if result.get("length_note"):
+        n = result["length_note"]
+        lines.append(f"  length {n['change_cm']:+d} cm against last time: "
+                     + ("kept last time's" if n["kept"] else "new length reference"))
     easy = result["cues"].get(0, Counter())
     if easy:
         total = sum(easy.values())
@@ -138,9 +152,21 @@ def main(argv: list[str] | None = None) -> int:
     settings = CoachSettings(start_pct=args.start_pct, max_effort_s=args.max_min * 60,
                              sensitivity=args.sensitivity)
     status = 0
-    for path in args.csv:
+    # In date order, each session judged against the one before (within FRESH_MAX_AGE_DAYS), as on the Pi.
+    def started(path: Path) -> float:
         try:
-            print(describe(path, replay(path, settings, args.save, args.ftp)))
+            return export_totals(path)["started_at"]
+        except (OSError, KeyError, ValueError, IndexError):
+            return 0.0
+    previous: tuple[float, dict] | None = None
+    for path in sorted(args.csv, key=started):
+        try:
+            t0 = started(path)
+            ref = previous[1] if previous and t0 - previous[0] <= FRESH_MAX_AGE_DAYS * 86400 else None
+            result = replay(path, settings, args.save, args.ftp, ref)
+            if result.get("fresh_easy"):
+                previous = (t0, result["fresh_easy"])
+            print(describe(path, result))
         except (OSError, KeyError, ValueError) as exc:
             print(f"{path.name}: can't read it as a SmartRow export ({exc})", file=sys.stderr)
             status = 1

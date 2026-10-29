@@ -76,6 +76,18 @@ EASY_RATIO = 0.80  # strokes this far below steady (easy paddling) are ignored t
 GAP_S = 10.0  # no stroke for this long ends an effort
 NEW_SESSION_S = 300.0  # no stroke for this long starts over
 
+# The fresh Easy stroke: Easy strokes from FRESH_FROM_S to FRESH_TO_S into the row (after the
+# warm-up, whose strokes are shorter, before fatigue; efforts, Recovery and the strokes just after
+# an effort left out). Saved with the session; the next session (within FRESH_MAX_AGE_DAYS) judges
+# its Easy rowing against it from the start. Stroke length is calibrated at FRESH_TO_S: within
+# LENGTH_SAME_CM of the saved length, the saved one stays; clearly longer, today's becomes the
+# reference; clearly shorter, the saved one stays (so the cue speaks up) and the summary says so.
+FRESH_FROM_S, FRESH_TO_S = 120.0, 480.0
+FRESH_MIN = 60  # strokes needed for a fresh Easy stroke
+PROVISIONAL_MIN = 30  # with nothing saved: fresh strokes before a provisional reference
+FRESH_MAX_AGE_DAYS = 30
+LENGTH_SAME_CM = 3.0
+
 CUE_WINDOW = 8  # strokes in the live cue
 CUE_MIN = 6  # strokes into an effort before the first cue
 DRIVE_END_FRACTION = 0.05  # the drive ends at the last sample above this share of the stroke's peak
@@ -369,9 +381,13 @@ class _Effort:
 
 
 class IntervalCoach:
-    def __init__(self, settings: CoachSettings = DEFAULT_SETTINGS, ftp: float | None = None) -> None:
+    def __init__(self, settings: CoachSettings = DEFAULT_SETTINGS, ftp: float | None = None,
+                 reference=None) -> None:
+        """reference: a callable returning the last session's fresh Easy stroke (sessions.
+        latest_fresh_easy), called whenever a new session starts; None: always learn it today."""
         self.settings = settings
         self.ftp = ftp  # rowing FTP, W (SRB_COACH_FTP, or from intervals.icu); None: efforts by steady alone
+        self.reference = reference
         self.session = 0
         self.reset()
 
@@ -412,9 +428,19 @@ class IntervalCoach:
         self.recent: deque[StrokeCurve] = deque(maxlen=SMOOTH)
         self.effort: _Effort | None = None
         self.recovery_left = 0
-        # Easy rowing: judged against the early Easy strokes (baseline, frozen once STEADY_WINDOW
-        # of them are in), so a change through the session shows.
-        self.baseline: dict | None = None
+        # Easy rowing: judged against the fresh Easy stroke (baseline): the last session's when there
+        # is one, else today's (provisional from PROVISIONAL_MIN strokes, set at FRESH_TO_S).
+        self.saved_ref: dict | None = None
+        if self.reference is not None:
+            try:
+                self.saved_ref = self.reference()
+            except Exception:  # noqa: BLE001 - no saved stroke: learn today's
+                log.exception("Could not read the last session's Easy stroke")
+        self.baseline: dict | None = dict(self.saved_ref) if self.saved_ref else None
+        self.fresh: list[StrokeCurve] = []
+        self.fresh_done = False
+        self.fresh_result: dict | None = None
+        self.length_note: dict | None = None
         self.easy_window: deque[StrokeCurve] = deque(maxlen=CUE_WINDOW)
         self.easy_cue: str | None = None
         self.easy_log: list[tuple[float, float]] = []  # (back-half share, length cm) per Easy stroke
@@ -470,6 +496,8 @@ class IntervalCoach:
                                 s.stroke_length_cm, tuple(s.force_n)))
         self.recent.append(s)
         smoothed = statistics.median(stroke_power(r) for r in self.recent)
+        if not self.fresh_done and s.time - self.first_time >= FRESH_TO_S:
+            self._settle_fresh()
 
         if self.effort is None:
             base = self.steady_power()
@@ -502,13 +530,42 @@ class IntervalCoach:
         if self.ready and (stroke_power(s) < base * EASY_RATIO or self.intensity(stroke_power(s)) == "Recovery"):
             return
         self.steady.append(s)
-        if self.baseline is None and len(self.steady) >= STEADY_WINDOW:
-            self.baseline = {"curve": mean_curve(self.steady), "back_share": self.steady_back_share(),
-                             "length_cm": self.steady_length()}
-            log.debug("Easy reference set from the first %d Easy strokes", len(self.steady))
+        elapsed = s.time - self.first_time
+        if FRESH_FROM_S <= elapsed < FRESH_TO_S and (not self.ready or self.intensity(stroke_power(s)) == "Easy"):
+            self.fresh.append(s)
+            if self.baseline is None and len(self.fresh) >= PROVISIONAL_MIN:
+                self.baseline = fresh_stats(self.fresh)
+                log.debug("Provisional Easy reference from %d fresh strokes", len(self.fresh))
         self.easy_window.append(s)
         self.easy_log.append((back_share(s.force_n), s.stroke_length_cm))
         self._update_easy_cue()
+
+    def _fresh_outcome(self) -> tuple[dict | None, dict | None, dict | None]:
+        """From the fresh strokes so far: (today's fresh stroke to save, the reference to use, the
+        length note), by the rules above. (None, None, None) with too few strokes."""
+        if len(self.fresh) < FRESH_MIN:
+            return None, None, None
+        today = fresh_stats(self.fresh)
+        saved = self.saved_ref
+        if not saved:
+            return today, today, None
+        diff = today["length_cm"] - saved["length_cm"]
+        if diff > LENGTH_SAME_CM:  # clearly longer: the new length
+            return today, {**saved, "length_cm": today["length_cm"]}, {"change_cm": round(diff), "kept": False}
+        note = {"change_cm": round(diff), "kept": True} if diff < -LENGTH_SAME_CM else None
+        # within the margin, or shorter: the saved length stays (and is carried to the next session)
+        return {**today, "measured_length_cm": today["length_cm"], "length_cm": saved["length_cm"]}, \
+            {**saved}, note
+
+    def _settle_fresh(self) -> None:
+        self.fresh_done = True
+        result, ref, note = self._fresh_outcome()
+        self.fresh_result, self.length_note = result, note
+        if ref is not None:
+            self.baseline = ref
+            log.info("Fresh Easy stroke: finish %.3f, length %.0f cm (%d strokes)%s", result["back_share"],
+                     result.get("measured_length_cm", result["length_cm"]), result["strokes"],
+                     f"; length {note['change_cm']:+d} cm against last time" if note else "")
 
     def _rebaseline(self) -> None:
         """Rowing has settled at a higher pace: make it the steady reference, no interval."""
@@ -614,8 +671,12 @@ class IntervalCoach:
             / (b["length_cm"] or 1) * 100
         return ratio, drive_lateness(curve, b["curve"]), short_by_pct
 
+    def warming_up(self) -> bool:
+        """The first FRESH_FROM_S of a row: warm-up strokes are shorter, so no Easy cues yet."""
+        return self.first_time is None or (self.last_time or 0) - self.first_time < FRESH_FROM_S
+
     def _update_easy_cue(self) -> None:
-        if self.baseline is None or len(self.easy_window) < CUE_MIN:
+        if self.baseline is None or len(self.easy_window) < CUE_MIN or self.warming_up():
             self.easy_cue = None
             return
         self.easy_cue = self._judge(self.easy_cue, *self._easy_measures())
@@ -648,8 +709,23 @@ class IntervalCoach:
             "intervals": intervals,
             "heart_rate": hr,
             "easy_drift": self.easy_drift(),
-            "findings": findings(intervals) + easy_findings(self.easy_drift()) + heart_rate_findings(hr, intervals),
+            "fresh_easy": self._fresh_record(),
+            "findings": findings(intervals) + easy_findings(self.easy_drift()) + length_findings(self._length_note())
+            + heart_rate_findings(hr, intervals),
         }
+
+    def _fresh_record(self) -> dict | None:
+        """Today's fresh Easy stroke, for the session record (the next session's reference)."""
+        result = self.fresh_result if self.fresh_done else self._fresh_outcome()[0]
+        if not result:
+            return None
+        return {"curve": [round(v, 1) for v in result["curve"]], "back_share": round(result["back_share"], 4),
+                "length_cm": round(result["length_cm"], 1), "strokes": result["strokes"],
+                **({"measured_length_cm": round(result["measured_length_cm"], 1)}
+                   if "measured_length_cm" in result else {})}
+
+    def _length_note(self) -> dict | None:
+        return self.length_note if self.fresh_done else self._fresh_outcome()[2]
 
     def easy_drift(self) -> dict | None:
         """Easy rowing through the session: the finish and stroke length of the last EASY_DRIFT_N
@@ -657,7 +733,10 @@ class IntervalCoach:
         n = EASY_DRIFT_N
         if len(self.easy_log) < 3 * n:
             return None
-        first, last = self.easy_log[:n], self.easy_log[-n:]
+        # the first: the fresh Easy strokes (after the warm-up) when there are enough
+        first = [(back_share(s.force_n), s.stroke_length_cm) for s in self.fresh] \
+            if len(self.fresh) >= n else self.easy_log[:n]
+        last = self.easy_log[-n:]
         f0, f1 = statistics.median(x[0] for x in first), statistics.median(x[0] for x in last)
         l0, l1 = statistics.median(x[1] for x in first), statistics.median(x[1] for x in last)
         return {"finish_pct": round((f1 / f0 - 1) * 100) if f0 else 0, "length_delta_cm": round(l1 - l0)}
@@ -685,6 +764,8 @@ class IntervalCoach:
             "intensity": self.intensity(statistics.median(stroke_power(r) for r in self.recent))
             if self.recent and self.effort is None else None,
             "cue": self.easy_cue if self.effort is None else None,
+            "warming_up": self.warming_up(),
+            "easy_reference": ("last session" if self.saved_ref else "today") if self.baseline else None,
             "stroke_curve": list(self.stroke_log[-1][6]) if self.stroke_log else [],
             "steady_curve": [round(v) for v in (self.baseline["curve"] if self.baseline else mean_curve(self.steady))]
             if self.steady else [],
@@ -825,6 +906,23 @@ DRIFT_SKIP_S = 600.0  # heart rate is still climbing during the warm-up: left ou
 
 
 EASY_DRIFT_N = 60  # strokes at each end of the session's Easy rowing, for easy_drift()
+
+
+def fresh_stats(strokes: list[StrokeCurve]) -> dict:
+    """The fresh Easy stroke from a list of strokes: average curve, its back-half share, length."""
+    curve = mean_curve(strokes)
+    return {"curve": curve, "back_share": back_share(curve),
+            "length_cm": statistics.fmean(s.stroke_length_cm for s in strokes), "strokes": len(strokes)}
+
+
+def length_findings(note: dict | None) -> list[str]:
+    """The stroke length calibration, when today's fresh strokes differed clearly from last time's."""
+    if not note:
+        return []
+    cm = abs(note["change_cm"])
+    if note["kept"]:
+        return [f"Fresh Easy strokes were {cm} cm shorter than last time; the coach kept last time's length."]
+    return [f"Fresh Easy strokes were {cm} cm longer than last time: the new length reference."]
 
 
 def easy_findings(drift: dict | None) -> list[str]:
