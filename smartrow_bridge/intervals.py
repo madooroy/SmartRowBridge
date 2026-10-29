@@ -40,7 +40,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import sessions, webapi
-from .coach import bands_text
+from .coach import SHORTER_CM, bands_text
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +105,24 @@ def _signed(value: int) -> str:
     return f"{value:+d}".replace("-", "−")
 
 
+def effort_line(i: dict) -> str:
+    """'I3 Moderate · 0:56 at 132 W · finish −7%, strokes 4 cm shorter · HR 126'."""
+    notes = []
+    if i.get("rating") in ("short", "ok"):
+        notes.append(f"finish {_signed(i['finish_pct'])}%")
+    if i.get("length_delta_cm", 0) <= SHORTER_CM:
+        notes.append(f"strokes {abs(round(i['length_delta_cm']))} cm shorter")
+    if i.get("legs_late"):
+        notes.append("late push")
+    if i.get("peak_wanders"):
+        notes.append("peak wandered")
+    parts = [f"I{i['index']}" + (f" {i['intensity']}" if i.get("intensity") else ""),
+             f"{_clock(i['duration_s'])} at {i['power_w']} W", ", ".join(notes) or "good"]
+    if i.get("hr_peak"):
+        parts.append(f"HR {i['hr_peak']}")
+    return " \u00b7 ".join(parts)
+
+
 def note_for(record: dict) -> dict:
     """The calendar note for one saved session (sessions.build_record)."""
     started = datetime.fromtimestamp(record["started_at"])
@@ -128,19 +146,7 @@ def note_for(record: dict) -> dict:
         lines += ["", f"Intensities, {source}: {bands}."]
     lines += ["", "What the coach saw:"] + [f"- {f}" for f in record.get("findings", [])]
     if intervals:
-        lines += ["", "Efforts (finish = force in the back half of the drive against Easy; peak = where in "
-                      "the drive the force peaks, \u00b1 stroke to stroke):"]
-        for i in intervals:
-            kind = f"{i['intensity']}  " if i.get("intensity") else ""
-            row = (f"I{i['index']}  {kind}{_clock(i['duration_s'])}  {i['power_w']} W  {i['stroke_rate_spm']} spm  "
-                   f"finish {_signed(i['finish_pct'])}%  length {_signed(round(i['length_delta_cm']))} cm")
-            if "peak_at_pct" in i:
-                row += f"  peak {i['peak_at_pct']}% \u00b1{round(i['peak_spread_pct'])}"
-            if i.get("hr_peak"):
-                row += f"  HR peak {i['hr_peak']}"
-            if i.get("legs_late"):
-                row += "  late push"
-            lines.append(row)
+        lines += ["", "Efforts:"] + [effort_line(i) for i in intervals]
     lines += ["", "Coached by SmartRowBridge."]
     return {
         "category": "NOTE",

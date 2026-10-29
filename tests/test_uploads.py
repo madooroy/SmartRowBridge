@@ -184,6 +184,14 @@ class UploadsTest(unittest.TestCase):
             self.assertAlmostEqual(5 + mark["start_index"], iv["started_at_s"] + offset, delta=1)
             self.assertAlmostEqual(mark["end_index"] - mark["start_index"], iv["duration_s"], delta=1.5)
 
+    def test_effort_line(self):
+        i = {"index": 3, "intensity": "Moderate", "duration_s": 56, "power_w": 132, "rating": "ok",
+             "finish_pct": -7, "length_delta_cm": -4.2, "hr_peak": 126}
+        self.assertEqual(intervals.effort_line(i),
+                         "I3 Moderate \u00b7 0:56 at 132 W \u00b7 finish \u22127%, strokes 4 cm shorter \u00b7 HR 126")
+        self.assertEqual(intervals.effort_line({**i, "rating": "good", "length_delta_cm": 1, "hr_peak": None}),
+                         "I3 Moderate \u00b7 0:56 at 132 W \u00b7 good")
+
     def test_easy_and_recovery_are_not_marked(self):
         record = {"intervals": [{"started_at_s": 100, "duration_s": 60, "intensity": "Moderate"},
                                 {"started_at_s": 300, "duration_s": 60, "intensity": "Easy"}]}
