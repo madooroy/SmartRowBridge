@@ -213,6 +213,29 @@ class FtpTest(unittest.TestCase):
             self.assertIsNone(_fixed_ftp(unset))
 
 
+class FtpReadOnceTest(unittest.TestCase):
+    def test_read_once_retrying_until_online(self):
+        import asyncio
+        import types
+        from unittest import mock
+        from smartrow_bridge import bridge, intervals
+        answers = [OSError("offline"), 185.0]
+        calls = []
+
+        def fake(key):
+            calls.append(key)
+            a = answers.pop(0)
+            if isinstance(a, Exception):
+                raise a
+            return a
+
+        b = types.SimpleNamespace(cfg=types.SimpleNamespace(intervals_key_file="x"), coach=IntervalCoach())
+        with mock.patch.object(intervals, "rowing_ftp", fake), mock.patch.object(intervals, "read_key", lambda f: "k"), \
+                mock.patch.object(bridge, "FTP_RETRY_S", 0.01), self.assertLogs("smartrow_bridge.bridge"):
+            asyncio.run(bridge.Bridge._ftp_loop(b))  # returns once it has an answer
+        self.assertEqual((len(calls), b.coach.ftp), (2, 185.0))
+
+
 class IntensityTest(unittest.TestCase):
     def test_labels_by_percent_of_ftp(self):
         c = IntervalCoach(ftp=185)

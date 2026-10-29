@@ -31,8 +31,7 @@ STATS_INTERVAL_S = 60.0
 STATUS_INTERVAL_S = 1.0
 
 
-FTP_REFRESH_S = 6 * 3600.0  # read the rowing FTP from intervals.icu again this often
-FTP_RETRY_S = 600.0
+FTP_RETRY_S = 120  # until the first answer from intervals.icu (the network may come up after the bridge)
 
 
 def _fixed_ftp(setting: str) -> float | None:
@@ -245,26 +244,33 @@ class Bridge:
             await asyncio.sleep(STATUS_INTERVAL_S)
 
     async def _ftp_loop(self) -> None:
-        """No SRB_COACH_FTP: read the rowing FTP from intervals.icu (when set up), now and every few hours."""
+        """No SRB_COACH_FTP: read the rowing FTP from intervals.icu (when set up) once, at start.
+
+        It changes rarely, so one read per start is enough; the Pi is usually switched on for each
+        row. Until the network is up (or intervals.icu answers) it tries again every few minutes.
+        """
         from . import intervals
+        key = intervals.read_key(self.cfg.intervals_key_file)
+        if not key:
+            return
         warned = False
         while True:
-            key = intervals.read_key(self.cfg.intervals_key_file)
-            wait = FTP_REFRESH_S
-            if key:
-                try:
-                    ftp = await asyncio.to_thread(intervals.rowing_ftp, key)
-                    warned = False
-                    if ftp and ftp != self.coach.ftp:
-                        log.info("Rowing FTP from intervals.icu: %.0f W (efforts from %.0f W)", ftp,
-                                 ftp * self.coach.settings.ftp_floor_pct / 100)
-                    self.coach.ftp = ftp or self.coach.ftp
-                except Exception as exc:  # noqa: BLE001 - offline: the coach carries on with what it has
-                    if not warned:
-                        log.warning("Could not read the rowing FTP from intervals.icu: %s",
-                                    intervals.describe_error(exc))
-                    warned, wait = True, FTP_RETRY_S
-            await asyncio.sleep(wait)
+            try:
+                ftp = await asyncio.to_thread(intervals.rowing_ftp, key)
+            except Exception as exc:  # noqa: BLE001 - offline: the coach carries on without one for now
+                if not warned:
+                    log.warning("Could not read the rowing FTP from intervals.icu (trying again every %d min): %s",
+                                FTP_RETRY_S // 60, intervals.describe_error(exc))
+                    warned = True
+                await asyncio.sleep(FTP_RETRY_S)
+                continue
+            if ftp:
+                log.info("Rowing FTP from intervals.icu: %.0f W (efforts from %.0f W)", ftp,
+                         ftp * self.coach.settings.ftp_floor_pct / 100)
+                self.coach.ftp = ftp
+            else:
+                log.info("No rowing FTP set on intervals.icu: the coach works without one")
+            return
 
     async def run(self) -> None:
         status_task = None
