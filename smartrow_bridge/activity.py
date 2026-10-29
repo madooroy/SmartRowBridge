@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import statistics
 
+MIN_GAP_S = 5.0  # a shorter gap between two efforts is no lap of its own
 RECOVERY_MIN_S = 15.0  # shorter dips stay part of the Easy rowing around them
 SMOOTH = 5  # strokes (median) to judge each stroke's power by
 
@@ -33,6 +34,8 @@ def laps(record: dict, strokes: list[dict], split_easy: bool = False) -> list[di
         start = max(start, cursor)
         if stop <= start:
             continue
+        if out and out[-1]["interval"] is not None and start - cursor < MIN_GAP_S:
+            start = cursor  # an effort split at an intensity step: the parts touch, no lap between
         if start > cursor:
             out.append({"start": cursor, "end": start, "interval": None})
         out.append({"start": start, "end": stop, "interval": index})

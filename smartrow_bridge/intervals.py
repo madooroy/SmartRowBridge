@@ -166,7 +166,7 @@ def activity_name(record: dict) -> str:
 
 
 def _count(n: int) -> str:
-    return {1: "one", 2: "both", 3: "all three"}.get(n, f"all {n}")
+    return {1: "one", 2: "both", 3: "all three"}.get(n, "all of them")
 
 
 def coach_line(record: dict) -> str:
@@ -187,7 +187,7 @@ def coach_line(record: dict) -> str:
     notes = []
     for label, these in (("the finish eased", eased), ("strokes were shorter", shorter)):
         if these:
-            where = (_count(len(these)) if len(these) == len(efforts) and len(efforts) <= 3 else
+            where = (_count(len(these)) if len(these) == len(efforts) else
                      ", ".join(f"I{i['index']}" for i in these))
             notes.append(f"{label} in {where}")
     kept = "it kept its shape" if len(efforts) == 1 else "all kept their shape"
