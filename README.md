@@ -493,9 +493,9 @@ your Easy strokes from 2 to 8 minutes into a row (after the warm-up, whose strok
 you tire; efforts, Recovery and the strokes just after an effort left out). Each session saves it, and the
 next one (within a month) is judged against it from the start, shown in grey, so a finish that is weak
 from the first stroke or fades as you tire shows up. The first 2 minutes are the warm-up (*warming up*, no
-cues). With nothing saved, today's is learned instead. Stroke length is calibrated at 8 minutes: within
-3 cm of last time's, last time's stays; clearly longer, today's becomes the reference; clearly shorter, last
-time's stays, so LONGER STROKES speaks up, and the summary says so. Recovery gets the numbers only. The
+cues). With nothing saved, today's is learned instead. Stroke length is calibrated at 8 minutes: today's
+becomes the reference, unless it is more than 3 cm shorter than last time's; then last time's stays, so
+LONGER STROKES speaks up, and the summary says so. Recovery gets the numbers only. The
 summary adds how the last minutes of Easy rowing compared with the fresh ones.
 
 **With your FTP.** On its own the coach judges efforts against your recent Easy rowing, and has to treat

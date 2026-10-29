@@ -305,10 +305,10 @@ class EasyCueTest(unittest.TestCase):
         return r.coach
 
     def test_length_calibration(self):
-        c = self._calibrate(116)  # within 3 cm: last time's length stays
-        self.assertEqual(c.baseline["length_cm"], 115)
+        c = self._calibrate(113)  # within 3 cm: today's length, quietly
+        self.assertEqual(c.baseline["length_cm"], 113)
         self.assertIsNone(c.length_note)
-        self.assertEqual(c.session_summary()["fresh_easy"]["length_cm"], 115)
+        self.assertEqual(c.session_summary()["fresh_easy"]["length_cm"], 113)
         c = self._calibrate(121)  # clearly longer: the new reference, and saved for next time
         self.assertEqual(c.baseline["length_cm"], 121)
         self.assertIn("Fresh Easy strokes were 6 cm longer than last time: the new length reference.",

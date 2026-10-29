@@ -79,9 +79,9 @@ NEW_SESSION_S = 300.0  # no stroke for this long starts over
 # The fresh Easy stroke: Easy strokes from FRESH_FROM_S to FRESH_TO_S into the row (after the
 # warm-up, whose strokes are shorter, before fatigue; efforts, Recovery and the strokes just after
 # an effort left out). Saved with the session; the next session (within FRESH_MAX_AGE_DAYS) judges
-# its Easy rowing against it from the start. Stroke length is calibrated at FRESH_TO_S: within
-# LENGTH_SAME_CM of the saved length, the saved one stays; clearly longer, today's becomes the
-# reference; clearly shorter, the saved one stays (so the cue speaks up) and the summary says so.
+# its Easy rowing against it from the start. Stroke length is calibrated at FRESH_TO_S: today's
+# becomes the reference unless it is more than LENGTH_SAME_CM shorter than the saved one; then the
+# saved one stays (so the cue speaks up) and the summary says so.
 FRESH_FROM_S, FRESH_TO_S = 120.0, 480.0
 FRESH_MIN = 60  # strokes needed for a fresh Easy stroke
 PROVISIONAL_MIN = 30  # with nothing saved: fresh strokes before a provisional reference
@@ -552,10 +552,11 @@ class IntervalCoach:
         diff = today["length_cm"] - saved["length_cm"]
         if diff > LENGTH_SAME_CM:  # clearly longer: the new length
             return today, {**saved, "length_cm": today["length_cm"]}, {"change_cm": round(diff), "kept": False}
-        note = {"change_cm": round(diff), "kept": True} if diff < -LENGTH_SAME_CM else None
-        # within the margin, or shorter: the saved length stays (and is carried to the next session)
+        if diff >= -LENGTH_SAME_CM:  # within the margin: today's length (no cue for a cm or two)
+            return today, {**saved, "length_cm": today["length_cm"]}, None
+        # clearly shorter: the saved length stays (and is carried to the next session), so the cue speaks up
         return {**today, "measured_length_cm": today["length_cm"], "length_cm": saved["length_cm"]}, \
-            {**saved}, note
+            {**saved}, {"change_cm": round(diff), "kept": True}
 
     def _settle_fresh(self) -> None:
         self.fresh_done = True
