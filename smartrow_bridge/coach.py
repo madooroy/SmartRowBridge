@@ -557,6 +557,10 @@ class IntervalCoach:
             "history": [{k: v for k, v in i.as_dict().items() if k not in ("curve", "steady_curve")}
                         for i in self.intervals[-20:]],
             "show_summary": bool(last and self.effort is None and now - last.ended_at < SUMMARY_SHOW_S),
+            # The latest stroke and the steady shape, for the screens' force curve during steady
+            # rowing too (empty while there is none yet).
+            "stroke_curve": list(self.stroke_log[-1][6]) if self.stroke_log else [],
+            "steady_curve": [round(v) for v in mean_curve(self.steady)] if self.steady else [],
         }
         if self.effort is not None:
             strokes = self.effort.strokes

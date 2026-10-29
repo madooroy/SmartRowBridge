@@ -191,10 +191,14 @@ def preview(directory: str) -> None:
     late = [40, 80, 131, 210, 286, 344, 389, 422, 445, 465, 467, 455, 430, 401, 375, 340, 295, 246, 196, 148, 104,
             68, 32, 7]  # steady shape, pushed 3 samples later: a slow push off the catch
 
+    # A steady stroke a little different from the average steady shape, as real strokes are.
+    steady_stroke = [round(v * (1.06 if i < 9 else 0.95)) for i, v in enumerate(steady)]
+
     def coached(live=None, last=None, show_summary=False):
         status = st("connected", "SmartRow-34", True, True, True, **rowing)
         status["coach"] = {"mode": "interval" if live else "steady", "steady_power_w": 111, "intervals": 2,
-                           "live": live, "last": last, "show_summary": show_summary}
+                           "live": live, "last": last, "show_summary": show_summary,
+                           "stroke_curve": steady_stroke, "steady_curve": steady}
         return status
 
     def live(cue, curve, finish_pct=None, length_delta=None, balance=None, length_balance=None):
@@ -231,6 +235,9 @@ def preview(directory: str) -> None:
         "07e-summary-good": screens.summary_screen(coached(last=good_last, show_summary=True), now, up),
         "07f-summary-short": screens.summary_screen(coached(last=short_last, show_summary=True), now, up),
         "07g-rowing-with-last": screens.rowing_screen(coached(last=short_last), now, up),
+        "07j-rowing-coach-steady": screens.rowing_screen(coached(), now, up),
+        "07k-rowing-coach-warmup": screens.rowing_screen({**coached(), "coach": {**coached()["coach"], "mode": "warmup",
+                                                                              "steady_curve": []}}, now, up),
         "09-hold-to-switch-off": screens.hold_screen(0.6),
         "10-switching-off": screens.switching_off_screen(),
         "11-safe-to-unplug": screens.final_screen("poweroff"),

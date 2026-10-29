@@ -56,6 +56,11 @@
     align-items: center; justify-content: center; }
   .grid4 .value.idle { color: var(--faint); }
   .footer { text-align: center; font-size: calc(var(--label) * 1.2); }
+  /* With the coach: three compact numbers and each stroke's force curve over the steady shape. */
+  #rowing.coached .grid4 { flex: none; grid-template-columns: repeat(3, 1fr); }
+  #rowing.coached .grid4 .value { font-size: clamp(28px, 9vmin, 100px); }
+  #rowing.coached #rDistTile { display: none; }
+  #rCurveTile { flex: 1; min-height: 120px; }
   .footer.idle { color: var(--dim); }
 
   /* Interval */
@@ -182,8 +187,9 @@
         <div class="tile"><div class="label">WATTS</div><div class="value" id="rWatts">–</div></div>
         <div class="tile"><div class="label">STROKES / MIN</div><div class="value" id="rSpm">–</div></div>
         <div class="tile"><div class="label">PACE / 500 M</div><div class="value" id="rPace">–</div></div>
-        <div class="tile"><div class="label">METRES</div><div class="value" id="rDist">0</div></div>
+        <div class="tile" id="rDistTile"><div class="label">METRES</div><div class="value" id="rDist">0</div></div>
       </div>
+      <div class="tile curve" id="rCurveTile" hidden><canvas id="rCurve"></canvas><div class="clen" id="rNote"></div></div>
       <div class="footer" id="rFooter"></div>
     </section>
 
@@ -246,7 +252,8 @@
 "use strict";
 // Mirrors smartrow_bridge/display/screens.py: same bands, cues and curve drawing.
 const C = { bg: "#000", fg: "#f0f0f0", dim: "#878787", faint: "#464646", tile: "#1a1a1a",
-            green: "#46cd5f", amber: "#f5af2d", red: "#eb4b41", gap: "#d7d7d7" };
+            green: "#46cd5f", amber: "#f5af2d", red: "#eb4b41", gap: "#d7d7d7",
+            blue: "#5aa5f0" };  // blue: the force curve during steady rowing (no cue; steady is the reference)
 const GOOD_PCT = -5, OK_PCT = -12, METER_MIN = -30, METER_MAX = 15, FORCE_HALF = 12;
 const STALE_S = 5, RECALL_S = 20, POLL_MS = 1000;
 // Two words: what to do, and the part of the stroke; never a muscle (see coach.py).
@@ -410,7 +417,14 @@ function renderRowing(st) {
   set("rPace", live(fmtPace(m.pace_s_per_500m ?? 0)));
   set("rDist", String(m.distance_m ?? 0));
   const coach = st.coach;
-  let footer = `${fmtTime(m.elapsed_s)} · ${m.stroke_count ?? 0} strokes`;
+  const curve = coach && coach.stroke_curve && coach.stroke_curve.length;
+  $("rowing").classList.toggle("coached", !!curve);
+  $("rCurveTile").hidden = !curve;
+  if (curve) {  // each stroke over your steady shape, as during efforts but without a cue
+    drawCurve($("rCurve"), coach.stroke_curve, coach.steady_curve, C.blue, "both");
+    $("rNote").textContent = coach.mode === "warmup" ? "learning your steady stroke" : "";
+  }
+  let footer = `${fmtTime(m.elapsed_s)} · ` + (curve ? `${m.distance_m ?? 0} m` : `${m.stroke_count ?? 0} strokes`);
   if (m.heart_rate_bpm) footer += ` · ♥ ${m.heart_rate_bpm}`;
   if (!rowing) footer += " · paused";
   if (coach) footer += coach.mode === "warmup" ? " · coach learning your steady rowing"
@@ -884,6 +898,18 @@ function drawPip() {
          W / 2, 240, 26, last.legs_late ? C.amber : C.dim, "center", !!last.legs_late);
   } else {
     const m = st.metrics || {}, rowing = !!st.rowing;
+    if (coach && coach.stroke_curve && coach.stroke_curve.length) {
+      // Numbers on one line, then each stroke's force curve over the steady shape.
+      text(rowing ? `${m.power_w} W` : "–", 16, 40, 52, rowing ? C.fg : C.faint, "left");
+      text(rowing ? `${fmtPace(m.pace_s_per_500m)} · ${Math.round(m.stroke_rate_spm)} spm` +
+                    (m.heart_rate_bpm ? ` · ♥ ${m.heart_rate_bpm}` : "") : "paused",
+           W - 16, 40, 26, rowing ? C.fg : C.dim, "right", false);
+      g.fillStyle = C.tile; g.beginPath(); g.roundRect(10, 76, W - 20, 160, 10); g.fill();
+      plotCurve(g, 10, 76, W - 20, 160, coach.stroke_curve, coach.steady_curve, C.blue, "both", false);
+      text(coach.mode === "warmup" ? "coach: learning steady" : `steady ${coach.steady_power_w} W`,
+           W / 2, 254, 18, C.dim, "center", false);
+      return;
+    }
     text(rowing ? `${m.power_w} W` : "–", W / 2, 80, 80, rowing ? C.fg : C.faint, "center");
     text(rowing ? `${fmtPace(m.pace_s_per_500m)} /500m · ${Math.round(m.stroke_rate_spm)} spm` +
                (m.heart_rate_bpm ? ` · ♥ ${m.heart_rate_bpm}` : "") : "paused",

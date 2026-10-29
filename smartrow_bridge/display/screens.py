@@ -28,6 +28,7 @@ FAINT = (70, 70, 70)
 TILE = (26, 26, 26)
 GREEN = (70, 205, 95)
 AMBER = (245, 175, 45)
+BLUE = (90, 165, 240)  # the force curve during steady rowing (no cue: steady is the reference)
 RED = (235, 75, 65)
 GAP = (215, 215, 215)  # force missing in the finish, against the steady shape
 
@@ -250,7 +251,33 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
 
     m = status.get("metrics") or {}
     rowing = bool(status.get("rowing"))
-    live = (lambda v: v) if rowing else (lambda v: "–")
+    live = (lambda v: v) if rowing else (lambda v: "\u2013")
+    footer = f"{format_time(m.get('elapsed_s', 0))}  \u00b7  {m.get('distance_m', 0)} m"
+    if m.get("heart_rate_bpm"):
+        footer += f"  \u00b7  \u2665 {m['heart_rate_bpm']}"
+    if not rowing:
+        footer += "  \u00b7  paused"
+
+    if coach.get("stroke_curve"):
+        # With the coach: three numbers, and each stroke's force curve over your steady shape.
+        tiles = [("WATTS", live(str(m.get("power_w", 0)))),
+                 ("PACE", live(format_pace(int(m.get("pace_s_per_500m", 0))))),
+                 ("SPM", live(str(round(m.get("stroke_rate_spm", 0)))))]
+        top, tile_w, tile_h, gap = 26, 101, 50, 4
+        for i, (label, value) in enumerate(tiles):
+            x0 = 4 + i * (tile_w + gap)
+            draw.rounded_rectangle((x0, top, x0 + tile_w, top + tile_h), radius=8, fill=TILE)
+            draw.text((x0 + 8, top + 4), label, font=font(12), fill=DIM)
+            draw.text((x0 + tile_w // 2, top + 32), value, font=_fit(draw, value, 28, tile_w - 12, bold=True),
+                      fill=FG if value != "\u2013" else FAINT, anchor="mm")
+        steady = coach.get("steady_curve") or []
+        _plot_curves(draw, (4, 80, WIDTH - 4, 196), coach["stroke_curve"], steady, BLUE, "both")
+        if coach.get("mode") == "warmup":
+            draw.text((12, 85), "learning your steady stroke", font=font(12), fill=DIM)
+        draw.text((WIDTH // 2, 206), footer, font=_fit(draw, footer, 15, WIDTH - 16), fill=FG if rowing else DIM,
+                  anchor="mm")
+        return image
+
     tiles = [
         ("WATTS", live(str(m.get("power_w", 0)))),
         ("STROKES / MIN", live(str(round(m.get("stroke_rate_spm", 0))))),
@@ -263,15 +290,15 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
         y0 = top + (i // 2) * (tile_h + gap)
         draw.rounded_rectangle((x0, y0, x0 + tile_w, y0 + tile_h), radius=8, fill=TILE)
         draw.text((x0 + 10, y0 + 7), label, font=font(13), fill=DIM)
-        colour = FG if value != "–" else FAINT
+        colour = FG if value != "\u2013" else FAINT
         draw.text((x0 + tile_w // 2, y0 + 53), value, font=_fit(draw, value, 46, tile_w - 16, bold=True),
                   fill=colour, anchor="mm")
 
-    footer = f"{format_time(m.get('elapsed_s', 0))}   ·   {m.get('stroke_count', 0)} strokes"
+    footer = f"{format_time(m.get('elapsed_s', 0))}   \u00b7   {m.get('stroke_count', 0)} strokes"
     if m.get("heart_rate_bpm"):
-        footer = f"{format_time(m.get('elapsed_s', 0))}  ·  {m.get('stroke_count', 0)} strokes  ·  \u2665 {m['heart_rate_bpm']}"
+        footer = f"{format_time(m.get('elapsed_s', 0))}  \u00b7  {m.get('stroke_count', 0)} strokes  \u00b7  \u2665 {m['heart_rate_bpm']}"
     if not rowing:
-        footer += "   ·   paused"
+        footer += "   \u00b7   paused"
     draw.text((WIDTH // 2, top + 2 * tile_h + gap + 14), footer, font=font(16), fill=FG if rowing else DIM,
               anchor="mm")
     return image

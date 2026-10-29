@@ -321,7 +321,10 @@ without a phone:
   connected. The Pi's name and IP address are at the bottom; once the
   [web page](#optional-a-web-page-for-phones-and-tablets) is set up, its address instead, by name and by IP
   address, ready to type into a tablet.
-- **Rowing:** watts, strokes per minute, pace and distance, with time and stroke count. It appears by itself
+- **Rowing:** watts, strokes per minute, pace and distance, with time and stroke count. With the
+  [interval coach](#optional-interval-coach-experimental) on: watts, pace and stroke rate, and each stroke's
+  force curve (blue) over your steady shape (grey line), as during efforts but without a cue, since steady
+  rowing is the reference. It appears by itself
   when you start rowing and goes back to the status a minute after you stop. Button **B** switches between
   the two.
 - **Switching off:** hold button **A** for 2 seconds (you can let go once it says *Switching off…*).
