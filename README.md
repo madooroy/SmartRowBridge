@@ -547,9 +547,9 @@ itself, so the SmartRow app's own Strava link is no longer needed:
 - **Strava:** the same activity, type Rowing (indoor), with the coach's summary as its description. This
   needs your own Strava API application, which Strava offers to every account with a subscription; it
   stays in "single-player mode" (only your account can use it).
-  Strava gets it as a TCX file naming no device, like the SmartRow app's own uploads, so Strava shows
-  "Rowed using" and your Strava application's name: call the application **SmartRow** to keep
-  "Rowed using SmartRow".
+  Strava gets it as a TCX file naming no device, like the SmartRow app's own uploads. Strava doesn't
+  show the name of a personal API application on the activity, so the description starts with
+  "Rowed using SmartRow" instead.
 
 ```bash
 sudo bash ~/smartrow-bridge/tools/setup_intervals.sh     # your intervals.icu API key (Settings, Developer settings)

@@ -17,9 +17,9 @@ The Client Secret and the tokens are kept in /etc/smartrow-bridge/strava.json, r
 root only. Strava's access tokens last six hours; the Pi renews them itself.
 
 Uploads go through Strava's upload API: the session as a TCX file (tcxfile.py), marked as
-indoor (trainer). Like the SmartRow app's own uploads, the file names no device, so Strava
-shows the activity as "Rowed using <your Strava app's name>": name the app SmartRow to keep
-"Rowed using SmartRow". The activity type (SRB_STRAVA_SPORT_TYPE, Rowing) is set on the
+indoor (trainer). Like the SmartRow app's own uploads, the file names no device. Strava
+doesn't show a personal API app's name on the activity, so the description starts with
+"Rowed using SmartRow" (intervals.note_for). The activity type (SRB_STRAVA_SPORT_TYPE, Rowing) is set on the
 activity once it is there. Strava itself turns away an exact duplicate; that counts as done.
 """
 
@@ -172,7 +172,7 @@ class StravaAccount:
 
 def setup(path: str) -> int:
     print("Strava setup. You need a Strava API application: create one at https://www.strava.com/settings/api")
-    print('(name it SmartRow to keep "Rowed using SmartRow" on Strava; any website; "Authorization Callback Domain": localhost).\n')
+    print('(any name, e.g. SmartRow; any website; "Authorization Callback Domain": localhost).\n')
     client_id = input("Client ID: ").strip()
     client_secret = getpass.getpass("Client Secret (hidden): ").strip()
     if not client_id or not client_secret:
