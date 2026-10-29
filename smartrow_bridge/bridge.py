@@ -31,7 +31,7 @@ STATS_INTERVAL_S = 60.0
 STATUS_INTERVAL_S = 1.0
 
 
-FTP_RETRY_S = 120  # until the first answer from intervals.icu (the network may come up after the bridge)
+FTP_RETRY_S = 30  # until the first answer from intervals.icu (the network may come up after the bridge)
 
 
 def _fixed_ftp(setting: str) -> float | None:
@@ -259,8 +259,8 @@ class Bridge:
                 ftp = await asyncio.to_thread(intervals.rowing_ftp, key)
             except Exception as exc:  # noqa: BLE001 - offline: the coach carries on without one for now
                 if not warned:
-                    log.warning("Could not read the rowing FTP from intervals.icu (trying again every %d min): %s",
-                                FTP_RETRY_S // 60, intervals.describe_error(exc))
+                    log.warning("Could not read the rowing FTP from intervals.icu (trying again every %d s): %s",
+                                FTP_RETRY_S, intervals.describe_error(exc))
                     warned = True
                 await asyncio.sleep(FTP_RETRY_S)
                 continue
