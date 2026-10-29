@@ -80,9 +80,12 @@ def replay(path: Path, settings: CoachSettings, save_dir: Path | None = None, ft
     cues: dict[int, Counter] = {}
     for stroke in strokes_from_csv(path):
         coach.add(stroke)
-        live = coach.state(stroke.time).get("live")
+        st = coach.state(stroke.time)
+        live = st.get("live")
         if live:
             cues.setdefault(live["index"], Counter())[live["cue"]] += 1
+        elif st.get("intensity") == "Easy":  # Easy rowing: its own cue (index 0), None while learning
+            cues.setdefault(0, Counter())[st.get("cue")] += 1
     coach.state(float("inf"))  # an effort still running at the end of the file
     saved = None
     if save_dir is not None:
@@ -95,9 +98,15 @@ def replay(path: Path, settings: CoachSettings, save_dir: Path | None = None, ft
 
 
 def describe(path: Path, result: dict) -> str:
-    lines = [f"{path.name}: {result['strokes']} strokes, steady about {result['steady_power_w']:.0f} W"]
+    lines = [f"{path.name}: {result['strokes']} strokes, Easy about {result['steady_power_w']:.0f} W"]
+    easy = result["cues"].get(0, Counter())
+    if easy:
+        total = sum(easy.values())
+        shares = ", ".join(f"{CUE_NAMES.get(cue, cue) if cue else 'learning'} {n * 100 // total}%"
+                           for cue, n in easy.most_common())
+        lines.append(f"  Easy rowing, {total} strokes: {shares}")
     if not result["intervals"]:
-        lines.append("  no intervals")
+        lines.append("  no efforts")
     for summary in result["intervals"]:
         lines.append(f"  {summary.log_line()}")
         counts = result["cues"].get(summary.index, Counter())

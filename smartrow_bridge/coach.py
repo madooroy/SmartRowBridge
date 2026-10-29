@@ -333,11 +333,13 @@ class IntervalSummary:
 
     def log_line(self) -> str:
         m, s = divmod(round(self.duration_s), 60)
-        return (f"Interval {self.index}: {m}:{s:02d}, {self.strokes} strokes, {self.power_w:.0f} W, "
+        label = f" {self.intensity}" + (f" ({round(self.power_w * 100 / self.ftp)}% FTP)" if self.ftp else "") \
+            if self.intensity else ""
+        return (f"Interval {self.index}: {m}:{s:02d}, {self.strokes} strokes, {self.power_w:.0f} W{label}, "
                 f"{self.stroke_rate_spm:.1f} spm, length {self.length_cm:.0f} cm ({self.length_delta_cm:+.0f}), "
                 f"peak {self.peak_n:.0f} N at {self.peak_at_pct:.0f}% \u00b1{self.peak_spread_pct:.1f} "
-                f"(steady {self.steady_peak_at_pct:.0f}% \u00b1{self.steady_peak_spread_pct:.1f}), "
-                f"finish {self.finish_pct:+d}% vs steady ({self.rating})"
+                f"(Easy {self.steady_peak_at_pct:.0f}% \u00b1{self.steady_peak_spread_pct:.1f}), "
+                f"finish {self.finish_pct:+d}% vs Easy ({self.rating})"
                 + (f", late push ({self.lateness:+.1f}% of the drive)" if self.legs_late else ""))
 
 
