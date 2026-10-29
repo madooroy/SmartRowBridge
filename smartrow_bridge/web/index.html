@@ -173,6 +173,7 @@
   <button id="sessBtn" hidden title="Saved summaries of your sessions">Sessions</button>
   <button id="full" hidden title="Hide the browser's address bar (swipe from the top edge, or tap again, to leave)">Full screen</button>
   <button id="float" hidden title="Keep the coach in a floating window over other apps">Float</button>
+  <button id="pipShapeBtn" hidden title="The floating window's shape: wide (5:4) or tall (4:5)">Shape: wide</button>
 </header>
 
 <div id="layout">
@@ -871,7 +872,13 @@ $("share").addEventListener("click", shareSession);
 // updating while another app is in front depends on the browser: worth a test.
 
 const pipCanvas = document.createElement("canvas");
-pipCanvas.width = 480; pipCanvas.height = 270;
+// The window keeps the shape of the picture: wide (5:4) or tall (4:5); Android lets you move it and
+// pinch it bigger or smaller, in that shape. The Shape button switches (remembered on this device).
+const PIP_SHAPES = { wide: [480, 384], tall: [384, 480] };
+let pipShape = "wide";
+try { if (localStorage.getItem("pipShape") === "tall") pipShape = "tall"; } catch (e) { /* private mode */ }
+function setPipSize() { [pipCanvas.width, pipCanvas.height] = PIP_SHAPES[pipShape]; }
+setPipSize();
 const pipVideo = $("pipVideo");
 const pipSupported = !!pipCanvas.captureStream &&
   ((document.pictureInPictureEnabled && pipVideo.requestPictureInPicture) || pipVideo.webkitSetPresentationMode);
@@ -879,58 +886,65 @@ let pipOn = false;
 
 function drawPip() {
   if (!pipOn) return;
-  const g = pipCanvas.getContext("2d"), W = 480, H = 270, st = state;
+  const g = pipCanvas.getContext("2d"), W = pipCanvas.width, H = pipCanvas.height, st = state;
   g.fillStyle = C.bg; g.fillRect(0, 0, W, H);
   const text = (t, x, y, size, colour, align = "left", bold = true) => {
     g.font = `${bold ? "700 " : ""}${size}px system-ui, sans-serif`; g.fillStyle = colour; g.textAlign = align;
     g.textBaseline = "middle"; g.fillText(t, x, y);
   };
-  if (!st || st.stage === null || st.age_s > STALE_S) { text("Bridge not running", W / 2, H / 2, 36, C.red, "center"); return; }
+  const box = (y, h, colour, r = 10) => { g.fillStyle = colour; g.beginPath(); g.roundRect(10, y, W - 20, h, r); g.fill(); };
+  if (!st || st.stage === null || st.age_s > STALE_S) { text("Bridge not running", W / 2, H / 2, 32, C.red, "center"); return; }
   const coach = st.coach, live = coach && coach.live, last = coach && coach.last;
+  const m = st.metrics || {}, rowing = !!st.rowing;
+  // The bottom line: time since the first stroke and heart rate, on every view.
+  const session = (m.elapsed_s ? `⏱ ${fmtTime(m.elapsed_s)}` : "") + (m.heart_rate_bpm ? `   ♥ ${m.heart_rate_bpm}` : "");
+  const CUE_H = 78, FOOT = 34;  // cue banner and the bottom line
+  const footer = () => { if (session.trim()) text(session.trim(), W / 2, H - FOOT / 2 - 2, 22, C.dim, "center", false); };
   if (live) {
-    text(fmtTime(live.elapsed_s), 16, 50, 58, C.fg);  // time and power the same size
-    text(`${live.power_w} W`, W - 16, 50, 58, C.fg, "right");
-    const hrNow = st.metrics && st.metrics.heart_rate_bpm;
+    text(fmtTime(live.elapsed_s), 16, 42, 54, C.fg);  // effort time and power, the same size
+    text(`${live.power_w} W`, W - 16, 42, 54, C.fg, "right");
     const [, curveColour] = CUES[live.cue] || ["", C.fg];
-    g.fillStyle = C.tile; g.beginPath(); g.roundRect(10, 86, W - 20, 82, 10); g.fill();
-    plotCurve(g, 10, 86, W - 20, 82, live.stroke_curve || live.curve, live.steady_curve, curveColour, "both", false);
-    if (hrNow) text(`♥ ${hrNow}`, W - 22, 100, 18, C.dim, "right", false);
+    const top = 80, cueY = H - FOOT - CUE_H - 6;
+    box(top, cueY - top - 8, C.tile);
+    plotCurve(g, 10, top, W - 20, cueY - top - 8, live.stroke_curve || live.curve, live.steady_curve, curveColour, "both", false);
     const [label, cueColour] = CUES[live.cue] || ["…", C.tile];
-    g.fillStyle = cueColour; g.beginPath(); g.roundRect(10, 175, W - 20, 80, 14); g.fill();
-    text(label, W / 2, 216, label.length > 14 ? 34 : 44, live.cue ? C.bg : C.dim, "center");
+    box(cueY, CUE_H, cueColour, 14);
+    const size = Math.min(44, Math.floor((W - 40) / (label.length * 0.62)));
+    text(label, W / 2, cueY + CUE_H / 2, size, live.cue ? C.bg : C.dim, "center");
+    footer();
   } else if (last && ((coach.show_summary && closedIndex !== last.index) || Date.now() / 1000 < recallUntil)) {
     const colour = shapeColour(last), bal = last.balance, hasBal = bal !== null && bal !== undefined;
-    text((last.intensity ? `${last.intensity.toUpperCase()} · ` : "") + `INTERVAL ${last.index}`, 16, 34, 22, C.dim);
-    text(`${fmtTime(last.duration_s)} · ${last.power_w} W`, W / 2, 95, 50, C.fg, "center");
-    text(hasBal ? "SHAPE" : "FINISH", 16, 175, 22, C.dim, "left", false);
+    text((last.intensity ? `${last.intensity.toUpperCase()} · ` : "") + `INTERVAL ${last.index}`, 16, 36, 22, C.dim);
+    text(fmtTime(last.duration_s), W / 2, H * 0.24, 56, C.fg, "center");
+    text(`${last.power_w} W`, W / 2, H * 0.40, 56, C.fg, "center");
+    text(hasBal ? "SHAPE" : "FINISH", 16, H * 0.60, 24, C.dim, "left", false);
     text(hasBal ? (bal >= 1 ? "LATE" : bal <= -1 ? "FADED" : "GOOD") : signed(last.finish_pct, "%"),
-         W - 16, 175, 56, colour, "right");
-    text(last.legs_late ? `LATE PUSH · peak ${last.peak_at_pct ?? "–"}%, Easy ${last.steady_peak_at_pct ?? "–"}%`
-         : `length ${signed(Math.round(last.length_delta_cm), " cm")}`,
-         W / 2, 240, 26, last.legs_late ? C.amber : C.dim, "center", !!last.legs_late);
+         W - 16, H * 0.60, 60, colour, "right");
+    text(last.legs_late ? `LATE PUSH · peak ${last.peak_at_pct ?? "–"}%` : `length ${signed(Math.round(last.length_delta_cm), " cm")}`,
+         W / 2, H * 0.76, 26, last.legs_late ? C.amber : C.dim, "center", !!last.legs_late);
+    footer();
+  } else if (coach && coach.stroke_curve && coach.stroke_curve.length && coach.intensity !== "Recovery") {
+    // Easy: power, then pace and rate, each stroke over your fresh Easy stroke, and the cue.
+    const [label, cueColour] = CUES[coach.cue] || [coach.warming_up ? "warming up" : "learning your Easy stroke", null];
+    text(rowing ? `${m.power_w} W` : "–", 16, 36, 44, rowing ? C.fg : C.faint, "left");
+    text(rowing ? `${fmtPace(m.pace_s_per_500m)} · ${Math.round(m.stroke_rate_spm)} spm` : "paused",
+         W - 16, 36, 24, rowing ? C.fg : C.dim, "right", false);
+    const top = 70, cueY = H - FOOT - CUE_H - 6;
+    box(top, cueY - top - 8, C.tile);
+    plotCurve(g, 10, top, W - 20, cueY - top - 8, coach.stroke_curve, coach.steady_curve, cueColour || C.blue, "both", false);
+    text("EASY", 22, top + 16, 16, C.dim, "left");
+    box(cueY, CUE_H, cueColour || C.tile, 14);
+    const size = cueColour ? Math.min(42, Math.floor((W - 40) / (label.length * 0.62))) : 22;
+    text(label, W / 2, cueY + CUE_H / 2, size, cueColour ? C.bg : C.dim, "center", !!cueColour);
+    footer();
   } else {
-    const m = st.metrics || {}, rowing = !!st.rowing;
-    if (coach && coach.stroke_curve && coach.stroke_curve.length && coach.intensity !== "Recovery") {
-      // Easy: the numbers on one line, each stroke over your early Easy strokes, and the cue.
-      const [label, cueColour] = CUES[coach.cue] || [coach.warming_up ? "warming up" : "learning your Easy stroke", null];
-      text(rowing ? `${m.power_w} W` : "–", 16, 34, 46, rowing ? C.fg : C.faint, "left");
-      text(rowing ? `${fmtPace(m.pace_s_per_500m)} · ${Math.round(m.stroke_rate_spm)} spm` +
-                    (m.heart_rate_bpm ? ` · ♥ ${m.heart_rate_bpm}` : "") : "paused",
-           W - 16, 34, 24, rowing ? C.fg : C.dim, "right", false);
-      g.fillStyle = C.tile; g.beginPath(); g.roundRect(10, 62, W - 20, 118, 10); g.fill();
-      plotCurve(g, 10, 62, W - 20, 118, coach.stroke_curve, coach.steady_curve, cueColour || C.blue, "both", false);
-      text("EASY", 22, 78, 16, C.dim, "left");
-      g.fillStyle = cueColour || C.tile; g.beginPath(); g.roundRect(10, 190, W - 20, 70, 14); g.fill();
-      text(label, W / 2, 226, cueColour ? (label.length > 14 ? 34 : 42) : 24, cueColour ? C.bg : C.dim, "center", !!cueColour);
-      return;
-    }
-    text(rowing ? `${m.power_w} W` : "–", W / 2, 80, 80, rowing ? C.fg : C.faint, "center");
-    text(rowing ? `${fmtPace(m.pace_s_per_500m)} /500m · ${Math.round(m.stroke_rate_spm)} spm` +
-               (m.heart_rate_bpm ? ` · ♥ ${m.heart_rate_bpm}` : "") : "paused",
-         W / 2, 170, 32, rowing ? C.fg : C.dim, "center", false);
-    if (coach && coach.intensity === "Recovery") text("RECOVERY", W / 2, 235, 26, C.blue, "center");
+    text(rowing ? `${m.power_w} W` : "–", W / 2, H * 0.28, 92, rowing ? C.fg : C.faint, "center");
+    text(rowing ? `${fmtPace(m.pace_s_per_500m)} /500m · ${Math.round(m.stroke_rate_spm)} spm` : "paused",
+         W / 2, H * 0.52, 30, rowing ? C.fg : C.dim, "center", false);
+    if (coach && coach.intensity === "Recovery") text("RECOVERY", W / 2, H * 0.70, 30, C.blue, "center");
     else text(coach ? (coach.mode === "warmup" ? "coach: learning your Easy rowing" : `coach ready · Easy ${coach.steady_power_w} W`)
-                    : "coach off", W / 2, 235, 22, C.dim, "center", false);
+                    : "coach off", W / 2, H * 0.70, 22, C.dim, "center", false);
+    footer();
   }
 }
 
@@ -953,6 +967,14 @@ async function togglePip() {
 if (pipSupported) {
   $("float").hidden = false;
   $("float").addEventListener("click", togglePip);
+  const shapeBtn = $("pipShapeBtn");
+  const showShape = () => { shapeBtn.textContent = `Shape: ${pipShape}`; };
+  shapeBtn.hidden = false; showShape();
+  shapeBtn.addEventListener("click", () => {
+    pipShape = pipShape === "wide" ? "tall" : "wide";
+    try { localStorage.setItem("pipShape", pipShape); } catch (e) { /* not kept: fine */ }
+    setPipSize(); showShape(); drawPip();  // an open floating window takes the new shape
+  });
   pipVideo.addEventListener("leavepictureinpicture", () => { pipOn = false; });
 }
 // A still canvas can stall the stream: redraw a little more often than the data changes.
