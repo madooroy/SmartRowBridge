@@ -496,7 +496,7 @@ compared with the first.
 **With your FTP.** On its own the coach judges efforts against your recent Easy rowing, and has to treat
 anything longer than 5 minutes as a new Easy pace (otherwise a warm-up ramping into the main set could pass
 for one long effort), which cuts off longer efforts. With your rowing FTP, an effort is anything Moderate or
-harder (67 % of FTP and up), with **no time limit**: it lasts until you drop back to Easy. On a 45-minute
+harder (67 % of FTP and up), with **no time limit**: it lasts until you drop back to Recovery or Easy. On a 45-minute
 class (FTP 185 W: Easy rowing 98-109 W, efforts 130-150 W, the last one 6 minutes) this found all eight
 efforts, where without an FTP the six-minute one was taken for a new Easy pace. The summary then gives each
 effort's label and % of FTP, and the uploaded activity has a lap for each stretch (Easy, Moderate,
