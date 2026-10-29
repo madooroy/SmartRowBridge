@@ -162,7 +162,7 @@ class UploadsTest(unittest.TestCase):
         body = json.loads(put[3])
         self.assertTrue(body["name"].endswith(" Row"))
         self.assertIn("What the coach saw:", body["description"])
-        self.assertTrue(body["description"].startswith("Rowed with SmartRow\n"))
+        self.assertTrue(body["description"].startswith("Rowed using SmartRow\n"))
 
     def test_rowing_ftp_from_intervals(self):
         self.assertEqual(intervals.rowing_ftp("secret-key"), 185.0)  # the indoor FTP when set

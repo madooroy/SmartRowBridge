@@ -106,7 +106,7 @@ def note_for(record: dict) -> dict:
     if intervals:
         title += f" · {len(intervals)} effort{'s' if len(intervals) > 1 else ''}"
         title += f", {faded} faded" if faded else ", all kept their shape"
-    lines = ["Rowed with SmartRow", "",
+    lines = ["Rowed using SmartRow", "",
              f"Rowed at {started.strftime('%H:%M')}: {record.get('avg_power_w', 0)} W average, "
              f"Easy {record.get('steady_power_w', 0)} W, {record.get('strokes', 0)} strokes."]
     if record.get("ftp"):

@@ -3,7 +3,7 @@
 
 Shaped like the SmartRow app's own Strava uploads: no device ("Creator") in the file and
 Sport "Other", the activity type being set on Strava afterwards (strava.py); the description
-starts "Rowed with SmartRow". Unlike SmartRow's, it has a point per stroke and a lap for each
+starts "Rowed using SmartRow". Unlike SmartRow's, it has a point per stroke and a lap for each
 stretch: Easy, each effort, Recovery (activity.py). Standard library only.
 
 Per point: time, distance from the session's start, heart rate (when the bridge had a
