@@ -387,7 +387,7 @@ def progress_findings(points: list[dict], weeks: int | None, now: float | None =
     if len(long) == 1:
         p = long[0]
         out.append(f"Longer efforts (1:30 or more) so far: finish {_signed_pct(p['finish_long'])} on "
-                   f"{_day(p['started_at'])}; the aim is within 5% of steady.")
+                   f"{_day(p['started_at'])}; the aim is within 5% of Easy.")
     elif long:
         a, b = _trend(points, "finish_long")
         if b - a >= 3:

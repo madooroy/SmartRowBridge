@@ -197,12 +197,12 @@ class FtpTest(unittest.TestCase):
             r.row(30, 105)
             self.assertEqual(len(r.summaries), found, ftp)
         self.assertEqual(r.summaries[0].as_dict()["ftp_pct"], 78)
-        self.assertIn("Efforts at 78% of FTP.", coach.findings([{**r.summaries[0].as_dict(), "started_at_s": 0}]))
+        self.assertIn("Efforts: 1 Moderate at 78% of FTP.", coach.findings([{**r.summaries[0].as_dict(), "started_at_s": 0}]))
 
     def test_warmup_below_the_floor_is_not_an_effort(self):
         r = Rower(ftp=185)
         r.row(40, 80)  # easy start
-        r.row(200, 105)  # into steady rowing: 31 % more, but under 65 % of FTP (120 W)
+        r.row(200, 105)  # into steady rowing: 31 % more, but under Moderate (67 % of FTP)
         self.assertEqual(r.summaries, [])
         self.assertIsNone(r.state().get("live"))
 
@@ -211,6 +211,44 @@ class FtpTest(unittest.TestCase):
         self.assertEqual(_fixed_ftp("185"), 185.0)
         for unset in ("", "auto", "off", "0"):
             self.assertIsNone(_fixed_ftp(unset))
+
+
+class IntensityTest(unittest.TestCase):
+    def test_labels_by_percent_of_ftp(self):
+        c = IntervalCoach(ftp=185)
+        for watts, label in ((70, "Recovery"), (100, "Easy"), (145, "Moderate"), (185, "Challenging"),
+                             (230, "Max")):
+            self.assertEqual(c.intensity(watts), label, watts)
+
+    def test_no_time_limit_with_an_ftp(self):
+        self.assertEqual(IntervalCoach(ftp=185).max_effort_s, float("inf"))
+        self.assertEqual(IntervalCoach().max_effort_s, 300)
+        r = Rower(ftp=185)
+        r.row(60, 105)
+        r.row(400, 150)  # about 19 minutes at Moderate
+        r.row(30, 105)
+        self.assertEqual(len(r.summaries), 1)
+        self.assertEqual(r.summaries[0].as_dict()["intensity"], "Moderate")
+        self.assertGreater(r.summaries[0].duration_s, 18 * 60)
+
+    def test_easy_and_recovery_in_state(self):
+        r = Rower(ftp=185)
+        r.row(60, 105)
+        self.assertEqual(r.state()["intensity"], "Easy")
+        r.row(20, 60)
+        self.assertEqual(r.state()["intensity"], "Recovery")
+        self.assertIsNone(r.state()["cue"])  # no cues in Recovery
+
+
+class EasyCueTest(unittest.TestCase):
+    def test_easy_strokes_judged_against_the_first_minute(self):
+        r = Rower(ftp=185)
+        r.row(70, 105)
+        self.assertEqual(r.state()["cue"], "good")
+        r.row(10, 105, FADED)
+        self.assertEqual(r.state()["cue"], "finish")
+        r.row(10, 105, length=110)
+        self.assertEqual(r.state()["cue"], "length")
 
 
 class PeakTest(unittest.TestCase):

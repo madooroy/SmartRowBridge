@@ -198,17 +198,18 @@ def preview(directory: str) -> None:
         status = st("connected", "SmartRow-34", True, True, True, **rowing)
         status["coach"] = {"mode": "interval" if live else "steady", "steady_power_w": 111, "intervals": 2,
                            "live": live, "last": last, "show_summary": show_summary,
-                           "stroke_curve": steady_stroke, "steady_curve": steady}
+                           "stroke_curve": steady_stroke, "steady_curve": steady, "intensity": "Easy", "cue": "good"}
         return status
 
     def live(cue, curve, finish_pct=None, length_delta=None, balance=None, length_balance=None):
         return {"index": 3, "elapsed_s": 72, "strokes": 25, "power_w": 154, "length_cm": 112, "cue": cue,
                 "finish_pct": finish_pct, "length_delta_cm": length_delta, "curve": curve, "steady_curve": steady,
-                "balance": balance, "length_balance": length_balance}
+                "balance": balance, "length_balance": length_balance, "intensity": "Moderate"}
 
     good_last = {"index": 2, "duration_s": 62, "strokes": 22, "power_w": 150, "stroke_rate_spm": 21.5,
                  "length_cm": 118.7, "length_delta_cm": 4.6, "peak_n": 623, "finish_pct": 0, "rating": "good",
-                 "fade_pct": -3, "curve": full, "steady_curve": steady, "balance": 0.2, "length_balance": 1.5}
+                 "fade_pct": -3, "curve": full, "steady_curve": steady, "balance": 0.2, "length_balance": 1.5,
+                 "intensity": "Moderate"}
     short_last = {**good_last, "index": 7, "duration_s": 182, "strokes": 64, "power_w": 156, "length_cm": 112.5,
                   "length_delta_cm": -3.6, "peak_n": 719, "finish_pct": -15, "rating": "short", "curve": short,
                   "balance": -1.4, "length_balance": -1.2}
@@ -237,7 +238,11 @@ def preview(directory: str) -> None:
         "07g-rowing-with-last": screens.rowing_screen(coached(last=short_last), now, up),
         "07j-rowing-coach-steady": screens.rowing_screen(coached(), now, up),
         "07k-rowing-coach-warmup": screens.rowing_screen({**coached(), "coach": {**coached()["coach"], "mode": "warmup",
-                                                                              "steady_curve": []}}, now, up),
+                                                                              "steady_curve": [], "cue": None}}, now, up),
+        "07l-rowing-easy-finish-cue": screens.rowing_screen({**coached(), "coach": {**coached()["coach"], "cue": "finish",
+                                                                                 "stroke_curve": short}}, now, up),
+        "07m-rowing-recovery": screens.rowing_screen({**coached(), "coach": {**coached()["coach"],
+                                                                          "intensity": "Recovery"}}, now, up),
         "09-hold-to-switch-off": screens.hold_screen(0.6),
         "10-switching-off": screens.switching_off_screen(),
         "11-safe-to-unplug": screens.final_screen("poweroff"),

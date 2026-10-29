@@ -190,6 +190,7 @@
         <div class="tile" id="rDistTile"><div class="label">METRES</div><div class="value" id="rDist">0</div></div>
       </div>
       <div class="tile curve" id="rCurveTile" hidden><canvas id="rCurve"></canvas><div class="clen" id="rNote"></div></div>
+      <div class="cue none" id="rCue" hidden>…</div>
       <div class="footer" id="rFooter"></div>
     </section>
 
@@ -342,7 +343,7 @@ function plotCurve(g, bx, by, w, h, curve, steady, colour, gapHalf = "back", lab
   if (steady.length) line(pts(steady), C.dim, 2 * scale);
   if (!labels) return;
   g.font = `${12 * scale}px system-ui, sans-serif`; g.fillStyle = C.dim; g.textBaseline = "alphabetic";
-  if (steady.length) { g.textAlign = "right"; g.fillText("steady shape", x1, by + 16 * scale); }
+  if (steady.length) { g.textAlign = "right"; g.fillText("Easy shape", x1, by + 16 * scale); }
   if (pc) {
     g.strokeStyle = C.faint; g.setLineDash([3 * scale, 5 * scale]); g.lineWidth = scale;
     g.beginPath(); g.moveTo(mid, y0); g.lineTo(mid, y1); g.stroke(); g.setLineDash([]);
@@ -368,7 +369,8 @@ function trioGeometry(balance) {  // in % of the width
 function renderInterval(live) {
   show("interval");
   const hr = state && state.metrics && state.metrics.heart_rate_bpm;
-  $("iTitle").textContent = `INTERVAL ${live.index}` + (hr ? ` · ♥ ${hr}` : "");
+  $("iTitle").textContent = (live.intensity ? `${live.intensity.toUpperCase()} · ${live.index}` : `INTERVAL ${live.index}`)
+    + (hr ? ` · ♥ ${hr}` : "");
   $("iClock").textContent = fmtTime(live.elapsed_s);
   $("iWatts").textContent = `${live.power_w} W`;
   const judged = live.balance !== null && live.balance !== undefined;
@@ -387,10 +389,10 @@ function renderSummary(last) {
   const bal = last.balance;
   const hasBal = bal !== null && bal !== undefined;  // sessions saved before the shape bar: the finish figure
   const colour = shapeColour(last);
-  $("sTitle").textContent = `INTERVAL ${last.index}`;
+  $("sTitle").textContent = (last.intensity ? `${last.intensity.toUpperCase()} · ` : "") + `INTERVAL ${last.index}`;
   $("sHead").textContent = `${fmtTime(last.duration_s)} · ${last.power_w} W`;
   $("sFinishLabel").textContent = hasBal ? "SHAPE" : "FINISH";
-  $("sFinish").textContent = hasBal ? (bal >= 1 ? "LATE" : bal <= -1 ? "FADED" : "STEADY") : signed(last.finish_pct, "%");
+  $("sFinish").textContent = hasBal ? (bal >= 1 ? "LATE" : bal <= -1 ? "FADED" : "GOOD") : signed(last.finish_pct, "%");
   $("sFinish").style.color = colour;
   $("sMini").className = hasBal ? "mini trio" : "mini";
   $("sMini").style.height = hasBal ? "14px" : "";
@@ -402,8 +404,8 @@ function renderSummary(last) {
   $("sLength").textContent = `${Math.round(last.length_cm)} cm`;
   $("sPeak").textContent = `${last.peak_n} N`;
   const note = $("sNote");
-  note.textContent = legs ? `LATE PUSH · peak ${last.peak_at_pct ?? "–"}%, steady ${last.steady_peak_at_pct ?? "–"}%`
-    : hasBal && bal <= -1 ? `FINISH ${signed(last.finish_pct, "%")} vs steady` : `${signed(Math.round(last.length_delta_cm), " cm")} vs steady · ${last.strokes} strokes · ${last.stroke_rate_spm} spm`;
+  note.textContent = legs ? `LATE PUSH · peak ${last.peak_at_pct ?? "–"}%, Easy ${last.steady_peak_at_pct ?? "–"}%`
+    : hasBal && bal <= -1 ? `FINISH ${signed(last.finish_pct, "%")} vs Easy` : `${signed(Math.round(last.length_delta_cm), " cm")} vs Easy · ${last.strokes} strokes · ${last.stroke_rate_spm} spm`;
   note.className = legs || (hasBal && bal <= -1) ? "note warn" : "note";
   drawCurve($("sCurve"), last.curve, last.steady_curve, colour, "both");
 }
@@ -420,15 +422,25 @@ function renderRowing(st) {
   const curve = coach && coach.stroke_curve && coach.stroke_curve.length;
   $("rowing").classList.toggle("coached", !!curve);
   $("rCurveTile").hidden = !curve;
-  if (curve) {  // each stroke over your steady shape, as during efforts but without a cue
-    drawCurve($("rCurve"), coach.stroke_curve, coach.steady_curve, C.blue, "both");
-    $("rNote").textContent = coach.mode === "warmup" ? "learning your steady stroke" : "";
+  const recovery = coach && coach.intensity === "Recovery";  // no coaching while you recover: the numbers
+  $("rowing").classList.toggle("coached", !!curve && !recovery);
+  $("rCurveTile").hidden = !curve || recovery;
+  $("rCue").hidden = !curve || recovery;
+  if (curve && !recovery) {  // Easy: each stroke over your early Easy strokes, and the cue
+    const [text, cueColour] = CUES[coach.cue] || ["learning your Easy stroke", null];
+    drawCurve($("rCurve"), coach.stroke_curve, coach.steady_curve, cueColour || C.blue, "both");
+    $("rNote").textContent = "EASY" + (coach.length_delta_cm !== null && coach.length_delta_cm !== undefined
+      ? ` · length ${signed(coach.length_delta_cm, " cm")}` : "");
+    $("rCue").textContent = text;
+    $("rCue").className = cueColour ? "cue" : "cue none";
+    $("rCue").style.background = cueColour || "";
   }
   let footer = `${fmtTime(m.elapsed_s)} · ` + (curve ? `${m.distance_m ?? 0} m` : `${m.stroke_count ?? 0} strokes`);
   if (m.heart_rate_bpm) footer += ` · ♥ ${m.heart_rate_bpm}`;
   if (!rowing) footer += " · paused";
-  if (coach) footer += coach.mode === "warmup" ? " · coach learning your steady rowing"
-                                               : ` · steady ${coach.steady_power_w} W`;
+  if (recovery) footer = "RECOVERY · " + footer;
+  else if (coach) footer += coach.mode === "warmup" ? " · coach learning your Easy rowing"
+                                                    : ` · Easy ${coach.steady_power_w} W`;
   $("rFooter").textContent = footer;
   $("rFooter").className = rowing ? "footer" : "footer idle";
 }
@@ -588,7 +600,7 @@ function renderSession(s) {
     ["TIME", fmtTime(s.rowing_s), `${s.strokes} strokes`],
     ["DISTANCE", fmtKm(s.distance_m), `${Math.round(s.rowing_s && s.distance_m ? s.rowing_s * 500 / s.distance_m : 0) ? fmtPace(Math.round(s.rowing_s * 500 / s.distance_m)) + " /500 m" : ""}`],
     ["AVERAGE", `${s.avg_power_w} W`, `${s.avg_length_cm} cm strokes`],
-    ["STEADY", `${s.steady_power_w} W`, `${s.steady_length_cm} cm strokes`],
+    ["EASY", `${s.steady_power_w} W`, `${s.steady_length_cm} cm strokes`],
   ];
   if (iv.length) {
     const good = iv.filter((i) => i.rating === "good" && !i.legs_late).length;
@@ -732,7 +744,7 @@ function renderProgress(d) {
     { id: "cPower", title: "POWER", legend: `<b style="color:${C.green}">line</b>: steady · <b>dots</b>: intervals (W)`,
       opts: { xs, series: [{ values: ss.map((p) => p.steady_power_w), colour: C.green, line: true },
                            { values: ss.map((p) => p.interval_power_w), colour: C.fg }], fmt: (v) => `${Math.round(v)}` } },
-    { id: "cFinish", title: "FINISH IN INTERVALS vs STEADY",
+    { id: "cFinish", title: "FINISH IN EFFORTS vs EASY",
       legend: "<b>filled</b>: efforts of 1:30 or more · <b>rings</b>: shorter · green band: within 5%",
       opts: { xs, band: [-5, 5], zero: 0, fmt: (v) => signed(Math.round(v), "%"),
               series: [{ values: ss.map((p) => p.finish_long), colourOf: finishColour },
@@ -795,7 +807,7 @@ function shareImage(s) {
   y += 50; text(`${fmtTime(s.rowing_s)} · ${fmtKm(s.distance_m)} · ${s.avg_power_w} W average · ${s.strokes} strokes`,
                 P, y, 30, C.dim);
   y += 46;
-  const stats = [["STEADY", `${s.steady_power_w} W`], ["INTERVALS", `${iv.length}`],
+  const stats = [["EASY", `${s.steady_power_w} W`], ["INTERVALS", `${iv.length}`],
                  s.heart_rate ? ["HEART RATE", `${s.heart_rate.avg}/${s.heart_rate.max}`] : ["STROKE", `${s.steady_length_cm} cm`]];
   const sw = (W - 2 * P - 2 * 20) / 3;
   stats.forEach(([l, v], k) => {
@@ -812,7 +824,7 @@ function shareImage(s) {
     y += (lines.length - 1) * 42 + 14;
   }
   if (iv.length) {
-    y += 50; text("INTERVALS · FINISH vs STEADY", P, y, 24, C.dim, true); y += 24;
+    y += 50; text("EFFORTS · FINISH vs EASY", P, y, 24, C.dim, true); y += 24;
     iv.forEach((i, k) => {
       const x = P + (k % cols) * (cardW + 24), top = y + Math.floor(k / cols) * (cardH + 24);
       tile(x, top, cardW, cardH);
@@ -888,34 +900,37 @@ function drawPip() {
     text(label, W / 2, 216, label.length > 14 ? 34 : 44, live.cue ? C.bg : C.dim, "center");
   } else if (last && ((coach.show_summary && closedIndex !== last.index) || Date.now() / 1000 < recallUntil)) {
     const colour = shapeColour(last), bal = last.balance, hasBal = bal !== null && bal !== undefined;
-    text(`INTERVAL ${last.index}`, 16, 34, 22, C.dim);
+    text((last.intensity ? `${last.intensity.toUpperCase()} · ` : "") + `INTERVAL ${last.index}`, 16, 34, 22, C.dim);
     text(`${fmtTime(last.duration_s)} · ${last.power_w} W`, W / 2, 95, 50, C.fg, "center");
     text(hasBal ? "SHAPE" : "FINISH", 16, 175, 22, C.dim, "left", false);
-    text(hasBal ? (bal >= 1 ? "LATE" : bal <= -1 ? "FADED" : "STEADY") : signed(last.finish_pct, "%"),
+    text(hasBal ? (bal >= 1 ? "LATE" : bal <= -1 ? "FADED" : "GOOD") : signed(last.finish_pct, "%"),
          W - 16, 175, 56, colour, "right");
-    text(last.legs_late ? `LATE PUSH · peak ${last.peak_at_pct ?? "–"}%, steady ${last.steady_peak_at_pct ?? "–"}%`
+    text(last.legs_late ? `LATE PUSH · peak ${last.peak_at_pct ?? "–"}%, Easy ${last.steady_peak_at_pct ?? "–"}%`
          : `length ${signed(Math.round(last.length_delta_cm), " cm")}`,
          W / 2, 240, 26, last.legs_late ? C.amber : C.dim, "center", !!last.legs_late);
   } else {
     const m = st.metrics || {}, rowing = !!st.rowing;
-    if (coach && coach.stroke_curve && coach.stroke_curve.length) {
-      // Numbers on one line, then each stroke's force curve over the steady shape.
-      text(rowing ? `${m.power_w} W` : "–", 16, 40, 52, rowing ? C.fg : C.faint, "left");
+    if (coach && coach.stroke_curve && coach.stroke_curve.length && coach.intensity !== "Recovery") {
+      // Easy: the numbers on one line, each stroke over your early Easy strokes, and the cue.
+      const [label, cueColour] = CUES[coach.cue] || ["learning your Easy stroke", null];
+      text(rowing ? `${m.power_w} W` : "–", 16, 34, 46, rowing ? C.fg : C.faint, "left");
       text(rowing ? `${fmtPace(m.pace_s_per_500m)} · ${Math.round(m.stroke_rate_spm)} spm` +
                     (m.heart_rate_bpm ? ` · ♥ ${m.heart_rate_bpm}` : "") : "paused",
-           W - 16, 40, 26, rowing ? C.fg : C.dim, "right", false);
-      g.fillStyle = C.tile; g.beginPath(); g.roundRect(10, 76, W - 20, 160, 10); g.fill();
-      plotCurve(g, 10, 76, W - 20, 160, coach.stroke_curve, coach.steady_curve, C.blue, "both", false);
-      text(coach.mode === "warmup" ? "coach: learning steady" : `steady ${coach.steady_power_w} W`,
-           W / 2, 254, 18, C.dim, "center", false);
+           W - 16, 34, 24, rowing ? C.fg : C.dim, "right", false);
+      g.fillStyle = C.tile; g.beginPath(); g.roundRect(10, 62, W - 20, 118, 10); g.fill();
+      plotCurve(g, 10, 62, W - 20, 118, coach.stroke_curve, coach.steady_curve, cueColour || C.blue, "both", false);
+      text("EASY", 22, 78, 16, C.dim, "left");
+      g.fillStyle = cueColour || C.tile; g.beginPath(); g.roundRect(10, 190, W - 20, 70, 14); g.fill();
+      text(label, W / 2, 226, cueColour ? (label.length > 14 ? 34 : 42) : 24, cueColour ? C.bg : C.dim, "center", !!cueColour);
       return;
     }
     text(rowing ? `${m.power_w} W` : "–", W / 2, 80, 80, rowing ? C.fg : C.faint, "center");
     text(rowing ? `${fmtPace(m.pace_s_per_500m)} /500m · ${Math.round(m.stroke_rate_spm)} spm` +
                (m.heart_rate_bpm ? ` · ♥ ${m.heart_rate_bpm}` : "") : "paused",
          W / 2, 170, 32, rowing ? C.fg : C.dim, "center", false);
-    text(coach ? (coach.mode === "warmup" ? "coach: learning steady" : `coach ready · steady ${coach.steady_power_w} W`)
-               : "coach off", W / 2, 235, 22, C.dim, "center", false);
+    if (coach && coach.intensity === "Recovery") text("RECOVERY", W / 2, 235, 26, C.blue, "center");
+    else text(coach ? (coach.mode === "warmup" ? "coach: learning your Easy rowing" : `coach ready · Easy ${coach.steady_power_w} W`)
+                    : "coach off", W / 2, 235, 22, C.dim, "center", false);
   }
 }
 

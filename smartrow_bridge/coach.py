@@ -81,6 +81,16 @@ CUE_MIN = 6  # strokes into an effort before the first cue
 DRIVE_END_FRACTION = 0.05  # the drive ends at the last sample above this share of the stroke's peak
 GOOD_FINISH, OK_FINISH = 0.95, 0.88  # summary colours (fixed, so screens agree across settings)
 PEAK_SPREAD_RATIO, PEAK_SPREAD_MIN = 1.5, 3.0  # peak spread flagged above both: x steady, and steady + this (% of drive)
+# Intensity labels, as Peloton's row classes name them. Peloton's targets sit at fixed shares of
+# the Challenging mid target at every level (levels 1-10 within about 1 %): Easy 44-72 % (mid 55),
+# Moderate 72-88 (mid 79), Challenging 88-116 (mid 100), Max 116-138 (mid 126); below Easy is
+# Recovery. With the FTP as the Challenging mid (as the rower's Peloton targets table sets it), an
+# interval is labelled by its average power with boundaries half-way between the mid targets, so a
+# slightly light effort still gets the name it was aimed at. Without an FTP the same boundaries are
+# taken relative to Easy rowing (the steady reference, Easy mid = 55 %).
+INTENSITIES = ("Recovery", "Easy", "Moderate", "Challenging", "Max")
+FTP_BOUNDS_PCT = (44.0, 67.0, 89.0, 113.0)
+EASY_BOUNDS = tuple(round(b / 55.0, 2) for b in FTP_BOUNDS_PCT)  # 0.80, 1.22, 1.62, 2.05
 SHORTER_CM = -2.0  # an interval's strokes this much shorter than steady are called out
 SUMMARY_SHOW_S = 45.0  # how long the summary is shown after an effort
 
@@ -110,10 +120,10 @@ class CoachSettings:
     min_effort_strokes: int = 8  # shorter is a burst, not an interval
     max_effort_s: float = 300.0  # longer is a new steady pace, not an interval (without an FTP)
     sensitivity: str = "normal"  # how readily the cues speak up: low, normal or high
-    # With your FTP known (IntervalCoach.ftp): an effort must also reach this % of it, so a
-    # warm-up ramping into steady rowing can't pass for one, and so efforts may last longer.
-    ftp_floor_pct: float = 65.0
-    ftp_max_effort_s: float = 1200.0
+    # With your FTP known (IntervalCoach.ftp): an effort is Moderate and above (this % of it), so
+    # a warm-up ramping into Easy rowing can't pass for one, and an effort lasts as long as you
+    # hold it: no time limit (max_effort_s applies only without an FTP).
+    ftp_floor_pct: float = FTP_BOUNDS_PCT[1]
 
     def __post_init__(self) -> None:
         if self.sensitivity not in SENSITIVITY:
@@ -248,6 +258,7 @@ class IntervalSummary:
     legs_threshold: float = LEGS_CUE
     cues: CueThresholds = DEFAULT_SETTINGS.cues  # for the screens' bars
     ftp: float | None = None
+    intensity: str = ""  # Moderate, Challenging or Max (INTENSITIES)
     steady_power_w: float = 0.0
     started_at: float = 0.0  # time of its first stroke (same clock as the strokes)
     peak_at_pct: float = 0.0  # where the force peaks, % of the drive (mean over the strokes)
@@ -306,6 +317,7 @@ class IntervalSummary:
             "drive_late": round(self.lateness, 2),
             "legs_late": self.legs_late,
             "ftp_pct": round(self.power_w / self.ftp * 100) if self.ftp else None,
+            "intensity": self.intensity,
             "balance": round(balance(self.finish_ratio, self.lateness, self.cues), 2),
             "length_balance": round(length_balance(self.length_delta_pct, self.cues), 2),
             "peak_at_pct": round(self.peak_at_pct),
@@ -347,15 +359,44 @@ class IntervalCoach:
         """With an FTP: the least power an effort must reach (ftp_floor_pct of it); else 0."""
         return self.ftp * self.settings.ftp_floor_pct / 100 if self.ftp else 0.0
 
+    def intensity(self, watts: float) -> str:
+        """Recovery, Easy, Moderate, Challenging or Max (INTENSITIES), by % of FTP or against Easy."""
+        if self.ftp:
+            x, bounds = watts / self.ftp * 100, FTP_BOUNDS_PCT
+        else:
+            base = self.steady_power()
+            if not base:
+                return "Easy"
+            x, bounds = watts / base, EASY_BOUNDS
+        return INTENSITIES[sum(x >= b for b in bounds)]
+
+    def _start_at(self, base: float) -> float:
+        """Smoothed power at which an effort starts."""
+        if self.ftp:  # Moderate and above, and clearly above Easy
+            return max(self.effort_floor_w, base + self.settings.start_min_w)
+        return max(base * self.settings.start_ratio, base + self.settings.start_min_w)
+
+    def _end_at(self) -> float:
+        """Smoothed power below which an effort is over."""
+        end = self.steady_power() * self.settings.end_ratio
+        return max(end, self.effort_floor_w * 0.95) if self.ftp else end
+
     @property
     def max_effort_s(self) -> float:
-        return self.settings.ftp_max_effort_s if self.ftp else self.settings.max_effort_s
+        """Without an FTP, longer is taken for a new steady pace; with one, efforts have no limit."""
+        return float("inf") if self.ftp else self.settings.max_effort_s
 
     def reset(self) -> None:
         self.steady: deque[StrokeCurve] = deque(maxlen=STEADY_WINDOW)
         self.recent: deque[StrokeCurve] = deque(maxlen=SMOOTH)
         self.effort: _Effort | None = None
         self.recovery_left = 0
+        # Easy rowing: judged against the early Easy strokes (baseline, frozen once STEADY_WINDOW
+        # of them are in), so a change through the session shows.
+        self.baseline: dict | None = None
+        self.easy_window: deque[StrokeCurve] = deque(maxlen=CUE_WINDOW)
+        self.easy_cue: str | None = None
+        self.easy_log: list[tuple[float, float]] = []  # (back-half share, length cm) per Easy stroke
         self.intervals: list[IntervalSummary] = []
         self.last_time: float | None = None
         self.last_count = 0
@@ -411,13 +452,15 @@ class IntervalCoach:
 
         if self.effort is None:
             base = self.steady_power()
-            start_at = max(base * self.settings.start_ratio, base + self.settings.start_min_w, self.effort_floor_w)
+            start_at = self._start_at(base)
             if self.ready and len(self.recent) >= 3 and smoothed >= start_at:
                 # Back-date to the first hard stroke among the recent ones.
                 recent = list(self.recent)
                 first = next(i for i, r in enumerate(recent) if stroke_power(r) >= start_at)
                 self.effort = _Effort(strokes=recent[first:])
                 self._drop_from_steady(self.effort.strokes)
+                self.easy_window.clear()
+                self.easy_cue = None
                 log.debug("Effort started (%.0f W vs %.0f W steady)", smoothed, base)
             else:
                 self._learn(s, base)
@@ -425,7 +468,7 @@ class IntervalCoach:
             self.effort.strokes.append(s)
             if s.time - self.effort.strokes[0].time > self.max_effort_s:
                 self._rebaseline()
-            elif smoothed < self.steady_power() * self.settings.end_ratio:
+            elif smoothed < self._end_at():
                 finished = self._finish(s.time) or finished
             else:
                 self._update_cue()
@@ -435,9 +478,16 @@ class IntervalCoach:
         if self.recovery_left > 0:
             self.recovery_left -= 1
             return
-        if self.ready and stroke_power(s) < base * EASY_RATIO:
+        if self.ready and (stroke_power(s) < base * EASY_RATIO or self.intensity(stroke_power(s)) == "Recovery"):
             return
         self.steady.append(s)
+        if self.baseline is None and len(self.steady) >= STEADY_WINDOW:
+            self.baseline = {"curve": mean_curve(self.steady), "back_share": self.steady_back_share(),
+                             "length_cm": self.steady_length()}
+            log.debug("Easy reference set from the first %d Easy strokes", len(self.steady))
+        self.easy_window.append(s)
+        self.easy_log.append((back_share(s.force_n), s.stroke_length_cm))
+        self._update_easy_cue()
 
     def _rebaseline(self) -> None:
         """Rowing has settled at a higher pace: make it the steady reference, no interval."""
@@ -456,7 +506,7 @@ class IntervalCoach:
         effort, self.effort = self.effort, None
         if effort is None:
             return None
-        end_at = self.steady_power() * self.settings.end_ratio
+        end_at = self._end_at()
         strokes = list(effort.strokes)
         while strokes and stroke_power(strokes[-1]) < end_at:  # the easy strokes that ended it
             strokes.pop()
@@ -493,6 +543,7 @@ class IntervalCoach:
             legs_threshold=self.settings.cues.legs_cue,
             cues=self.settings.cues,
             ftp=self.ftp,
+            intensity=self.intensity(statistics.fmean(stroke_power(s) for s in strokes)),
             steady_power_w=self.steady_power(),
             started_at=strokes[0].time,
             peak_at_pct=peak_at,
@@ -515,21 +566,38 @@ class IntervalCoach:
         short_by_pct = (steady_len - statistics.fmean(s.stroke_length_cm for s in window)) / steady_len * 100
         return ratio, drive_lateness(curve, mean_curve(self.steady)), short_by_pct
 
+    def _judge(self, previous: str | None, ratio: float, late: float, short_by_pct: float) -> str:
+        """The cue for a window of strokes against a reference (with a little hysteresis)."""
+        t = self.settings.cues
+        if ratio < t.finish_cue or (previous == "finish" and ratio < t.finish_clear):
+            return "finish"
+        if late > t.legs_cue or (previous == "legs" and late > t.legs_clear):
+            return "legs"
+        if short_by_pct > t.length_cue_pct or (previous == "length" and short_by_pct > t.length_clear_pct):
+            return "length"
+        return "good"
+
     def _update_cue(self) -> None:
         e = self.effort
         if len(e.strokes) < CUE_MIN:
             e.cue = None
             return
-        t = self.settings.cues
-        ratio, late, short_by_pct = self._window_measures()
-        if ratio < t.finish_cue or (e.cue == "finish" and ratio < t.finish_clear):
-            e.cue = "finish"
-        elif late > t.legs_cue or (e.cue == "legs" and late > t.legs_clear):
-            e.cue = "legs"
-        elif short_by_pct > t.length_cue_pct or (e.cue == "length" and short_by_pct > t.length_clear_pct):
-            e.cue = "length"
-        else:
-            e.cue = "good"
+        e.cue = self._judge(e.cue, *self._window_measures())
+
+    def _easy_measures(self) -> tuple[float, float, float]:
+        """The last few Easy strokes against the early Easy ones: finish ratio, lateness, % shorter."""
+        b = self.baseline
+        curve = mean_curve(self.easy_window)
+        ratio = back_share(curve) / (b["back_share"] or 1)
+        short_by_pct = (b["length_cm"] - statistics.fmean(s.stroke_length_cm for s in self.easy_window)) \
+            / (b["length_cm"] or 1) * 100
+        return ratio, drive_lateness(curve, b["curve"]), short_by_pct
+
+    def _update_easy_cue(self) -> None:
+        if self.baseline is None or len(self.easy_window) < CUE_MIN:
+            self.easy_cue = None
+            return
+        self.easy_cue = self._judge(self.easy_cue, *self._easy_measures())
 
     # ------------------------------------------------------------ session summary
 
@@ -552,13 +620,26 @@ class IntervalCoach:
             "steady_length_cm": round(self.steady_length(), 1),
             "steady_curve": [round(v) for v in mean_curve(self.steady)],
             "ftp": round(self.ftp) if self.ftp else None,
-            "settings": {"start_pct": self.settings.start_pct, "max_effort_min": self.max_effort_s / 60,
+            "settings": {"start_pct": self.settings.start_pct,
+                         "max_effort_min": None if self.ftp else self.max_effort_s / 60,
                          "ftp_floor_pct": self.settings.ftp_floor_pct if self.ftp else None,
                          "sensitivity": self.settings.sensitivity},
             "intervals": intervals,
             "heart_rate": hr,
-            "findings": findings(intervals) + heart_rate_findings(hr, intervals),
+            "easy_drift": self.easy_drift(),
+            "findings": findings(intervals) + easy_findings(self.easy_drift()) + heart_rate_findings(hr, intervals),
         }
+
+    def easy_drift(self) -> dict | None:
+        """Easy rowing through the session: the finish and stroke length of the last EASY_DRIFT_N
+        Easy strokes against the first (both medians, as single strokes scatter)."""
+        n = EASY_DRIFT_N
+        if len(self.easy_log) < 3 * n:
+            return None
+        first, last = self.easy_log[:n], self.easy_log[-n:]
+        f0, f1 = statistics.median(x[0] for x in first), statistics.median(x[0] for x in last)
+        l0, l1 = statistics.median(x[1] for x in first), statistics.median(x[1] for x in last)
+        return {"finish_pct": round((f1 / f0 - 1) * 100) if f0 else 0, "length_delta_cm": round(l1 - l0)}
 
     # ------------------------------------------------------------ status
 
@@ -577,11 +658,22 @@ class IntervalCoach:
             "history": [{k: v for k, v in i.as_dict().items() if k not in ("curve", "steady_curve")}
                         for i in self.intervals[-20:]],
             "show_summary": bool(last and self.effort is None and now - last.ended_at < SUMMARY_SHOW_S),
-            # The latest stroke and the steady shape, for the screens' force curve during steady
-            # rowing too (empty while there is none yet).
+            # Between efforts: Recovery or Easy (from the last few strokes), the latest stroke and the
+            # reference it is drawn against (the early Easy strokes once there are enough, else the
+            # recent ones), and the Easy cue (None while still learning).
+            "intensity": self.intensity(statistics.median(stroke_power(r) for r in self.recent))
+            if self.recent and self.effort is None else None,
+            "cue": self.easy_cue if self.effort is None else None,
             "stroke_curve": list(self.stroke_log[-1][6]) if self.stroke_log else [],
-            "steady_curve": [round(v) for v in mean_curve(self.steady)] if self.steady else [],
+            "steady_curve": [round(v) for v in (self.baseline["curve"] if self.baseline else mean_curve(self.steady))]
+            if self.steady else [],
+            "length_delta_cm": round(statistics.fmean(s.stroke_length_cm for s in self.easy_window)
+                                     - self.baseline["length_cm"]) if self.baseline and self.easy_window else None,
         }
+        if out["intensity"] not in (None, "Recovery", "Easy"):
+            out["intensity"] = "Easy"  # above Easy but not (yet) an effort
+        if out["intensity"] == "Recovery":
+            out["cue"] = None  # Recovery: the numbers only
         if self.effort is not None:
             strokes = self.effort.strokes
             window = self._window()
@@ -590,6 +682,7 @@ class IntervalCoach:
             ratio, late, short_by_pct = self._window_measures() if judged else (1.0, 0.0, 0.0)
             out["live"] = {
                 "index": len(self.intervals) + 1,
+                "intensity": self.intensity(statistics.fmean(stroke_power(s) for s in strokes)),
                 "elapsed_s": round(max(0.0, now - first.time)),
                 "strokes": len(strokes),
                 "power_w": round(statistics.fmean(stroke_power(s) for s in strokes[-3:])),
@@ -629,7 +722,7 @@ def findings(intervals: list[dict]) -> list[str]:
     Only says what the numbers show clearly; nothing when there is nothing to say.
     """
     if not intervals:
-        return ["No intervals: steady rowing only, or efforts too short or too close to the steady pace to count."]
+        return ["No efforts: Easy rowing only, or efforts too short or too close to the Easy pace to count."]
     out: list[str] = []
     shorter = [i for i in intervals if i.get("length_delta_cm", 0) <= SHORTER_CM]
     good = [i for i in intervals if i["rating"] == "good" and not i.get("legs_late") and i not in shorter]
@@ -638,19 +731,19 @@ def findings(intervals: list[dict]) -> list[str]:
     n = len(intervals)
 
     if len(good) == n:
-        out.append(f"All {n} intervals kept their shape and length: finish within 5% of steady.")
+        out.append(f"All {n} efforts kept their shape and length: finish within 5% of Easy.")
     elif good:
         out.append(f"{len(good)} of {n} kept their shape and length ({_names(good)}).")
     if faded:
         lo, hi = min(i["finish_pct"] for i in faded), max(i["finish_pct"] for i in faded)
         span = _pct(lo) if lo == hi else f"{_pct(hi)} to {_pct(lo)}"
-        out.append(f"The finish faded in {_names(faded)}: {span} against steady.")
+        out.append(f"The finish faded in {_names(faded)}: {span} against Easy.")
     if ok:
         pcts = ", ".join(_pct(i["finish_pct"]) for i in ok)
         out.append(f"The finish eased a little in {_names(ok)} ({pcts}).")
     if shorter:
         cm = sum(i["length_delta_cm"] for i in shorter) / len(shorter)
-        out.append(f"Strokes were shorter than steady in {_names(shorter)} (about {abs(cm):.0f} cm).")
+        out.append(f"Strokes were shorter than Easy in {_names(shorter)} (about {abs(cm):.0f} cm).")
 
     # Did the longer efforts slip and the shorter ones hold?
     slipped = [i for i in intervals if i in faded or i in shorter]
@@ -669,7 +762,7 @@ def findings(intervals: list[dict]) -> list[str]:
 
     legs = [i for i in intervals if i.get("legs_late")]
     if legs:
-        out.append(f"The push came later in the drive than in steady rowing in {_names(legs)}. The curve can't say "
+        out.append(f"The push came later in the drive than in Easy rowing in {_names(legs)}. The curve can't say "
                    f"why (an early arm pull and a slow push off the catch look alike); a video of an effort can.")
 
     wander = [i for i in intervals if i.get("peak_wanders")]
@@ -677,20 +770,26 @@ def findings(intervals: list[dict]) -> list[str]:
         spreads = ", ".join(f"\u00b1{i['peak_spread_pct']:.0f}%" for i in wander)
         steady_spread = wander[0].get("steady_peak_spread_pct", 0)
         out.append(f"The force peak landed less consistently from stroke to stroke in {_names(wander)} "
-                   f"({spreads} of the drive, against \u00b1{steady_spread:.0f}% in steady rowing).")
+                   f"({spreads} of the drive, against \u00b1{steady_spread:.0f}% in Easy rowing).")
 
-    pcts = [i["ftp_pct"] for i in intervals if i.get("ftp_pct")]
-    if pcts:
-        span = f"{min(pcts)}%" if min(pcts) == max(pcts) else f"{min(pcts)}\u2013{max(pcts)}%"
-        out.append(f"Efforts at {span} of FTP.")
+    kinds = [k for k in INTENSITIES if any(i.get("intensity") == k for i in intervals)]
+    if kinds:
+        parts = []
+        for k in kinds:
+            these = [i for i in intervals if i.get("intensity") == k]
+            pcts = [i["ftp_pct"] for i in these if i.get("ftp_pct")]
+            span = (f" at {min(pcts)}%" if min(pcts) == max(pcts) else f" at {min(pcts)}\u2013{max(pcts)}%") \
+                + " of FTP" if pcts else ""
+            parts.append(f"{len(these)} {k}{span}")
+        out.append("Efforts: " + "; ".join(parts) + ".")
 
     steady = [i["steady_power_w"] for i in intervals if i.get("steady_power_w")]
     if len(steady) >= 2 and min(steady):
         change = (steady[-1] - steady[0]) / steady[0] * 100
         if abs(change) <= 5:
-            out.append(f"Steady pace held at about {round(sum(steady) / len(steady))} W between efforts.")
+            out.append(f"Easy pace held at about {round(sum(steady) / len(steady))} W between efforts.")
         else:
-            out.append(f"Steady pace went from {steady[0]} W to {steady[-1]} W over the session.")
+            out.append(f"Easy pace went from {steady[0]} W to {steady[-1]} W over the session.")
     return out
 
 
@@ -701,6 +800,23 @@ HR_RECOVERY_S = 60.0  # recovery: the drop this long after the peak
 HR_MIN_COVERAGE = 0.5  # share of strokes with a reading before heart rate is reported
 DRIFT_MIN_POINTS = 40  # steady strokes needed in each half for the drift
 DRIFT_SKIP_S = 600.0  # heart rate is still climbing during the warm-up: left out of the drift
+
+
+EASY_DRIFT_N = 60  # strokes at each end of the session's Easy rowing, for easy_drift()
+
+
+def easy_findings(drift: dict | None) -> list[str]:
+    """One sentence on how Easy rowing changed from the first minutes to the last, if it did."""
+    if not drift:
+        return []
+    parts = []
+    if abs(drift["finish_pct"]) >= 5:
+        parts.append(f"finish {_pct(drift['finish_pct'])}")
+    if abs(drift["length_delta_cm"]) >= 2:
+        parts.append(f"strokes {abs(drift['length_delta_cm'])} cm {'longer' if drift['length_delta_cm'] > 0 else 'shorter'}")
+    if not parts:
+        return ["Easy rowing kept its shape from the first minutes to the last."]
+    return [f"Easy rowing, last minutes against the first: {' and '.join(parts)}."]
 
 
 def heart_rate_summary(trace: list[tuple[float, int, float]], intervals: list[IntervalSummary],
@@ -772,7 +888,7 @@ def heart_rate_findings(hr: dict | None, intervals: list[dict]) -> list[str]:
     if hr.get("drift_pct") is not None:
         d = hr["drift_pct"]
         if d <= 5:
-            out.append(f"Heart rate stayed in step with power through the steady rowing (drift {_pct(round(d))}).")
+            out.append(f"Heart rate stayed in step with power through the Easy rowing (drift {_pct(round(d))}).")
         else:
             out.append(f"Steady rowing took {d:.0f}% more heartbeats per watt in the second half than the first "
                        f"(under 5% is typical): fatigue, heat or not enough fuel.")

@@ -258,8 +258,9 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
     if not rowing:
         footer += "  \u00b7  paused"
 
-    if coach.get("stroke_curve"):
-        # With the coach: three numbers, and each stroke's force curve over your steady shape.
+    if coach.get("stroke_curve") and coach.get("intensity") != "Recovery":
+        # Easy rowing with the coach: three numbers, each stroke's force curve over your early Easy
+        # strokes, and the cue (none while the coach is still learning them).
         tiles = [("WATTS", live(str(m.get("power_w", 0)))),
                  ("PACE", live(format_pace(int(m.get("pace_s_per_500m", 0))))),
                  ("SPM", live(str(round(m.get("stroke_rate_spm", 0)))))]
@@ -271,11 +272,20 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
             draw.text((x0 + tile_w // 2, top + 32), value, font=_fit(draw, value, 28, tile_w - 12, bold=True),
                       fill=FG if value != "\u2013" else FAINT, anchor="mm")
         steady = coach.get("steady_curve") or []
-        _plot_curves(draw, (4, 80, WIDTH - 4, 196), coach["stroke_curve"], steady, BLUE, "both")
-        if coach.get("mode") == "warmup":
-            draw.text((12, 85), "learning your steady stroke", font=font(12), fill=DIM)
-        draw.text((WIDTH // 2, 206), footer, font=_fit(draw, footer, 15, WIDTH - 16), fill=FG if rowing else DIM,
-                  anchor="mm")
+        cue = coach.get("cue")
+        text, colour = CUES.get(cue, ("", BLUE)) if cue else ("", BLUE)
+        _plot_curves(draw, (4, 80, WIDTH - 4, 179), coach["stroke_curve"], steady, colour, "both")
+        head = f"EASY  \u00b7  {format_time(m.get('elapsed_s', 0))}"
+        if m.get("heart_rate_bpm"):
+            head += f"  \u00b7  \u2665 {m['heart_rate_bpm']}"
+        draw.text((12, 85), head, font=font(12, True), fill=DIM)
+        banner = (4, 183, WIDTH - 4, 216)
+        if cue:
+            draw.rounded_rectangle(banner, radius=8, fill=colour)
+            draw.text((WIDTH // 2, 199), text, font=_fit(draw, text, 26, WIDTH - 24, True), fill=BG, anchor="mm")
+        else:
+            draw.rounded_rectangle(banner, radius=8, fill=TILE)
+            draw.text((WIDTH // 2, 199), "learning your Easy stroke", font=font(16), fill=DIM, anchor="mm")
         return image
 
     tiles = [
@@ -299,8 +309,12 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
         footer = f"{format_time(m.get('elapsed_s', 0))}  \u00b7  {m.get('stroke_count', 0)} strokes  \u00b7  \u2665 {m['heart_rate_bpm']}"
     if not rowing:
         footer += "   \u00b7   paused"
-    draw.text((WIDTH // 2, top + 2 * tile_h + gap + 14), footer, font=font(16), fill=FG if rowing else DIM,
-              anchor="mm")
+    recovery = coach.get("intensity") == "Recovery"  # no coaching while you recover: the numbers
+    if recovery:
+        footer = f"RECOVERY  \u00b7  {format_time(m.get('elapsed_s', 0))}" + (
+            f"  \u00b7  \u2665 {m['heart_rate_bpm']}" if m.get("heart_rate_bpm") else "")
+    draw.text((WIDTH // 2, top + 2 * tile_h + gap + 14), footer, font=font(16, recovery),
+              fill=BLUE if recovery else FG if rowing else DIM, anchor="mm")
     return image
 
 
@@ -374,7 +388,7 @@ def _plot_curves(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], curv
         draw.line(pts, fill=colour, width=3, joint="curve")
     if steady:
         draw.line(points(steady), fill=DIM, width=2, joint="curve")
-        draw.text((x1, y0), "steady shape", font=font(12), fill=DIM, anchor="rt")
+        draw.text((x1, y0), "Easy shape", font=font(12), fill=DIM, anchor="rt")
     if curve:
         for y in range(y0 + 16, y1, 8):  # dashed line half-way along the steady drive
             draw.line((mid, y, mid, y + 3), fill=FAINT, width=1)
@@ -418,7 +432,8 @@ def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
     image, draw = _canvas()
     _hints(draw, "rowing")
     live = status["coach"]["live"]
-    draw.text((WIDTH - 6, 4), f"INTERVAL {live['index']}", font=font(15, True), fill=DIM, anchor="rt")
+    label = f"{live['intensity'].upper()}  \u00b7  {live['index']}" if live.get("intensity") else f"INTERVAL {live['index']}"
+    draw.text((WIDTH - 6, 4), label, font=font(15, True), fill=DIM, anchor="rt")
     clock, watts = format_time(live["elapsed_s"]), f"{live['power_w']} W"
     size = min(_fit(draw, clock, 44, WIDTH // 2 - 14, True).size, _fit(draw, watts, 44, WIDTH // 2 - 14, True).size)
     draw.text((8, 54), clock, font=font(size, True), fill=FG, anchor="lm")  # the same size, side by side
@@ -454,7 +469,8 @@ def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
         colour = AMBER if off else GREEN
     else:
         colour = AMBER if legs_late else RATING_COLOURS.get(last.get("rating"), FG)
-    draw.text((8, 28), f"INTERVAL {last['index']}", font=font(15, True), fill=DIM, anchor="lt")
+    title = f"{last['intensity'].upper()}  ·  INTERVAL {last['index']}" if last.get("intensity") else f"INTERVAL {last['index']}"
+    draw.text((8, 28), title, font=font(15, True), fill=DIM, anchor="lt")
     headline = f"{format_time(last['duration_s'])}  ·  {last['power_w']} W"
     draw.text((WIDTH // 2, 62), headline, font=_fit(draw, headline, 34, WIDTH - 16, True), fill=FG, anchor="mm")
     _plot_curves(draw, (4, 84, WIDTH - 4, 160), last.get("curve") or [], last.get("steady_curve") or [], colour,
@@ -467,7 +483,7 @@ def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
     if bal is None:  # saved before the shape bar existed
         first = ("FINISH", f"{last['finish_pct']:+d}%", colour)
     else:
-        word = "LATE" if bal >= 1 else "FADED" if bal <= -1 else "STEADY"
+        word = "LATE" if bal >= 1 else "FADED" if bal <= -1 else "GOOD"
         first = ("SHAPE", word, GREEN if abs(bal) < 1 else AMBER)
     tiles = [
         first,
@@ -489,13 +505,13 @@ def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
                         AMBER if legs_late else None)
     if legs_late:
         draw.text((WIDTH - 6, HEIGHT - 4),
-                  f"LATE PUSH \u00b7 peak {last.get('peak_at_pct', 0)}%, steady {last.get('steady_peak_at_pct', 0)}%",
+                  f"LATE PUSH \u00b7 peak {last.get('peak_at_pct', 0)}%, Easy {last.get('steady_peak_at_pct', 0)}%",
                   font=font(12, True), fill=AMBER, anchor="rd")
     elif bal is not None and bal <= -1:
-        draw.text((WIDTH - 6, HEIGHT - 4), f"FINISH {last['finish_pct']:+d}% vs steady".replace("-", "\u2212"),
+        draw.text((WIDTH - 6, HEIGHT - 4), f"FINISH {last['finish_pct']:+d}% vs Easy".replace("-", "\u2212"),
                   font=font(12, True), fill=AMBER, anchor="rd")
     else:
-        draw.text((WIDTH - 6, HEIGHT - 4), f"{delta:+.0f} cm vs steady", font=font(12), fill=DIM, anchor="rd")
+        draw.text((WIDTH - 6, HEIGHT - 4), f"{delta:+.0f} cm vs Easy", font=font(12), fill=DIM, anchor="rd")
     return image
 
 

@@ -103,7 +103,7 @@ def parse(argv: list[str] | None = None) -> Config:
                    help="coach: how readily the technique cues speak up (default normal)")
     p.add_argument("--coach-ftp", default=_env("SRB_COACH_FTP", ""),
                    help="coach: your rowing FTP in watts; empty = read it from intervals.icu (when set up), "
-                        "off = none. With it, efforts must reach 65%% of it and may last up to 20 minutes")
+                        "off = none. With it, an effort is Moderate or harder (67%% of FTP and up), with no time limit")
     p.add_argument("--session-dir", default=_env("SRB_SESSION_DIR", sessions.DEFAULT_DIR),
                    help="coach: where each session's summary is saved, for the web page ('off' to disable)")
     p.add_argument("--heart-rate", default=_env("SRB_HEART_RATE", "off"),

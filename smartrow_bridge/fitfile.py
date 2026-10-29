@@ -165,7 +165,9 @@ def build(record: dict, strokes: list[dict]) -> bytes:
         m.lap_trigger = LapTrigger.SESSION_END if n == len(lap_list) - 1 else LapTrigger.MANUAL
         m.sport = Sport.ROWING
         m.sub_sport = SubSport.INDOOR_ROWING
-        m.intensity = Intensity.ACTIVE if lap["interval"] else Intensity.RECOVERY
+        # Moderate and above: interval; Easy: active; Recovery: recovery.
+        m.intensity = (Intensity.INTERVAL if lap["interval"] else
+                       Intensity.RECOVERY if lap.get("kind") == "Recovery" else Intensity.ACTIVE)
         m.total_elapsed_time = lap["end"] - lap["start"]
         m.total_timer_time = lap["end"] - lap["start"]
         end_d = float(max(0, inside[-1]["distance_m"] - offset)) if inside else prev_end_d

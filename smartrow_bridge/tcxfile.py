@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """A TCX activity file for one saved session: what Strava receives.
 
-Shaped like the SmartRow app's own Strava uploads: no device ("Creator") in the file, so
-Strava labels the activity with the name of the Strava app that uploaded it ("Rowed using
-SmartRow" when that app is named SmartRow); Sport "Other", the activity type being set on
-Strava afterwards (strava.py). Unlike SmartRow's, it has a point per stroke and a lap per
-interval (activity.py). Standard library only.
+Shaped like the SmartRow app's own Strava uploads: no device ("Creator") in the file and
+Sport "Other", the activity type being set on Strava afterwards (strava.py); the description
+starts "Rowed with SmartRow". Unlike SmartRow's, it has a point per stroke and a lap for each
+stretch: Easy, each effort, Recovery (activity.py). Standard library only.
 
 Per point: time, distance from the session's start, heart rate (when the bridge had a
 strap), power and stroke rate (as RunCadence, as SmartRow does).
@@ -53,7 +52,7 @@ def build(record: dict, strokes: list[dict]) -> bytes:
         if hrs:
             out += [f"    <AverageHeartRateBpm><Value>{round(sum(hrs) / len(hrs))}</Value></AverageHeartRateBpm>",
                     f"    <MaximumHeartRateBpm><Value>{max(hrs)}</Value></MaximumHeartRateBpm>"]
-        out += [f'    <Intensity>{"Active" if lap["interval"] else "Resting"}</Intensity>',
+        out += [f'    <Intensity>{"Resting" if lap.get("kind") == "Recovery" else "Active"}</Intensity>',
                 "    <TriggerMethod>Manual</TriggerMethod>",
                 "    <Track>"]
         for s in inside:

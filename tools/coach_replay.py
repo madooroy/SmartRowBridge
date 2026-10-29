@@ -121,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--sensitivity", choices=("low", "normal", "high"), default="normal",
                    help="how readily the technique cues speak up (default normal)")
     p.add_argument("--ftp", type=float, help="your rowing FTP in watts (as SRB_COACH_FTP): efforts must reach "
-                   "65%% of it, and may last up to 20 minutes")
+                   "67%% of it (Moderate), with no time limit")
     p.add_argument("--save", type=Path, metavar="DIR",
                    help="also write each session's summary file into DIR, as the bridge does")
     args = p.parse_args(argv)

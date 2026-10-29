@@ -35,29 +35,29 @@ class FindingsTest(unittest.TestCase):
         self.assertEqual(len(summary["intervals"]), 4)
         text = " ".join(summary["findings"])
         self.assertIn("2 of 4 kept their shape and length (I1 and I2)", text)
-        self.assertIn("Strokes were shorter than steady in I3 and I4", text)
+        self.assertIn("Strokes were shorter than Easy in I3 and I4", text)
         self.assertNotIn("finish faded", text)  # shorter strokes are not a fading finish
         self.assertIn("were the longer efforts", text)
-        self.assertIn("Steady pace held at about 110 W", text)
+        self.assertIn("Easy pace held at about 110 W", text)
         self.assertNotIn("-", text.replace("−", ""))  # real minus signs only
 
     def test_no_intervals(self):
         from tests.test_coach import STEADY
         summary = rowed((100, 110, STEADY, 115)).coach.session_summary()
         self.assertEqual(summary["intervals"], [])
-        self.assertIn("No intervals", summary["findings"][0])
+        self.assertIn("No efforts", summary["findings"][0])
         self.assertEqual(summary["strokes"], 100)
         self.assertEqual(summary["avg_power_w"], 110)
 
     def test_all_good(self):
         self.assertEqual(coach.findings([{"index": 1, "rating": "good", "finish_pct": 1, "duration_s": 60,
                                           "length_delta_cm": 1, "fade_pct": 0}])[0],
-                         "All 1 intervals kept their shape and length: finish within 5% of steady.")
+                         "All 1 efforts kept their shape and length: finish within 5% of Easy.")
 
     def test_faded_finish(self):
         iv = [{"index": 1, "rating": "short", "finish_pct": -15, "duration_s": 120, "length_delta_cm": 0,
                "fade_pct": 0}]
-        self.assertIn("The finish faded in I1: \u221215% against steady.", coach.findings(iv))
+        self.assertIn("The finish faded in I1: \u221215% against Easy.", coach.findings(iv))
 
     def test_legs_and_fade(self):
         iv = [{"index": 1, "rating": "good", "finish_pct": 8, "duration_s": 120, "length_delta_cm": 0,
@@ -65,10 +65,10 @@ class FindingsTest(unittest.TestCase):
               {"index": 2, "rating": "good", "finish_pct": 0, "duration_s": 60, "length_delta_cm": 0,
                "fade_pct": 0, "legs_late": False, "steady_power_w": 120}]
         text = " ".join(coach.findings(iv))
-        self.assertIn("The push came later in the drive than in steady rowing in I1", text)
+        self.assertIn("The push came later in the drive than in Easy rowing in I1", text)
         self.assertNotIn("leg drive", text.lower())  # describes the curve, not muscles
         self.assertIn("I1 faded within itself: finish −9%", text)
-        self.assertIn("Steady pace went from 100 W to 120 W", text)
+        self.assertIn("Easy pace went from 100 W to 120 W", text)
         self.assertIn("1 of 2 kept their shape and length (I2)", text)  # late legs don't count as kept
 
 

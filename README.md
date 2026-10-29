@@ -472,13 +472,35 @@ none in steady-only sessions, and cued only the efforts that went short. Expect 
 The leg-drive cue is set well clear of anything in those sessions, as none had a weak leg drive; it has not
 yet been seen on one.
 
-**With your FTP.** On its own the coach judges efforts against your recent steady rowing, and has to treat
-anything longer than 5 minutes as a new steady pace (otherwise a warm-up ramping into the main set could pass
-for one long effort), which cuts off longer efforts. With your rowing FTP, an effort must also reach 65 % of
-it: a warm-up stays below that, so efforts may last up to 20 minutes. On a 45-minute class (FTP 185 W:
-steady rowing 98-109 W, efforts 130-150 W, the last one 6 minutes) this found all eight efforts, where
-without an FTP the six-minute one was taken for a new steady pace; earlier sessions came out the same. The
-summary then says at what % of FTP the efforts were. The FTP comes from intervals.icu by itself (your rowing
+**Intensity labels.** Each stretch of rowing is labelled the way Peloton does: **Recovery**, **Easy**,
+**Moderate**, **Challenging** or **Max**. Your FTP is the middle of Challenging, as on Peloton's targets
+(FTP 185 W: Easy about 100 W, Moderate about 145 W), and the boundaries sit half-way between Peloton's
+targets:
+
+| Label | % of FTP | FTP 185 W |
+|---|---|---|
+| Recovery | under 44 % | under 81 W |
+| Easy | 44-67 % | 81-124 W |
+| Moderate | 67-89 % | 124-165 W |
+| Challenging | 89-113 % | 165-209 W |
+| Max | 113 % and up | 209 W and up |
+
+Without an FTP the same ratios are taken from your Easy power (Easy is 55 % of FTP).
+
+**Coaching in every interval but Recovery.** Efforts (Moderate and up) are coached as above, against your
+Easy shape. Easy rowing is coached too: the first minute of Easy strokes becomes your reference (shown in
+grey), and later Easy strokes are judged against it with the same cues, so a finish that fades as you tire
+shows up there as well. Recovery gets the numbers only. The summary adds how the last minutes of Easy rowing
+compared with the first.
+
+**With your FTP.** On its own the coach judges efforts against your recent Easy rowing, and has to treat
+anything longer than 5 minutes as a new Easy pace (otherwise a warm-up ramping into the main set could pass
+for one long effort), which cuts off longer efforts. With your rowing FTP, an effort is anything Moderate or
+harder (67 % of FTP and up), with **no time limit**: it lasts until you drop back to Easy. On a 45-minute
+class (FTP 185 W: Easy rowing 98-109 W, efforts 130-150 W, the last one 6 minutes) this found all eight
+efforts, where without an FTP the six-minute one was taken for a new Easy pace. The summary then gives each
+effort's label and % of FTP, and the uploaded activity has a lap for each stretch (Easy, Moderate,
+Recovery ...). The FTP comes from intervals.icu by itself (your rowing
 sport settings), or set `SRB_COACH_FTP`. To check what intervals.icu has:
 `sudo /opt/smartrow-bridge/venv/bin/python -m smartrow_bridge.intervals --test`.
 
@@ -487,8 +509,8 @@ sport settings), or set `SRB_COACH_FTP`. To check what intervals.icu has:
 | Setting | Default | Meaning |
 |---|---|---|
 | `SRB_COACH_START_PCT` | `20` | An interval is at least this % above your steady power (and 15 W) |
-| `SRB_COACH_MAX_MIN` | `5` | Longest effort, in minutes, to count as an interval; longer is a new steady pace (without an FTP) |
-| `SRB_COACH_FTP` | empty: from intervals.icu | Your rowing FTP in watts. With it, an effort must also reach 65 % of it, and may last up to 20 minutes. Empty: read from intervals.icu (Settings, Rowing, indoor FTP if set) once [uploads](#optional-uploads-to-intervalsicu-and-strava) are set up, every few hours; `off`: none |
+| `SRB_COACH_MAX_MIN` | `5` | Longest effort, in minutes, to count as an interval; longer is a new Easy pace (only without an FTP: with one there is no limit) |
+| `SRB_COACH_FTP` | empty: from intervals.icu | Your rowing FTP in watts (the middle of Challenging). With it, intensities are labelled by % of FTP, and an effort is Moderate or harder (67 % and up) with no time limit. Empty: read from intervals.icu (Settings, Rowing, indoor FTP if set) once [uploads](#optional-uploads-to-intervalsicu-and-strava) are set up, every few hours; `off`: none |
 | `SRB_COACH_SENSITIVITY` | `normal` | How readily the cues speak up: `low`, `normal` or `high` |
 | `SRB_SESSION_DIR` | `/var/lib/smartrow-bridge/sessions` | Where session summaries are saved; `off` disables |
 | `SRB_HEART_RATE`, `SRB_HEART_RATE_TO_FITNESS` | `off`, `1` | [Heart rate strap](#optional-heart-rate-strap) read by the bridge, and whether it goes to the fitness app |
@@ -573,7 +595,7 @@ the rowing data. Straps that take several connections at once can stay paired wi
 In `/etc/default/smartrow-bridge`, set `SRB_HEART_RATE` to `auto` (the first strap found advertising heart
 rate), part of the strap's name (`COROS`), or its MAC address (best where other people's straps are in range),
 then `sudo systemctl restart smartrow-bridge`. The strap is looked for once the pulley is connected, in short
-scans that leave the radio to the pulley in between; put it on (and wet it) to wake it. `SRB_HEART_RATE_TO_FITNESS=0`
+scans that leave the radio to the pulley in between; put it on to wake it. `SRB_HEART_RATE_TO_FITNESS=0`
 keeps it out of the fitness app's data, if the app is paired with the strap directly. `tools/health_check.sh`
 has a *Heart rate strap* section.
 

@@ -162,6 +162,7 @@ class UploadsTest(unittest.TestCase):
         body = json.loads(put[3])
         self.assertTrue(body["name"].endswith(" Row"))
         self.assertIn("What the coach saw:", body["description"])
+        self.assertTrue(body["description"].startswith("Rowed with SmartRow\n"))
 
     def test_rowing_ftp_from_intervals(self):
         self.assertEqual(intervals.rowing_ftp("secret-key"), 185.0)  # the indoor FTP when set
@@ -421,9 +422,10 @@ class FitFileTest(unittest.TestCase):
         self.assertEqual(session["total_strokes"], len(strokes))
         self.assertEqual(session["start_time"].timestamp(), 1_800_000_000)
         laps = found["lap"]
-        active = [lap for lap in laps if lap["intensity"] == "active"]
-        self.assertEqual(len(active), len(record["intervals"]))  # one lap per interval ...
-        self.assertEqual(len(laps), 2 * len(record["intervals"]) + 1)  # ... with steady rowing around them
+        efforts = [lap for lap in laps if lap["intensity"] == "interval"]
+        self.assertEqual(len(efforts), len(record["intervals"]))  # one lap per effort ...
+        self.assertGreaterEqual(len(laps), 2 * len(record["intervals"]) + 1)  # ... with Easy / Recovery around them
+        self.assertEqual({lap["intensity"] for lap in laps} - {"interval", "active", "recovery"}, set())
         self.assertAlmostEqual(sum(lap["total_elapsed_time"] for lap in laps), session["total_elapsed_time"], delta=0.01)
         self.assertEqual(sum(lap["total_strokes"] for lap in laps), len(strokes))  # each stroke in one lap
         self.assertAlmostEqual(sum(lap["total_distance"] for lap in laps), session["total_distance"], delta=0.01)
@@ -432,6 +434,22 @@ class FitFileTest(unittest.TestCase):
         self.assertEqual(laps[-1]["lap_trigger"], "session_end")
         self.assertEqual(laps[0]["lap_trigger"], "manual")
         self.assertEqual(found["record"][100]["power"], round(strokes[100]["power_w"]))
+
+    def test_recovery_laps_between_efforts(self):
+        from smartrow_bridge.activity import laps
+        r = saturday()
+        record = sessions.build_record(r.coach, 1_800_000_000.0, 1_800_001_000.0, True, 6000, 1000)
+        strokes = [dict(zip(sessions.STROKE_COLUMNS, row)) for row in sessions.stroke_rows(r.coach)]
+        easy = record["steady_power_w"]
+        # Paddle very lightly for 40 strokes after the first effort.
+        first = record["intervals"][0]
+        end = first["started_at_s"] + first["duration_s"]
+        light = [s for s in strokes if end < s["t"] <= end + 120]
+        for s in light:
+            s["power_w"] = easy * 0.5
+        kinds = [lap["kind"] for lap in laps(record, strokes)]
+        self.assertIn("Recovery", kinds)
+        self.assertEqual(kinds[0], "Easy")
 
     def test_force_curves_as_developer_fields(self):
         r = saturday()

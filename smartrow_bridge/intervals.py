@@ -100,23 +100,27 @@ def note_for(record: dict) -> dict:
     """The calendar note for one saved session (sessions.build_record)."""
     started = datetime.fromtimestamp(record["started_at"])
     intervals = record.get("intervals") or []
-    short = sum(1 for i in intervals if i.get("rating") == "short")
+    faded = sum(1 for i in intervals if i.get("rating") == "short")
     km = record.get("distance_m", 0) / 1000
     title = f"Row coach: {_clock(record.get('rowing_s', 0))} · {km:.2f} km"
     if intervals:
-        title += f" · {len(intervals)} interval{'s' if len(intervals) > 1 else ''}"
-        title += f", {short} went short" if short else ", all kept their shape"
-    lines = [f"Rowed at {started.strftime('%H:%M')}: {record.get('avg_power_w', 0)} W average, "
-             f"steady {record.get('steady_power_w', 0)} W, {record.get('strokes', 0)} strokes."]
+        title += f" · {len(intervals)} effort{'s' if len(intervals) > 1 else ''}"
+        title += f", {faded} faded" if faded else ", all kept their shape"
+    lines = ["Rowed with SmartRow", "",
+             f"Rowed at {started.strftime('%H:%M')}: {record.get('avg_power_w', 0)} W average, "
+             f"Easy {record.get('steady_power_w', 0)} W, {record.get('strokes', 0)} strokes."]
+    if record.get("ftp"):
+        lines[-1] += f" FTP {record['ftp']} W."
     hr = record.get("heart_rate")
     if hr:
-        lines[0] += f" Heart rate {hr['avg']} average, {hr['max']} max."
+        lines[-1] += f" Heart rate {hr['avg']} average, {hr['max']} max."
     lines += ["", "What the coach saw:"] + [f"- {f}" for f in record.get("findings", [])]
     if intervals:
-        lines += ["", "Intervals (finish = force in the back half of the drive against steady; peak = where in "
+        lines += ["", "Efforts (finish = force in the back half of the drive against Easy; peak = where in "
                       "the drive the force peaks, \u00b1 stroke to stroke):"]
         for i in intervals:
-            row = (f"I{i['index']}  {_clock(i['duration_s'])}  {i['power_w']} W  {i['stroke_rate_spm']} spm  "
+            kind = f"{i['intensity']}  " if i.get("intensity") else ""
+            row = (f"I{i['index']}  {kind}{_clock(i['duration_s'])}  {i['power_w']} W  {i['stroke_rate_spm']} spm  "
                    f"finish {_signed(i['finish_pct'])}%  length {_signed(round(i['length_delta_cm']))} cm")
             if "peak_at_pct" in i:
                 row += f"  peak {i['peak_at_pct']}% \u00b1{round(i['peak_spread_pct'])}"
@@ -127,7 +131,7 @@ def note_for(record: dict) -> dict:
             if i.get("legs_late"):
                 row += "  late push"
             lines.append(row)
-    lines += ["", "From SmartRowBridge (interval coach)."]
+    lines += ["", "Coached by SmartRowBridge."]
     return {
         "category": "NOTE",
         "start_date_local": started.strftime("%Y-%m-%dT00:00:00"),

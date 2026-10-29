@@ -1,12 +1,19 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """What the activity files (fitfile.py, tcxfile.py) share: the session's laps.
 
-Laps run back to back over the whole session: steady rowing, each interval the coach found,
-steady rowing... so the efforts show up as laps (intervals) in intervals.icu and Strava.
-Times are seconds from the first stroke.
+Laps run back to back over the whole session: Easy rowing, each effort the coach found, Easy
+rowing... so the efforts show up as laps (intervals) in intervals.icu and Strava. The rowing
+between efforts is split into Easy and Recovery laps by power (Recovery: under 44 % of FTP, or
+under 80 % of Easy without one; at least RECOVERY_MIN_S long). Each lap carries its intensity
+("kind": Recovery, Easy, Moderate, Challenging or Max). Times are seconds from the first stroke.
 """
 
 from __future__ import annotations
+
+import statistics
+
+RECOVERY_MIN_S = 15.0  # shorter dips stay part of the Easy rowing around them
+SMOOTH = 5  # strokes (median) to judge each stroke's power by
 
 
 def laps(record: dict, strokes: list[dict]) -> list[dict]:
@@ -32,7 +39,50 @@ def laps(record: dict, strokes: list[dict]) -> list[dict]:
         out.append({"start": cursor, "end": end, "interval": None})
     if len(out) > 1 and out[-1]["interval"] is None and out[-1]["end"] - out[-1]["start"] < 1:
         out[-2]["end"] = out.pop()["end"]  # a sliver at the end belongs to the lap before
-    return out
+    kinds = {i["index"]: i.get("intensity") or "Moderate" for i in record.get("intervals") or []}
+    recovery_w = _recovery_w(record)
+    split = []
+    for lap in out:
+        if lap["interval"] is not None:
+            split.append({**lap, "kind": kinds.get(lap["interval"], "Moderate")})
+        else:
+            split += _easy_and_recovery(lap, strokes, recovery_w)
+    return split
+
+
+def _recovery_w(record: dict) -> float:
+    """Below this power, rowing between efforts is Recovery (coach.FTP_BOUNDS_PCT / EASY_BOUNDS)."""
+    if record.get("ftp"):
+        return record["ftp"] * 0.44
+    return (record.get("steady_power_w") or 0) * 0.80
+
+
+def _easy_and_recovery(lap: dict, strokes: list[dict], recovery_w: float) -> list[dict]:
+    """A stretch between efforts as Easy and Recovery laps (Recovery at least RECOVERY_MIN_S)."""
+    inside = [s for s in strokes if lap["start"] <= s["t"] < lap["end"]]
+    if not inside or not recovery_w:
+        return [{**lap, "kind": "Easy"}]
+    powers = [s["power_w"] for s in inside]
+    low = [statistics.median(powers[max(0, i - SMOOTH // 2):i + SMOOTH // 2 + 1]) < recovery_w
+           for i in range(len(inside))]
+    # runs of the same kind, as (kind, start time)
+    runs = []
+    for s, is_low in zip(inside, low):
+        kind = "Recovery" if is_low else "Easy"
+        if not runs or runs[-1][0] != kind:
+            runs.append([kind, s["t"]])
+    runs[0][1] = lap["start"]
+    # too-short Recovery dips stay Easy; then merge neighbours of the same kind
+    bounds = [r[1] for r in runs[1:]] + [lap["end"]]
+    runs = [[("Easy" if k == "Recovery" and end - start < RECOVERY_MIN_S else k), start]
+            for (k, start), end in zip(runs, bounds)]
+    merged = []
+    for kind, start in runs:
+        if not merged or merged[-1][0] != kind:
+            merged.append([kind, start])
+    bounds = [r[1] for r in merged[1:]] + [lap["end"]]
+    return [{"start": start, "end": end, "interval": None, "kind": kind}
+            for (kind, start), end in zip(merged, bounds)]
 
 
 def lap_strokes(lap_list: list[dict], strokes: list[dict]) -> list[list[dict]]:
