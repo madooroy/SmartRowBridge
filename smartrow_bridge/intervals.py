@@ -17,16 +17,24 @@ SRB_INTERVALS_UPLOAD chooses what is sent:
 
     python -m smartrow_bridge.intervals --test          check the key: shows the athlete's name
     python -m smartrow_bridge.intervals --preview ID    print the summary text a session would get
+    python -m smartrow_bridge.intervals --mark-efforts ID ACTIVITY   mark a session's efforts on an
+                                                        activity already there (e.g. i123456789)
+
+After an upload, the activity's intervals are set to the coach's efforts (Moderate and harder)
+through the API, so intervals.icu shows the work intervals only, not the Easy and Recovery
+rowing between them (nor its own interval detection).
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
+import bisect
 import json
 import logging
 import os
 import sys
+import time
 import urllib.error
 from datetime import datetime
 from pathlib import Path
@@ -160,8 +168,55 @@ def send_note(record: dict, key: str) -> dict:
     return {"event_id": event.get("id")}
 
 
-def upload_activity(record: dict, fit: bytes, key: str) -> dict:
-    """Upload the session's FIT file as an activity, then give it a name and the coach's summary."""
+WORK_INTENSITIES = ("Moderate", "Challenging", "Max")
+STREAM_TRIES, STREAM_WAIT_S = 4, 5.0  # the time stream can take a moment after the upload
+
+
+def work_intervals(record: dict, strokes: list[dict], times: list[float]) -> list[dict]:
+    """The coach's efforts (Moderate and harder) as intervals.icu intervals.
+
+    `times` is the activity's time stream; its first point is the first stroke, whatever
+    time base intervals.icu counts from. Easy and Recovery stretches are left out.
+    """
+    if not times or not strokes:
+        return []
+    offset = times[0] - strokes[0]["t"]
+    out = []
+    for i in record.get("intervals") or []:
+        if "started_at_s" not in i or i.get("intensity", "Moderate") not in WORK_INTENSITIES:
+            continue
+        start = bisect.bisect_left(times, i["started_at_s"] + offset)
+        end = min(bisect.bisect_left(times, i["started_at_s"] + i["duration_s"] + offset), len(times) - 1)
+        if end > start:
+            out.append({"start_index": start, "end_index": end, "type": "WORK",
+                        "label": i.get("intensity") or "Effort"})
+    return out
+
+
+def _time_stream(activity_id: str, key: str) -> list[float]:
+    for attempt in range(STREAM_TRIES):
+        answer = _request("GET", f"/activity/{activity_id}/streams.json", key, params="?types=time")
+        streams = answer if isinstance(answer, list) else answer.get("streams") or []
+        for st in streams:
+            if st.get("type") == "time" and st.get("data"):
+                return [float(t) for t in st["data"]]
+        if attempt + 1 < STREAM_TRIES:
+            time.sleep(STREAM_WAIT_S)
+    return []
+
+
+def mark_efforts(activity_id: str, record: dict, strokes: list[dict], key: str) -> int:
+    """Replace intervals.icu's own intervals with the coach's efforts. Returns how many were set."""
+    marks = work_intervals(record, strokes, _time_stream(activity_id, key))
+    if not marks:
+        return 0
+    webapi.request("PUT", f"{API}/activity/{activity_id}/intervals?all=true", _auth(key), json_body=marks)
+    return len(marks)
+
+
+def upload_activity(record: dict, fit: bytes, key: str, strokes: list[dict] | None = None) -> dict:
+    """Upload the session's FIT file as an activity, then give it a name and the coach's summary,
+    and mark the efforts as its intervals (only those: not the Easy and Recovery rowing)."""
     body, content_type = webapi.multipart({}, "file", f"smartrow-{record['id']}.fit", fit)
     answer = webapi.request("POST", f"{API}/athlete/0/activities", _auth(key), body=body, content_type=content_type)
     activity_id = answer.get("id") or (answer.get("activities") or [{}])[0].get("id")
@@ -172,6 +227,13 @@ def upload_activity(record: dict, fit: bytes, key: str) -> dict:
         except Exception as exc:  # noqa: BLE001 - the activity is there; only its text is missing
             log.warning("intervals.icu activity %s uploaded, but its description wasn't set: %s",
                         activity_id, describe_error(exc))
+        if strokes and record.get("intervals"):
+            try:
+                n = mark_efforts(activity_id, record, strokes, key)
+                log.info("intervals.icu activity %s: %d efforts marked as intervals", activity_id, n)
+            except Exception as exc:  # noqa: BLE001 - intervals.icu keeps the intervals it found itself
+                log.warning("intervals.icu activity %s uploaded, but its intervals weren't set: %s",
+                            activity_id, describe_error(exc))
     return {"activity_id": activity_id}
 
 
@@ -182,6 +244,9 @@ def main(argv: list[str] | None = None) -> int:
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--test", action="store_true", help="check the API key")
     group.add_argument("--preview", metavar="ID", help="print the note a saved session would get")
+    group.add_argument("--mark-efforts", nargs=2, metavar=("SESSION", "ACTIVITY"),
+                       help="set a saved session's efforts as the intervals of an intervals.icu activity "
+                            "(its id, e.g. i123456789, from the activity's address)")
     args = p.parse_args(argv)
     if args.preview:
         record = sessions.read_session(args.session_dir, args.preview)
@@ -194,6 +259,21 @@ def main(argv: list[str] | None = None) -> int:
     if key is None:
         print(f"No API key in {args.key_file}: run tools/setup_intervals.sh", file=sys.stderr)
         return 1
+    if args.mark_efforts:
+        session, activity_id = args.mark_efforts
+        record = sessions.read_session(args.session_dir, session)
+        strokes = sessions.read_strokes(args.session_dir, session)
+        if record is None or not strokes:
+            print(f"No saved session {session} with strokes in {args.session_dir}", file=sys.stderr)
+            return 1
+        try:
+            n = mark_efforts(activity_id, record, strokes, key)
+        except Exception as exc:  # noqa: BLE001
+            print(describe_error(exc), file=sys.stderr)
+            return 1
+        print(f"{n} efforts set as the intervals of {activity_id}" if n else
+              "No efforts to mark (or intervals.icu has no time stream for that activity yet)")
+        return 0 if n else 1
     try:
         print(f"intervals.icu: connected as {athlete_name(key)}")
         ftp = rowing_ftp(key)

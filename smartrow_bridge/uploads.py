@@ -158,7 +158,7 @@ class Destinations:
         if dest == "intervals_activity":
             from . import fitfile  # fit-tool: only needed once there is something to upload
             fit = fitfile.build(record, strokes)
-            return intervals.upload_activity(record, fit, intervals.read_key(self.s.intervals_key_file))
+            return intervals.upload_activity(record, fit, intervals.read_key(self.s.intervals_key_file), strokes)
         from . import tcxfile  # Strava gets TCX, like the SmartRow app's uploads (see strava.py)
         return strava.StravaAccount(self.s.strava_file).upload(
             tcxfile.build(record, strokes), external_id=f"smartrowbridge-{record['id']}",

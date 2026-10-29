@@ -56,6 +56,8 @@ class FakeServices:
                     return self._answer(200, {"id": 4242, "category": "NOTE"})
                 if p == "/api/v1/athlete/0/activities":
                     return self._answer(201, {"id": "i777"})
+                if p.startswith("/api/v1/activity/i777/streams"):
+                    return self._answer(200, [{"type": "time", "data": list(range(5, 3000))}])
                 if p.startswith("/api/v1/activity/"):
                     return self._answer(200, {"id": "i777"})
                 if p == "/oauth/token":
@@ -163,6 +165,28 @@ class UploadsTest(unittest.TestCase):
         self.assertTrue(body["name"].endswith(" Row"))
         self.assertIn("What the coach saw:", body["description"])
         self.assertTrue(body["description"].startswith("Rowed using SmartRow\n"))
+
+    def test_efforts_marked_as_the_only_intervals(self):
+        self.set_up_intervals(when=time.time() - 86400)
+        record = self.saved()
+        strokes = sessions.read_strokes(str(self.dir), record["id"])
+        intervals.upload_activity(record, b"FITDATA", "secret-key", strokes)
+        put = [r for r in self.fake.requests if r[0] == "PUT" and "/intervals" in r[1]]
+        self.assertEqual(put[0][1], "/api/v1/activity/i777/intervals?all=true")
+        marks = json.loads(put[0][3])
+        self.assertEqual(len(marks), len(record["intervals"]))
+        offset = 5 - strokes[0]["t"]  # the stream starts at the first stroke
+        for mark, iv in zip(marks, record["intervals"]):
+            self.assertEqual(mark["type"], "WORK")
+            self.assertEqual(mark["label"], iv["intensity"])
+            self.assertAlmostEqual(5 + mark["start_index"], iv["started_at_s"] + offset, delta=1)
+            self.assertAlmostEqual(mark["end_index"] - mark["start_index"], iv["duration_s"], delta=1.5)
+
+    def test_easy_and_recovery_are_not_marked(self):
+        record = {"intervals": [{"started_at_s": 100, "duration_s": 60, "intensity": "Moderate"},
+                                {"started_at_s": 300, "duration_s": 60, "intensity": "Easy"}]}
+        marks = intervals.work_intervals(record, [{"t": 3.0}], [float(t) for t in range(0, 1000)])
+        self.assertEqual([(m["start_index"], m["end_index"]) for m in marks], [(97, 157)])
 
     def test_rowing_ftp_from_intervals(self):
         self.assertEqual(intervals.rowing_ftp("secret-key"), 185.0)  # the indoor FTP when set

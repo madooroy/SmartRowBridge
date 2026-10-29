@@ -535,7 +535,13 @@ With the [interval coach](#optional-interval-coach-experimental) on, the bridge 
 itself, so the SmartRow app's own Strava link is no longer needed:
 
 - **intervals.icu:** the session as an activity, named like "Morning Row", with the coach's summary as its
-  description and the coach's intervals as laps. Each stroke also carries its force curve (with drive length,
+  description. Its intervals are the coach's efforts only (Moderate and harder), set through the API after
+  the upload, so the Easy and Recovery rowing between them doesn't clutter the activity; leave intervals.icu's
+  *Use laps for intervals* (Sport Settings, Rowing) off, or a later re-analysis puts every lap back. The
+  file itself has a lap for each stretch (Easy, efforts, Recovery) for other tools. To mark the efforts on
+  an activity already there:
+  `sudo /opt/smartrow-bridge/venv/bin/python -m smartrow_bridge.intervals --mark-efforts SESSION i123456789`
+  (the session as listed on the web page's Sessions, the activity id from its intervals.icu address). Each stroke also carries its force curve (with drive length,
   average and peak force and where the peak lands) as FIT developer fields, laid out as Open Rowing Monitor
   writes them, following the rowing industry's draft for force curves in FIT files; intervals.icu doesn't
   show force curves yet, but the data is there for when it, or another tool, does. intervals.icu treats activities that start within a minute
