@@ -58,6 +58,7 @@ IN_STROKE_FIELDS = [
 ABSCISSA_DISTANCE = 2
 APPLICATION_ID = uuid.UUID("116508c3-ea4e-4ec4-a0bc-dcaaafb2ce00")  # SmartRowBridge's own developer id
 
+DEVICE_NAME = "Rowed using SmartRow"  # what apps that show the recording device may show
 PRODUCT = 0x5352  # "SR": SmartRowBridge, under the "development" manufacturer id
 SOFTWARE_VERSION = 1.0
 FIT_EPOCH = 631065600  # 1989-12-31T00:00:00Z
@@ -97,6 +98,7 @@ def build(record: dict, strokes: list[dict]) -> bytes:
     fid.product = PRODUCT
     fid.serial_number = int(t0) & 0xFFFFFFFF
     fid.time_created = _ms(t0)
+    fid.product_name = DEVICE_NAME
     b.add(fid)
 
     dev = DeviceInfoMessage()
@@ -104,7 +106,8 @@ def build(record: dict, strokes: list[dict]) -> bytes:
     dev.manufacturer = Manufacturer.DEVELOPMENT.value
     dev.product = PRODUCT
     dev.software_version = SOFTWARE_VERSION
-    dev.product_name = "SmartRowBridge"
+    dev.device_index = 0  # the creator: the device that recorded the file
+    dev.product_name = DEVICE_NAME
     b.add(dev)
 
     with_curves = any(s.get("force_n") for s in strokes)
