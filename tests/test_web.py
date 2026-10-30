@@ -81,7 +81,14 @@ class WebTest(unittest.TestCase):
         self.assertEqual(len(progress["sessions"]), 0)  # under 5 minutes: not a progress point
         _, _, body = self.get("/progress.json?weeks=abc")
         self.assertIsNone(json.loads(body)["weeks"])  # odd values: all sessions
-        for bad in ("/session/2026-01-01T0000.json", "/session/..%2Fstatus.json", "/session/x.json"):
+        code, _, body = self.get(f"/strokes/{listing[0]['id']}.json")  # for the photo cards
+        strokes = json.loads(body)
+        self.assertEqual(code, 200)
+        self.assertEqual(len(strokes), 101)
+        self.assertEqual(len(strokes[0]["force_n"]), 24)
+        self.assertIn(b'id="toPhotos"', self.get("/")[2])
+        for bad in ("/session/2026-01-01T0000.json", "/session/..%2Fstatus.json", "/session/x.json",
+                    "/strokes/2026-01-01T0000.json", "/strokes/..%2Fstatus.json"):
             with self.assertRaises(urllib.error.HTTPError) as err:
                 self.get(bad)
             self.assertEqual(err.exception.code, 404)

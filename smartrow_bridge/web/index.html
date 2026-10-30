@@ -152,6 +152,9 @@
   .hint { color: var(--dim); font-size: var(--label); }
   button.accent { border-color: var(--green); color: var(--green); }
   #progress { overflow-y: auto; }
+  #photos { overflow-y: auto; }
+  .photos { display: grid; gap: var(--pad); grid-template-columns: repeat(auto-fill, minmax(16em, 1fr)); }
+  .photos img { width: 100%; border-radius: 12px; display: block; -webkit-touch-callout: default; }
   .charts { display: grid; gap: var(--pad); grid-template-columns: repeat(auto-fit, minmax(20em, 1fr)); }
   .chart canvas { width: 100%; height: 190px; display: block; }
   .chart .legend { color: var(--dim); font-size: var(--label); margin-top: 4px; }
@@ -219,6 +222,7 @@
         <button id="back">‹ Live</button>
         <select id="sessPick" aria-label="Session"></select>
         <button id="share">Share</button>
+        <button id="toPhotos" title="Pictures for Strava: one for the session and one per effort">Photos</button>
         <button id="toProgress">Progress</button>
       </div>
       <div><div class="sesstitle" id="ssTitle"></div><div class="sesssub" id="ssSub"></div></div>
@@ -226,6 +230,15 @@
       <div class="tile"><div class="label">WHAT THE COACH SAW</div><ul class="findings" id="ssFindings"></ul></div>
       <div class="cards" id="ssCards"></div>
       <div class="hint" id="ssHint"></div>
+    </section>
+
+    <section id="photos">
+      <div class="sessbar">
+        <button id="phBack">‹ Session</button>
+        <button id="phSave">Save all</button>
+      </div>
+      <div class="hint" id="phHint">Press and hold a picture to save it to your photos, then add it to the activity in the Strava app (Strava doesn't let other apps add photos).</div>
+      <div class="photos" id="phList"></div>
     </section>
 
     <section id="progress">
@@ -762,6 +775,12 @@ function renderProgress(d) {
               series: [{ values: ss.map((p) => p.finish_long), colourOf: finishColour },
                        { values: ss.map((p) => p.finish_short), colourOf: finishColour, hollow: true }] } },
   ];
+  if (ss.some((p) => p.easy_length_cm)) charts.push(
+    { id: "cEasyLen", title: "YOUR EASY STROKE · LENGTH", legend: "stroke length in Easy rowing 2-8 minutes into each row (cm)",
+      opts: { xs, series: [{ values: ss.map((p) => p.easy_length_cm), colour: C.blue, line: true }], fmt: (v) => `${Math.round(v)}` } },
+    { id: "cEasyBack", title: "YOUR EASY STROKE · FORCE IN THE BACK HALF",
+      legend: "share of each stroke's force in the back half of the drive, Easy rowing 2-8 minutes in (%)",
+      opts: { xs, series: [{ values: ss.map((p) => p.easy_back_pct), colour: C.blue, line: true }], fmt: (v) => `${v.toFixed(1)}` } });
   if (hasHr) charts.push({ id: "cBeat", title: "WATTS PER HEARTBEAT (steady)",
     legend: "higher = more power for the same heart rate (aerobic fitness)",
     opts: { xs, series: [{ values: ss.map((p) => p.watts_per_beat), colour: C.green, line: true }], fmt: (v) => v.toFixed(2) } });
@@ -876,6 +895,182 @@ async function shareSession() {
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 $("share").addEventListener("click", shareSession);
+
+// ------------------------------------------------------------------ photo cards (for Strava)
+// Strava's API doesn't let other apps add photos, so the page draws them and you add them in
+// the Strava app: one card for the session (power through the row, efforts marked, heart rate)
+// and one per effort (every stroke's force curve over the Easy rowing just before it, the
+// numbers the coach judged it by). 1080 x 1350, Strava's portrait shape.
+
+const CARD_W = 1080, CARD_H = 1350, CARD_P = 56;
+const CM_PER_SAMPLE = 5.8;  // the pulley's force samples, about this far apart along the stroke
+
+function cardCanvas() {
+  const cv = document.createElement("canvas");
+  cv.width = CARD_W; cv.height = CARD_H;
+  const g = cv.getContext("2d");
+  g.fillStyle = C.bg; g.fillRect(0, 0, CARD_W, CARD_H);
+  const font = (size, bold) => `${bold ? "700 " : ""}${size}px system-ui, "DejaVu Sans", sans-serif`;
+  const text = (t, x, y, size, colour, bold = false, align = "left") => {
+    g.font = font(size, bold); g.fillStyle = colour; g.textAlign = align; g.textBaseline = "alphabetic"; g.fillText(t, x, y);
+  };
+  const tile = (x, y, w, h) => { g.fillStyle = C.tile; g.beginPath(); g.roundRect(x, y, w, h, 18); g.fill(); };
+  return { cv, g, text, tile };
+}
+
+// A chart inside a tile: title, y gridlines with labels, x labels; returns the scale functions.
+function cardAxes(g, text, box, { title, xMax, yMin = 0, yMax, yStep, xStep, xFmt, yFmt = (v) => `${v}` }) {
+  const [bx, by, bw, bh] = box, x0 = bx + 88, x1 = bx + bw - 44, y0 = by + 76, y1 = by + bh - 56;
+  const X = (v) => x0 + v / xMax * (x1 - x0), Y = (v) => y1 - (v - yMin) / (yMax - yMin) * (y1 - y0);
+  text(title, bx + 24, by + 44, 24, C.dim, true);
+  g.lineWidth = 1;
+  for (let v = yMin; v <= yMax + 1e-9; v += yStep) {
+    g.strokeStyle = C.faint; g.beginPath(); g.moveTo(x0, Y(v)); g.lineTo(x1, Y(v)); g.stroke();
+    text(yFmt(v), x0 - 14, Y(v) + 8, 22, C.dim, false, "right");
+  }
+  for (let v = 0; v <= xMax + 1e-9; v += xStep) text(xFmt(v), X(v), y1 + 36, 22, C.dim, false, "center");
+  return { X, Y, x0, x1, y0, y1 };
+}
+
+const niceStep = (span, n) => { const raw = span / n, mag = 10 ** Math.floor(Math.log10(raw));
+  return [1, 2, 2.5, 5, 10].map((f) => f * mag).find((v) => v >= raw); };
+const driveOnly = (curve) => {  // up to the end of the drive (the samples after it are 0)
+  let end = curve.length - 1;
+  while (end > 0 && !curve[end]) end--;
+  return curve.slice(0, Math.min(curve.length, end + 2));
+};
+
+function effortCard(s, i, rows) {
+  const { cv, g, text, tile } = cardCanvas();
+  const t0 = i.started_at_s ?? 0, t1 = t0 + i.duration_s;
+  const strokes = rows.filter((r) => r.t >= t0 - 0.5 && r.t <= t1 && r.force_n && r.force_n.length);
+  const P = CARD_P;
+  text(`${fmtWhen(s.started_at)} · ROWING`, P, P + 26, 26, C.dim, true);
+  text(`I${i.index}${i.intensity ? ` · ${i.intensity}` : ""}`, P, P + 104, 72, C.fg, true);
+  text([fmtTime(i.duration_s), `${i.power_w} W`, `${i.stroke_rate_spm} spm`, i.hr_peak ? `\u2665 ${i.hr_peak}` : null]
+       .filter(Boolean).join("  \u00b7  "), P, P + 158, 34, C.dim);
+  // Every stroke of the effort over the Easy rowing just before it (dashed).
+  const box = [P, 240, CARD_W - 2 * P, 620];
+  tile(...box);
+  const top = Math.max(1, ...strokes.flatMap((r) => r.force_n), ...(i.steady_curve || []));
+  const yStep = niceStep(top, 4), yMax = Math.ceil(top / yStep) * yStep;
+  const ax = cardAxes(g, text, box, { title: "FORCE (N) ALONG THE DRIVE", xMax: 140, yMax, yStep, xStep: 20,
+                                      xFmt: (v) => v === 140 ? "140 cm" : `${v}` });
+  const path = (curve) => {  // from the catch (0 force) out along the stroke
+    g.beginPath(); g.moveTo(ax.X(0), ax.Y(0));
+    driveOnly(curve).forEach((v, k) => g.lineTo(ax.X((k + 1) * CM_PER_SAMPLE), ax.Y(v)));
+  };
+  const shortAt = (i.steady_length_cm || i.length_cm) * 0.85, cut = strokes.filter((r) => r.length_cm < shortAt);
+  g.lineJoin = "round";
+  for (const r of strokes) {
+    if (r.length_cm < shortAt) continue;
+    path(r.force_n); g.strokeStyle = C.blue; g.globalAlpha = 0.45; g.lineWidth = 2.5; g.stroke(); g.globalAlpha = 1;
+  }
+  for (const r of cut) { path(r.force_n); g.strokeStyle = C.amber; g.lineWidth = 4; g.stroke(); }  // cut short, on top
+  if (i.steady_curve && i.steady_curve.length) {
+    path(i.steady_curve); g.strokeStyle = C.fg; g.lineWidth = 4; g.setLineDash([14, 10]); g.stroke(); g.setLineDash([]);
+  }
+  text(`${strokes.length} strokes, one line each`, box[0] + box[2] - 24, box[1] + 44, 22, C.dim, false, "right");
+  text("\u2014 \u2014  Easy rowing just before", ax.x1, ax.y0 + 30, 22, C.fg, false, "right");
+  if (cut.length) text(`${cut.length} cut short`, ax.x1, ax.y0 + 60, 22, C.amber, true, "right");
+  // The numbers the coach judged it by.
+  const tiles = [
+    ["FINISH", signed(i.finish_pct, "%"), `vs your usual ${i.intensity || "effort"}`, ratingColour(i)],
+    ["LENGTH", `${Math.round(i.length_cm)} cm`, `${signed(Math.round(i.length_delta_cm), " cm")} vs Easy`,
+     i.length_delta_cm <= -2 ? C.amber : C.fg],
+    ["CONSISTENCY", i.variation_ratio !== undefined ? `${i.variation_ratio.toFixed(1)}\u00d7` : "\u2013",
+     i.variation_ratio !== undefined ? "variation stroke to stroke, vs Easy" : "", i.uneven ? C.amber : C.fg],
+    ["STALL AFTER THE PEAK", i.stall_pct !== undefined ? `${i.stall_pct}%` : "\u2013",
+     i.stall_pct !== undefined ? `of strokes \u00b7 Easy ${i.steady_stall_pct}%` : "", i.transition ? C.amber : C.fg],
+  ];
+  const tw = (CARD_W - 2 * P - 24) / 2, th = 150;
+  tiles.forEach(([l, v, sub, colour], k) => {
+    const x = P + (k % 2) * (tw + 24), y = 884 + Math.floor(k / 2) * (th + 20);
+    tile(x, y, tw, th);
+    text(l, x + 24, y + 38, 22, C.dim, true);
+    text(v, x + 24, y + 98, 52, colour, true);
+    text(sub, x + 24, y + 134, 22, C.dim);
+  });
+  const flags = [i.uneven ? "uneven strokes" : null, i.transition ? "stall after the peak" : null,
+                 i.legs_late ? "late push" : null, i.rating === "short" ? "finish faded" : null].filter(Boolean);
+  text(flags.length ? `Coach: ${flags.join(" \u00b7 ")}` : "Coach: kept its shape", P, 1258, 30,
+       flags.length ? C.amber : C.green, true);
+  text("SmartRow pulley + PiRowerCoach", CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
+  return cv;
+}
+
+function sessionCard(s, rows) {
+  const { cv, g, text, tile } = cardCanvas();
+  const P = CARD_P, iv = s.intervals || [], hr = s.heart_rate;
+  text("ROWING SESSION", P, P + 26, 26, C.dim, true);
+  text(fmtWhen(s.started_at), P, P + 96, 60, C.fg, true);
+  const stats = [["TIME", fmtTime(s.rowing_s)], ["DISTANCE", fmtKm(s.distance_m)], ["AVERAGE", `${s.avg_power_w} W`],
+                 hr ? ["HEART RATE", `${hr.avg}/${hr.max}`] : ["EFFORTS", `${iv.length}`]];
+  const sw = (CARD_W - 2 * P - 3 * 16) / 4;
+  stats.forEach(([l, v], k) => {
+    const x = P + k * (sw + 16); tile(x, 184, sw, 112);
+    text(l, x + 18, 220, 20, C.dim, true); text(v, x + 18, 274, 38, C.fg, true);
+  });
+  // Power, stroke by stroke (median of 3, as single strokes scatter), efforts shaded and named.
+  const tEnd = Math.max(s.rowing_s || 0, ...rows.map((r) => r.t), 1), minutes = tEnd / 60;
+  const pw = rows.map((r, k) => { const w = rows.slice(Math.max(0, k - 1), k + 2).map((x) => x.power_w).sort((a, b) => a - b);
+                                  return [r.t, w[Math.floor(w.length / 2)]]; });
+  const xStep = niceStep(minutes, 5), xFmt = (v) => v + xStep > minutes ? `${Math.round(v)} min` : `${Math.round(v)}`;
+  const chart = (box, values, colour, title, fromZero, names) => {
+    tile(...box);
+    const vs = values.map((v) => v[1]), hi = Math.max(1, ...vs), lo = fromZero ? 0 : Math.min(...vs);
+    const yStep = niceStep(hi - lo || 1, 3), yMin = Math.floor(lo / yStep) * yStep, yMax = Math.ceil(hi / yStep) * yStep;
+    const ax = cardAxes(g, text, box, { title, xMax: minutes, yMin, yMax, yStep, xStep, xFmt });
+    for (const i of iv) {  // efforts
+      const a = ax.X((i.started_at_s ?? 0) / 60), b = ax.X(((i.started_at_s ?? 0) + i.duration_s) / 60);
+      g.fillStyle = C.green; g.globalAlpha = 0.16; g.fillRect(a, ax.y0, b - a, ax.y1 - ax.y0); g.globalAlpha = 1;
+      if (names) text(`I${i.index}`, (a + b) / 2, ax.y0 - 8, 20, C.green, true, "center");
+    }
+    g.beginPath(); values.forEach(([t, v], k) => k ? g.lineTo(ax.X(t / 60), ax.Y(v)) : g.moveTo(ax.X(t / 60), ax.Y(v)));
+    g.strokeStyle = colour; g.lineWidth = 3; g.lineJoin = "round"; g.stroke();
+  };
+  const hrValues = rows.filter((r) => r.heart_rate > 0).map((r) => [r.t, r.heart_rate]);
+  chart([P, 320, CARD_W - 2 * P, hrValues.length ? 420 : 600], pw, C.blue, "POWER (W) \u00b7 efforts shaded", true, true);
+  let y = hrValues.length ? 760 : 940;
+  if (hrValues.length) { chart([P, y, CARD_W - 2 * P, 260], hrValues, C.red, "HEART RATE (bpm)", false, false); y += 280; }
+  // The coach's verdict on each effort, in two columns (as many as fit).
+  const lineH = 40, colW = (CARD_W - 2 * P - 32) / 2, perCol = Math.floor((CARD_H - 76 - y) / lineH), room = 2 * perCol;
+  iv.slice(0, room).forEach((i, k) => {
+    const x = P + Math.floor(k / perCol) * (colW + 32), ly = y + 30 + (k % perCol) * lineH;
+    const flags = [i.uneven ? "uneven" : null, i.transition ? "stall" : null, i.rating === "short" ? "faded" : null]
+      .filter(Boolean).join(", ");
+    text(`I${i.index}  ${fmtTime(i.duration_s)}  ${i.power_w} W  ${signed(i.finish_pct, "%")}`, x, ly, 26, C.fg);
+    text(flags || "good", x + colW, ly, 26, flags ? C.amber : C.green, true, "right");
+  });
+  if (iv.length > room) text(`+${iv.length - room} more efforts`, P, CARD_H - 76, 22, C.dim);
+  text("SmartRow pulley + PiRowerCoach", CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
+  return cv;
+}
+
+let photoFiles = [];
+async function openPhotos() {
+  if (!openSession) return;
+  const s = openSession;
+  let rows = [];
+  try {
+    const r = await fetch(`/strokes/${s.id}.json`, { cache: "no-store" });
+    if (r.ok) rows = (await r.json()) || [];  // one object per stroke (sessions.STROKE_COLUMNS)
+  } catch (e) { /* no strokes saved: the cards draw what the summary has */ }
+  const cards = [["session", sessionCard(s, rows)], ...(s.intervals || []).map((i) => [`I${i.index}`, effortCard(s, i, rows)])];
+  photoFiles = cards.map(([name, cv]) => ({ name: `rowing-${s.id}-${name}.png`, url: cv.toDataURL("image/png") }));
+  $("phList").innerHTML = photoFiles.map((f) => `<img src="${f.url}" alt="${f.name}">`).join("");
+  show("photos");
+}
+function savePhotos() {
+  for (const f of photoFiles) {
+    const a = document.createElement("a");
+    a.href = f.url; a.download = f.name;
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+}
+$("toPhotos").addEventListener("click", openPhotos);
+$("phSave").addEventListener("click", savePhotos);
+$("phBack").addEventListener("click", () => show("session"));
 
 // ------------------------------------------------------------------ floating window (Picture-in-Picture)
 // The coach is drawn onto a canvas, and the canvas is played as a live video in the

@@ -302,3 +302,21 @@ class ProgressTest(unittest.TestCase):
         text = " ".join(sessions.progress(str(self.dir), weeks=4, now=self.now)["findings"])
         self.assertIn("fell from 0.95 to 0.85", text)
         self.assertIn("Steady power held at about 110 W", text)
+
+
+class EasyStrokeProgressTest(unittest.TestCase):
+    def test_fresh_easy_stroke_in_progress(self):
+        from smartrow_bridge import sessions
+        from tests.test_coach import STEADY
+        base = {"rowing_s": 1200, "distance_m": 5000, "intervals": [], "steady_power_w": 100}
+        old = sessions.session_point({**base, "fresh_easy": {"curve": STEADY, "back_share": 0.45, "length_cm": 112.0}})
+        new = sessions.session_point({**base, "fresh_easy": {"curve": STEADY, "back_share": 0.42, "length_cm": 118.0,
+                                                             "measured_length_cm": 123.0}})
+        none = sessions.session_point(base)
+        self.assertEqual((old["easy_length_cm"], old["easy_back_pct"]), (112.0, 45.0))
+        self.assertEqual(new["easy_length_cm"], 123.0)  # what was rowed, not the length the coach kept
+        self.assertIsNone(none["easy_length_cm"])
+        pts = [{**old, "started_at": 0}, {**new, "started_at": 86400}]
+        text = " ".join(sessions.progress_findings(pts, None, now=2 * 86400))
+        self.assertIn("Your Easy stroke: strokes 112 to 123 cm and force in the back half of the drive 45.0% to 42.0%",
+                      text)

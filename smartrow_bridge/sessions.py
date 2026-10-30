@@ -31,7 +31,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .coach import IntervalCoach
+from .coach import IntervalCoach, peak_position
 from .protocol import RowingMetrics
 
 log = logging.getLogger(__name__)
@@ -352,6 +352,7 @@ def session_point(record: dict) -> dict:
     short = [i for i in iv if i["duration_s"] < LONG_EFFORT_S]
     hr = record.get("heart_rate") or {}
     recoveries = [i.get("hr_recovery") for i in iv if i.get("hr_recovery") is not None]
+    fresh = record.get("fresh_easy") or {}
     return {
         "id": record.get("id"),
         "started_at": record.get("started_at"),
@@ -370,6 +371,12 @@ def session_point(record: dict) -> dict:
         "watts_per_beat": hr.get("watts_per_beat"),
         "drift_pct": hr.get("drift_pct"),
         "hr_recovery": round(_mean(recoveries)) if recoveries else None,
+        # The fresh Easy stroke (Easy rowing 2-8 minutes in): how your own stroke changes over weeks.
+        # Each row is judged against the last one's, so a slow drift never sets off a cue; this shows it.
+        "easy_length_cm": round(fresh.get("measured_length_cm", fresh.get("length_cm")), 1)
+        if fresh.get("length_cm") else None,
+        "easy_back_pct": round(fresh["back_share"] * 100, 1) if fresh.get("back_share") else None,
+        "easy_peak_pct": round(peak_position(fresh["curve"])) if fresh.get("curve") else None,
     }
 
 
@@ -443,6 +450,15 @@ def progress_findings(points: list[dict], weeks: int | None, now: float | None =
     t = _trend(points, "interval_power_w")
     if t and t[0] and abs(t[1] - t[0]) / t[0] >= 0.03:
         out.append(f"Interval power went from about {t[0]:.0f} W to {t[1]:.0f} W.")
+    length, back = _trend(points, "easy_length_cm"), _trend(points, "easy_back_pct")
+    if length and back:
+        parts = []
+        if abs(length[1] - length[0]) >= 2:
+            parts.append(f"strokes {length[0]:.0f} to {length[1]:.0f} cm")
+        if abs(back[1] - back[0]) >= 1:
+            parts.append(f"force in the back half of the drive {back[0]:.1f}% to {back[1]:.1f}%")
+        out.append("Your Easy stroke: " + " and ".join(parts) + "." if parts
+                   else f"Your Easy stroke held its length (about {length[1]:.0f} cm) and shape.")
     return out
 
 

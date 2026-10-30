@@ -8,8 +8,8 @@ with or without it. It serves, read-only: the page (index.html, next to this fil
 its app manifest, icons and service worker; /status.json, the bridge's status file
 plus its age in seconds as the Pi sees it (so a tablet whose clock differs from the
 Pi's can still tell when the bridge has stopped); the saved session summaries,
-/sessions.json (the list) and /session/<id>.json (one); and /progress.json?weeks=N,
-their trends. Standard library only.
+/sessions.json (the list), /session/<id>.json (one) and /strokes/<id>.json (its strokes,
+for the photo cards); and /progress.json?weeks=N, their trends. Standard library only.
 """
 
 from __future__ import annotations
@@ -93,6 +93,12 @@ def make_handler(path: str, session_dir: str = sessions.DEFAULT_DIR):
             elif route == "/sessions.json":
                 self._send(HTTPStatus.OK, json.dumps(sessions.list_sessions(session_dir)).encode(),
                            "application/json")
+            elif route.startswith("/strokes/") and route.endswith(".json"):  # a session's strokes (photo cards)
+                strokes = sessions.read_strokes(session_dir, route[len("/strokes/"):-len(".json")])
+                if strokes is None:
+                    self._send(HTTPStatus.NOT_FOUND, b"Not found\n", "text/plain; charset=utf-8")
+                else:
+                    self._send(HTTPStatus.OK, json.dumps(strokes).encode(), "application/json")
             elif route.startswith("/session/") and route.endswith(".json"):
                 record = sessions.read_session(session_dir, route[len("/session/"):-len(".json")])
                 if record is None:
