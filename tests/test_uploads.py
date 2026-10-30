@@ -168,6 +168,9 @@ class UploadsTest(unittest.TestCase):
         body = json.loads(put[3])
         self.assertTrue(body["name"].endswith(" Row"))
         self.assertEqual(body["description"], "Rowed using SmartRow")  # the report goes to Strava
+        report = intervals.full_text(record)
+        self.assertEqual(report.splitlines()[0], "Rowed using SmartRow \u00b7 coached by PiRowerCoach")
+        self.assertNotIn("SmartRowBridge", report)
         self.assertNotIn("FTP", body["description"])
 
     def test_efforts_marked_as_the_only_intervals(self):

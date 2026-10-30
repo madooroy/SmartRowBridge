@@ -139,6 +139,10 @@ def effort_line(i: dict) -> str:
     return " \u00b7 ".join(parts)
 
 
+# The Strava description's first line (what the feed shows): where the row came from, and who coached it.
+STRAVA_FIRST_LINE = "Rowed using SmartRow \u00b7 coached by PiRowerCoach"
+
+
 def note_for(record: dict) -> dict:
     """The calendar note for one saved session (sessions.build_record)."""
     started = datetime.fromtimestamp(record["started_at"])
@@ -149,7 +153,7 @@ def note_for(record: dict) -> dict:
     if intervals:
         title += f" · {len(intervals)} effort{'s' if len(intervals) > 1 else ''}"
         title += f", {faded} faded" if faded else ", all kept their shape"
-    lines = ["Rowed using SmartRow", "",
+    lines = [STRAVA_FIRST_LINE, "",
              f"Rowed at {started.strftime('%H:%M')}: {record.get('avg_power_w', 0)} W average, "
              f"Easy rowing {record.get('steady_power_w', 0)} W, {record.get('strokes', 0)} strokes."]
     hr = record.get("heart_rate")
@@ -163,7 +167,6 @@ def note_for(record: dict) -> dict:
     lines += ["", "What the coach saw:"] + [f"- {f}" for f in record.get("findings", [])]
     if intervals:
         lines += ["", "Efforts (finish against your usual stroke at that intensity):"] + [effort_line(i) for i in intervals]
-    lines += ["", "Coached by SmartRowBridge."]
     return {
         "category": "NOTE",
         "start_date_local": started.strftime("%Y-%m-%dT00:00:00"),

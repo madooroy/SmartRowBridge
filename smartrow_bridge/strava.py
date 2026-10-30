@@ -19,7 +19,7 @@ root only. Strava's access tokens last six hours; the Pi renews them itself.
 Uploads go through Strava's upload API: the session as a TCX file (tcxfile.py), marked as
 indoor (trainer). Like the SmartRow app's own uploads, the file names no device. Strava
 doesn't show a personal API app's name on the activity, so the description starts with
-"Rowed using SmartRow" (intervals.note_for). The activity type (SRB_STRAVA_SPORT_TYPE, Rowing) is set on the
+"Rowed using SmartRow · coached by PiRowerCoach" (intervals.STRAVA_FIRST_LINE). The activity type (SRB_STRAVA_SPORT_TYPE, Rowing) is set on the
 activity once it is there. Strava itself turns away an exact duplicate; that counts as done.
 """
 
