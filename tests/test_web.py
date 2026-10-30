@@ -178,3 +178,21 @@ class ReplayToolTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StallCheckInPageTest(unittest.TestCase):
+    """The page's copy of the coach's stall check (photo cards) gives the coach's answers."""
+
+    @unittest.skipUnless(__import__("shutil").which("node"), "needs node")
+    def test_same_as_coach(self):
+        import subprocess
+        from smartrow_bridge.coach import stall_span
+        from tests.test_coach import FADED, LATE, SHORT, STALLED
+        curves = [STEADY, FULL, SHORT, FADED, LATE, STALLED, [0] * 24,
+                  [128, 208, 272, 336, 384, 432, 480, 496, 512, 512, 512, 480, 480, 448, 416, 368, 320, 272, 208, 144,
+                   96, 64, 48, 0]]
+        src = PAGE.read_text(encoding="utf-8")
+        js = src[src.index("const STALL_FLAT"):src.index("const sampleCm")]
+        out = subprocess.run(["node", "-e", js + f"\nconsole.log(JSON.stringify({json.dumps(curves)}.map(stallSpan)));"],
+                             capture_output=True, text=True, timeout=20, check=True).stdout
+        self.assertEqual(json.loads(out), [list(stall_span(c)) if stall_span(c) else None for c in curves])

@@ -941,6 +941,37 @@ const driveOnly = (curve) => {  // up to the end of the drive (the samples after
   return curve.slice(0, Math.min(curve.length, end + 2));
 };
 
+// The coach's stall check, for marking it stroke by stroke on the effort cards. Keep in step with
+// smartrow_bridge/coach.py (drive_end, stall_span: DRIVE_END_FRACTION, STALL_FLAT, STALL_STEEP).
+const STALL_FLAT = 0.25, STALL_STEEP = 0.5;
+function driveEnd(f) {
+  const top = Math.max(0, ...f);
+  if (top <= 0) return 0;
+  let k = f.length - 1;
+  while (k > 0 && !(f[k] > 0.05 * top)) k--;
+  return k;
+}
+function stallSpan(f) {  // [first sample, sample where the fall resumes] or null
+  const top = Math.max(0, ...f);
+  if (top <= 0) return null;
+  const at = f.lastIndexOf(top), end = driveEnd(f);
+  const drops = [];
+  for (let k = at; k < end; k++) drops.push(f[k] - f[k + 1]);
+  if (drops.length < 5) return null;
+  const sorted = drops.slice().sort((x, y) => x - y), steep = sorted.slice(-3).reduce((x, y) => x + y, 0) / 3;
+  let i = 1;
+  while (i < drops.length - 1) {
+    if (drops[i] <= STALL_FLAT * steep && Math.max(...drops.slice(0, i)) >= STALL_STEEP * steep) {
+      let j = i;
+      while (j + 1 < drops.length && drops[j + 1] <= STALL_FLAT * steep) j++;
+      if (j + 1 < drops.length && drops[j + 1] >= STALL_STEEP * steep) return [at + i, at + j + 1];
+      i = j + 1;
+    } else i++;
+  }
+  return null;
+}
+const sampleCm = (k) => (k + 1) * CM_PER_SAMPLE;  // force sample k, cm of handle travel from the catch
+
 function effortCard(s, i, rows) {
   const { cv, g, text, tile } = cardCanvas();
   const t0 = i.started_at_s ?? 0, t1 = t0 + i.duration_s;
@@ -962,18 +993,62 @@ function effortCard(s, i, rows) {
     driveOnly(curve).forEach((v, k) => g.lineTo(ax.X((k + 1) * CM_PER_SAMPLE), ax.Y(v)));
   };
   const shortAt = (i.steady_length_cm || i.length_cm) * 0.85, cut = strokes.filter((r) => r.length_cm < shortAt);
+  // Where the coach saw something, marked on the curve: a shaded stretch of the drive (behind the
+  // strokes) with a label along the bottom, where the curves leave room.
+  const marks = [];  // [from cm, to cm, label]
+  const easyEnd = i.steady_curve && i.steady_curve.length ? driveEnd(i.steady_curve) : driveEnd(i.curve || []);
+  const stalls = i.transition ? strokes.map((r) => [r, stallSpan(r.force_n)]).filter(([, sp]) => sp) : [];
+  if (stalls.length) {
+    const med = (xs) => xs.slice().sort((x, y) => x - y)[Math.floor(xs.length / 2)];
+    marks.push([sampleCm(med(stalls.map(([, sp]) => sp[0]))) - 1, sampleCm(med(stalls.map(([, sp]) => sp[1]))) + 1,
+                `stall after the peak (${i.stall_pct}% of strokes)`]);
+  }
+  if (i.rating === "short" || i.rating === "ok")
+    marks.push([sampleCm(easyEnd / 2), sampleCm(easyEnd), `finish ${signed(i.finish_pct, "%")}: less force here than usual`]);
+  if (i.legs_late) marks.push([0, sampleCm(easyEnd / 2), "the push came later than in Easy rowing"]);
+  if (i.peak_wanders && i.curve) {
+    const end = sampleCm(driveEnd(i.curve)), at = i.peak_at_pct / 100 * end, sd = i.peak_spread_pct / 100 * end;
+    marks.push([at - sd, at + sd, `peak moved about (\u00b1${Math.round(i.peak_spread_pct)}% of the drive)`]);
+  }
+  const markRow = (k) => ax.Y(0) - 16 - k * 34;
+  marks.forEach(([a, b], k) => {
+    g.fillStyle = C.amber; g.globalAlpha = 0.16;
+    g.fillRect(ax.X(Math.max(0, a)), ax.y0, ax.X(Math.min(140, b)) - ax.X(Math.max(0, a)), ax.y1 - ax.y0);
+    g.globalAlpha = 1;
+  });
   g.lineJoin = "round";
   for (const r of strokes) {
     if (r.length_cm < shortAt) continue;
     path(r.force_n); g.strokeStyle = C.blue; g.globalAlpha = 0.45; g.lineWidth = 2.5; g.stroke(); g.globalAlpha = 1;
   }
   for (const r of cut) { path(r.force_n); g.strokeStyle = C.amber; g.lineWidth = 4; g.stroke(); }  // cut short, on top
+  for (const [r, [a, b]] of stalls) {  // each stroke's stall, drawn over in amber
+    g.beginPath();
+    for (let k = a; k <= b; k++) (k === a ? g.moveTo : g.lineTo).call(g, ax.X(sampleCm(k)), ax.Y(r.force_n[k]));
+    g.strokeStyle = C.amber; g.lineWidth = 5; g.stroke();
+  }
   if (i.steady_curve && i.steady_curve.length) {
     path(i.steady_curve); g.strokeStyle = C.fg; g.lineWidth = 4; g.setLineDash([14, 10]); g.stroke(); g.setLineDash([]);
   }
   text(`${strokes.length} strokes, one line each`, box[0] + box[2] - 24, box[1] + 44, 22, C.dim, false, "right");
   text("\u2014 \u2014  Easy rowing just before", ax.x1, ax.y0 + 30, 22, C.fg, false, "right");
   if (cut.length) text(`${cut.length} cut short`, ax.x1, ax.y0 + 60, 22, C.amber, true, "right");
+  // The labels, one row each from the bottom, under the shaded stretch (kept inside the chart).
+  marks.forEach(([a, b, label], k) => {
+    g.font = `700 21px system-ui, "DejaVu Sans", sans-serif`;
+    const w = g.measureText(label).width, mid = ax.X((Math.max(0, a) + Math.min(140, b)) / 2);
+    const x = Math.min(Math.max(mid - w / 2, ax.x0 + 6), ax.x1 - w - 6), y = markRow(k);
+    g.fillStyle = C.tile; g.globalAlpha = 0.85; g.fillRect(x - 6, y - 21, w + 12, 28); g.globalAlpha = 1;
+    text(label, x, y, 21, C.amber, true);
+  });
+  if (i.length_delta_cm <= -2 && i.curve && i.steady_curve) {  // shorter strokes: a bracket where the drive ends
+    const a = ax.X(sampleCm(driveEnd(i.curve))), b = ax.X(sampleCm(easyEnd)), y = ax.Y(0) - 8 - marks.length * 34 - 26;
+    if (b - a > 6) {
+      g.strokeStyle = C.amber; g.lineWidth = 3; g.beginPath();
+      g.moveTo(a, y - 8); g.lineTo(a, y); g.lineTo(b, y); g.lineTo(b, y - 8); g.stroke();
+      text(`${Math.abs(Math.round(i.length_delta_cm))} cm shorter`, b, y - 14, 21, C.amber, true, "right");
+    }
+  }
   // The numbers the coach judged it by.
   const tiles = [
     ["FINISH", signed(i.finish_pct, "%"), `vs your usual ${i.intensity || "effort"}`, ratingColour(i)],
