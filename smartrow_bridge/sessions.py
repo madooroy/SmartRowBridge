@@ -80,7 +80,8 @@ class SessionRecorder:
         complete = mono_now - (c.last_time or mono_now) > END_AFTER_S
         if complete and c.effort is not None:
             c.state(mono_now)  # closes an effort that was still open when rowing stopped
-        key = (len(c.intervals), complete)
+        after = c.recovery_after()  # heart-rate recovery after the row: written again as each minute comes in
+        key = (len(c.intervals), complete, tuple(sorted((after or {}).get("drops", {}).items())))
         if key == self._written and (complete or wall_now - self._written_at < REFRESH_S):
             return None
         path = self._write(metrics, complete, wall_now)
@@ -99,7 +100,8 @@ class SessionRecorder:
             c.state(c.last_time + END_AFTER_S + 1)  # closes an effort still open
         path = self._write(metrics, True, time.time())
         if path is not None:
-            self._written = (len(c.intervals), True)
+            after = c.recovery_after()
+            self._written = (len(c.intervals), True, tuple(sorted((after or {}).get("drops", {}).items())))
         return path
 
     def finish(self, metrics: RowingMetrics) -> str | None:

@@ -565,6 +565,8 @@ class IntervalCoach:
         # Heart-rate zones from intervals.icu ({"tops": [bpm...], "names": [...], "max_hr": bpm}), for the
         # photo cards' shading; None without them.
         self.hr_zones: dict | None = None
+        # From intervals.icu too: weight (kg), max and resting heart rate, for the VO2max estimate.
+        self.athlete: dict = {}
         self.expect = dict(EXPECTED_FINISH)
         self.session = 0
         self.reset()
@@ -636,6 +638,7 @@ class IntervalCoach:
         self.power_total = 0.0
         self.length_total = 0.0
         self.trace: list[tuple[float, int, float]] = []  # (time, heart rate, power) per stroke
+        self.hr_after: list[tuple[float, int]] = []  # (time, heart rate) after the last stroke (note_heart_rate)
         # Every stroke, for the session's activity file and later analysis:
         # (time, distance m, power W, strokes/min, heart rate, stroke length cm, force curve N)
         self.stroke_log: list[tuple[float, int, float, float, int, int, tuple[int, ...]]] = []
@@ -702,6 +705,7 @@ class IntervalCoach:
         self.power_total += stroke_power(s)
         self.length_total += s.stroke_length_cm
         self.trace.append((s.time, s.heart_rate_bpm, stroke_power(s)))
+        self.hr_after.clear()  # rowing again: the recovery is measured after the last stroke
         self.stroke_log.append((s.time, s.distance_m, stroke_power(s), s.stroke_rate_spm, s.heart_rate_bpm,
                                 s.stroke_length_cm, tuple(s.force_n)))
         self.recent.append(s)
@@ -993,11 +997,41 @@ class IntervalCoach:
                          "sensitivity": self.settings.sensitivity},
             "intervals": intervals,
             "heart_rate": hr,
+            "hr_recovery_after": self.recovery_after(),
+            "vo2max": self.vo2max(),
             "easy_drift": self.easy_drift(),
             "fresh_easy": self._fresh_record(),
             "findings": findings(intervals) + easy_findings(self.easy_drift()) + length_findings(self._length_note())
-            + heart_rate_findings(hr, intervals),
+            + heart_rate_findings(hr, intervals) + after_findings(self.recovery_after(), self.vo2max(), self.athlete),
         }
+
+    def note_heart_rate(self, now: float, bpm: int) -> None:
+        """A heart-rate reading between strokes (the bridge passes one a second): kept for the
+        HRR_AT_S minutes after the last stroke, for the recovery after the row."""
+        if bpm > 0 and self.last_time is not None and 0 < now - self.last_time <= HRR_AT_S[-1] + HRR_WINDOW_S:
+            self.hr_after.append((now, bpm))
+
+    def recovery_after(self) -> dict | None:
+        """Heart-rate recovery after the row (HRR): the drop from the end of the row (the highest
+        reading in its last HRR_END_S) at each of HRR_AT_S after the last stroke, as far as measured."""
+        if self.last_time is None or not self.hr_after:
+            return None
+        end = [hr for t, hr, _ in self.trace if hr > 0 and t >= self.last_time - HRR_END_S]
+        if not end:
+            return None
+        start, drops = max(end), {}
+        for at in HRR_AT_S:
+            near = [(abs(t - self.last_time - at), hr) for t, hr in self.hr_after if abs(t - self.last_time - at) <= HRR_WINDOW_S]
+            if near:
+                drops[str(at // 60)] = start - min(near)[1]
+        return {"from_bpm": start, "drops": drops} if drops else None
+
+    def vo2max(self) -> dict | None:
+        """A rough VO2max estimate (ml/kg/min), with weight and max heart rate from intervals.icu."""
+        a = self.athlete
+        if not a.get("weight_kg") or not a.get("max_hr") or not self.trace:
+            return None
+        return vo2max_estimate(self.trace, a["weight_kg"], a["max_hr"], a.get("resting_hr") or VO2_RESTING_HR)
 
     def _fresh_record(self) -> dict | None:
         """Today's fresh Easy stroke, for the session record (the next session's reference)."""
@@ -1321,6 +1355,66 @@ def heart_rate_summary(trace: list[tuple[float, int, float]], intervals: list[In
         "drift_pct": drift,
         "intervals": per_interval,
     }
+
+
+# Heart-rate recovery after the row (as Open Rowing Monitor reports it): the drop 1, 2 and 3 minutes
+# after the last stroke, from the highest reading in the row's last HRR_END_S.
+HRR_AT_S = (60, 120, 180)
+HRR_WINDOW_S = 5.0  # a reading this close to each mark
+HRR_END_S = 30.0
+
+# VO2max, estimated as Open Rowing Monitor does (its "extrapolated" estimate, after Firstbeat/Garmin):
+# heart rate against power through the row, after VO2_WARMUP_S, averaged in VO2_BUCKET_BPM-wide
+# heart-rate buckets (at least VO2_MIN_BUCKETS of VO2_MIN_STROKES strokes each); the line through
+# them, carried to your max heart rate, gives the power you could hold there (at least the most
+# you averaged in a bucket); VO2max = (14.72 x that power + 250.39) / weight, the formula Concept2
+# and ORM use. Rough: heart rate lags power in intervals, and max heart rate moves it (10 bpm, about
+# 3 ml/kg/min). Only 10-60 is credible.
+VO2_WARMUP_S = 600.0
+VO2_BUCKET_BPM = 5
+VO2_MIN_BUCKETS, VO2_MIN_STROKES = 5, 3
+VO2_RESTING_HR = 50
+VO2_RANGE = (10.0, 60.0)
+
+
+def vo2max_estimate(trace: list[tuple[float, int, float]], weight_kg: float, max_hr: int,
+                    resting_hr: int = VO2_RESTING_HR) -> dict | None:
+    """{"ml_kg_min", "power_w" (projected to max heart rate)} from the (time, heart rate, power) trace, or None."""
+    if not trace or weight_kg <= 0:
+        return None
+    t0 = trace[0][0]
+    buckets: dict[int, list[tuple[int, float]]] = {}
+    for t, hr, p in trace:
+        if t - t0 > VO2_WARMUP_S and resting_hr <= hr < max_hr and p > 0:
+            buckets.setdefault(hr // VO2_BUCKET_BPM, []).append((hr, p))
+    points = [(statistics.fmean(h for h, _ in v), statistics.fmean(p for _, p in v))
+              for v in buckets.values() if len(v) >= VO2_MIN_STROKES]
+    if len(points) < VO2_MIN_BUCKETS:
+        return None
+    mx, my = statistics.fmean(x for x, _ in points), statistics.fmean(y for _, y in points)
+    spread = sum((x - mx) ** 2 for x, _ in points)
+    if not spread:
+        return None
+    slope = sum((x - mx) * (y - my) for x, y in points) / spread
+    power = max(my + slope * (max_hr - mx), max(y for _, y in points))
+    value = (14.72 * power + 250.39) / weight_kg
+    if not VO2_RANGE[0] <= value <= VO2_RANGE[1]:
+        return None
+    return {"ml_kg_min": round(value, 1), "power_w": round(power)}
+
+
+def after_findings(recovery: dict | None, vo2: dict | None, athlete: dict) -> list[str]:
+    """Heart-rate recovery after the row, and the VO2max estimate, in a sentence each."""
+    out = []
+    if recovery:
+        d = recovery["drops"]
+        parts = [f"{d[k]} bpm in the first minute" if k == "1" else f"{d[k]} by {['', 'one', 'two', 'three'][int(k)]} minutes"
+                 for k in sorted(d)]
+        out.append(f"After the row, heart rate fell from {recovery['from_bpm']}: " + ", ".join(parts) + ".")
+    if vo2:
+        out.append(f"VO2max estimate: {vo2['ml_kg_min']:.0f} ml/kg/min (rough: heart rate against power through the row, "
+                   f"carried to your max heart rate of {athlete.get('max_hr')} bpm, at {athlete.get('weight_kg'):g} kg).")
+    return out
 
 
 def heart_rate_findings(hr: dict | None, intervals: list[dict]) -> list[str]:

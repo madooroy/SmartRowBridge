@@ -111,6 +111,20 @@ class RecorderTest(unittest.TestCase):
         self.assertEqual(done, path)  # same file
         self.assertIsNone(rec.update(RowingMetrics(), mono_now=r.t + 999, wall_now=wall0 + 999))
 
+    def test_rewritten_as_the_heart_rate_recovery_comes_in(self):
+        r = saturday()
+        for k, (t, _, p) in enumerate(r.coach.trace):  # a strap on: heart rate with every stroke
+            r.coach.trace[k] = (t, 140, p)
+        rec = self.recorder(r)
+        wall0, end = 1_800_000_000.0, r.t
+        done = rec.update(RowingMetrics(), mono_now=end + sessions.END_AFTER_S + 1, wall_now=wall0)
+        self.assertIsNone(json.loads(done.read_text())["hr_recovery_after"])
+        for sec in range(1, 186):
+            r.coach.note_heart_rate(end + sec, 140 - sec // 6)
+        again = rec.update(RowingMetrics(), mono_now=end + 190, wall_now=wall0 + 60)
+        self.assertEqual(json.loads(again.read_text())["hr_recovery_after"]["drops"], {"1": 10, "2": 20, "3": 30})
+        self.assertIsNone(rec.update(RowingMetrics(), mono_now=end + 999, wall_now=wall0 + 999))  # nothing new
+
     def test_close_saves_complete_and_keeps_upload_marks(self):
         r = saturday()
         rec = self.recorder(r)

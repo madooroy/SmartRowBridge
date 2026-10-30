@@ -251,8 +251,13 @@ class FtpReadOnceTest(unittest.TestCase):
             self.assertEqual(intervals.rowing_ftp("k"), 185.0)
         self.assertEqual((got["ftp"], got["max_hr"], got["hr_zones"]["tops"][0], got["hr_zones"]["names"][-1]),
                          (185.0, 182, 128, "Anaerobic"))
+        self.assertEqual((got["weight_kg"], got["resting_hr"]), (None, None))
+        with mock.patch.object(intervals, "_request", lambda *a, **k: {**me, "icu_weight": 81.5, "icu_resting_hr": 52}):
+            got = intervals.rowing_settings("k")
+        self.assertEqual((got["weight_kg"], got["resting_hr"]), (81.5, 52))
         with mock.patch.object(intervals, "_request", lambda *a, **k: {"sportSettings": []}):
-            self.assertEqual(intervals.rowing_settings("k"), {"ftp": None, "max_hr": None, "hr_zones": None})
+            self.assertEqual(intervals.rowing_settings("k"), {"ftp": None, "max_hr": None, "hr_zones": None,
+                                                              "weight_kg": None, "resting_hr": None})
 
     def test_fixed_ftp_still_reads_the_heart_rate_zones(self):
         import asyncio
@@ -640,6 +645,52 @@ class WaitingTextTest(unittest.TestCase):
         r = Rower(ftp=185)
         r.row(45, 105)  # past the warm-up, nothing saved, too few fresh strokes yet
         self.assertEqual(r.state()["waiting"], "learning your Easy stroke")
+
+
+class AfterTheRowTest(unittest.TestCase):
+    def rowed(self, hr_end=150):
+        r = Rower(ftp=185)
+        for k in range(300):  # 14 minutes, heart rate rising with power, ending at hr_end
+            r.t += PERIOD
+            r.count += 1
+            w = 100 + (k % 60) * 1.5
+            s = StrokeCurve(time=r.t, force_n=list(STEADY), stroke_rate_spm=RATE, stroke_length_cm=115,
+                            work_j=w * 60 / RATE, stroke_count=r.count,
+                            heart_rate_bpm=int(110 + (k % 60) * 0.6) if k < 299 else hr_end)
+            r.coach.add(s)
+        return r
+
+    def test_recovery_after_the_row(self):
+        r = self.rowed()
+        c, end = r.coach, r.t
+        self.assertIsNone(c.recovery_after())
+        for sec in range(1, 200):  # the strap reads once a second after the last stroke
+            c.note_heart_rate(end + sec, 150 - min(sec, 180) // 6)
+        self.assertEqual(c.recovery_after(), {"from_bpm": 150, "drops": {"1": 10, "2": 20, "3": 30}})
+        text = " ".join(c.session_summary()["findings"])
+        self.assertIn("After the row, heart rate fell from 150: 10 bpm in the first minute, 20 by two minutes, "
+                      "30 by three minutes.", text)
+        c.note_heart_rate(end + 400, 100)  # long after: not kept
+        self.assertAlmostEqual(c.hr_after[-1][0] - end, 185, delta=1.01)  # kept up to the last mark (3 min) and a few s
+        r.row(1, 105)  # rowing again: the recovery starts over after the new last stroke
+        self.assertEqual(c.hr_after, [])
+
+    def test_partial_recovery(self):
+        r = self.rowed()
+        for sec in range(1, 70):  # finished on the screen after a minute
+            r.coach.note_heart_rate(r.t + sec, 130)
+        self.assertEqual(r.coach.recovery_after()["drops"], {"1": 20})
+
+    def test_vo2max(self):
+        r = self.rowed()
+        self.assertIsNone(r.coach.vo2max())  # nothing from intervals.icu yet
+        r.coach.athlete = {"weight_kg": 80.0, "max_hr": 180, "resting_hr": 55}
+        v = r.coach.vo2max()
+        self.assertTrue(10 <= v["ml_kg_min"] <= 60)
+        self.assertEqual(v["ml_kg_min"], round((14.72 * v["power_w"] + 250.39) / 80, 1))
+        self.assertIn("VO2max estimate:", " ".join(r.coach.session_summary()["findings"]))
+        short = coach.vo2max_estimate(r.coach.trace[:100], 80, 180)  # inside the warm-up: nothing to go on
+        self.assertIsNone(short)
 
 
 class SettingsTest(unittest.TestCase):
