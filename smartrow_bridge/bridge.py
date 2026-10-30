@@ -227,8 +227,6 @@ class Bridge:
                 log.exception("Request from the screen failed")
             if self.hr_link is not None and not self.hr_link.fresh():
                 self.parser.metrics.heart_rate_bpm = 0  # strap off or out of range: no reading
-            if self.coach is not None and self.parser.metrics.heart_rate_bpm:
-                self.coach.note_heart_rate(time.monotonic(), self.parser.metrics.heart_rate_bpm)  # recovery after
             try:
                 status.write(path, self._status())
                 failed = False
@@ -271,8 +269,6 @@ class Bridge:
                     warned = True
                 await asyncio.sleep(FTP_RETRY_S)
                 continue
-            self.coach.athlete = {"weight_kg": settings.get("weight_kg"), "max_hr": settings.get("max_hr"),
-                                  "resting_hr": settings.get("resting_hr")}
             if settings.get("hr_zones"):
                 self.coach.hr_zones = {**settings["hr_zones"], "max_hr": settings.get("max_hr")}
                 log.info("Heart-rate zones from intervals.icu: %s bpm", "/".join(map(str, settings["hr_zones"]["tops"])))

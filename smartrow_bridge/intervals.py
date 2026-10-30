@@ -92,16 +92,8 @@ def rowing_settings(key: str) -> dict:
             names = list(sport.get("hr_zone_names") or [])
             return {"ftp": float(ftp) if ftp else None,
                     "max_hr": int(sport["max_hr"]) if sport.get("max_hr") else None,
-                    "hr_zones": {"tops": zones, "names": names[:len(zones)]} if zones else None,
-                    **_athlete(me)}
-    return {"ftp": None, "max_hr": None, "hr_zones": None, **_athlete(me)}
-
-
-def _athlete(me: dict) -> dict:
-    """Weight (kg) and resting heart rate from the athlete's profile, when set."""
-    weight = me.get("icu_weight") or me.get("weight")
-    rest = me.get("icu_resting_hr") or me.get("resting_hr")
-    return {"weight_kg": float(weight) if weight else None, "resting_hr": int(rest) if rest else None}
+                    "hr_zones": {"tops": zones, "names": names[:len(zones)]} if zones else None}
+    return {"ftp": None, "max_hr": None, "hr_zones": None}
 
 
 def rowing_ftp(key: str) -> float | None:
