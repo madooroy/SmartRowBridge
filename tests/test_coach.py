@@ -494,6 +494,51 @@ class ConsistencyTest(unittest.TestCase):
         self.assertGreaterEqual(i.variation_ratio, coach.UNEVEN_VARIATION)
 
 
+# The steady shape with a stall just after the peak: the force falls, holds for two samples, falls again.
+STALLED = list(STEADY)
+STALLED[11:14] = [360, 356, 354]
+
+
+class TransitionTest(unittest.TestCase):
+    def test_stall_at(self):
+        self.assertEqual(coach.stall_at(STALLED), 11)
+        for smooth in (STEADY, FULL, SHORT, FADED, LATE):
+            self.assertIsNone(coach.stall_at(smooth))
+        self.assertIsNone(coach.stall_at([0] * 24))
+        pct, cm = coach.stall_stats([StrokeCurve(time=0, force_n=list(c)) for c in (STALLED, STEADY)])
+        self.assertEqual((pct, round(cm)), (50.0, round(12 * coach.SAMPLE_CM)))
+
+    def test_cue_and_summary(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(10, 150)
+        self.assertEqual(r.state()["live"]["cue"], "good")
+        r.row(8, 150, curve=STALLED)
+        self.assertEqual(r.state()["live"]["cue"], "transition")
+        r.row(20, 105)
+        i = r.coach.intervals[-1]
+        self.assertTrue(i.transition)
+        d = i.as_dict()
+        self.assertEqual((d["stall_pct"], d["steady_stall_pct"], d["transition"]), (round(i.stall_pct), 0, True))
+        text = " ".join(coach.findings([d]))
+        self.assertIn("The force stalled just after the peak", text)
+        self.assertIn("legs-to-back from back-to-arms", text)
+
+    def test_a_few_stalls_are_not_flagged(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        for k in range(30):
+            r.row(1, 150, curve=STALLED if k % 10 == 9 else STEADY)
+        r.row(20, 105)
+        self.assertFalse(r.coach.intervals[-1].transition)
+
+    def test_easy_rowing_cue(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(8, 105, curve=STALLED)
+        self.assertEqual(r.coach.easy_cue, "transition")
+
+
 class SettingsTest(unittest.TestCase):
     def test_defaults_are_the_calibrated_values(self):
         d = coach.CoachSettings()

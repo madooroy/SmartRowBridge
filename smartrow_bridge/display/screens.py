@@ -326,6 +326,7 @@ CUES = {
     "finish": ("STRONGER FINISH", AMBER),
     "legs": ("EARLIER PUSH", AMBER),
     "length": ("LONGER STROKES", AMBER),
+    "transition": ("BETTER TRANSITION", AMBER),
     "good": ("LOOKS GOOD", GREEN),
 }
 RATING_COLOURS = {"good": GREEN, "ok": AMBER, "short": RED}

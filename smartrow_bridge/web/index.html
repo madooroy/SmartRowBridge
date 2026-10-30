@@ -260,7 +260,7 @@ const GOOD_PCT = -5, OK_PCT = -12, METER_MIN = -30, METER_MAX = 15, FORCE_HALF =
 const STALE_S = 5, RECALL_S = 20, POLL_MS = 1000;
 // Two words: what to do, and the part of the stroke; never a muscle (see coach.py).
 const CUES = { finish: ["STRONGER FINISH", C.amber], legs: ["EARLIER PUSH", C.amber],
-               length: ["LONGER STROKES", C.amber], good: ["LOOKS GOOD", C.green] };
+               length: ["LONGER STROKES", C.amber], transition: ["BETTER TRANSITION", C.amber], good: ["LOOKS GOOD", C.green] };
 const RATING = { good: C.green, ok: C.amber, short: C.red };
 
 const $ = (id) => document.getElementById(id);
@@ -613,7 +613,7 @@ function renderSession(s) {
     `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join("");
   $("ssFindings").innerHTML = (s.findings || []).map((f) => `<li>${f}</li>`).join("");
   $("ssCards").innerHTML = iv.map((i) => {
-    const flags = [i.legs_late ? "LATE PUSH" : "", i.peak_wanders ? "PEAK LESS CONSISTENT" : "", i.uneven ? "UNEVEN" : "",
+    const flags = [i.legs_late ? "LATE PUSH" : "", i.peak_wanders ? "PEAK LESS CONSISTENT" : "", i.uneven ? "UNEVEN" : "", i.transition ? `TRANSITION ${i.stall_pct}%` : "",
                    i.duration_s >= 90 && i.fade_pct <= -5 ? `FADED ${signed(i.fade_pct, "%")}` : ""]
       .filter(Boolean).join(" · ");
     return `<div class="tile card">

@@ -13,7 +13,9 @@ Fed one StrokeCurve per completed stroke (see protocol.SmartRowParser.on_stroke)
   steady curve, and says what to do in two words, naming a part of the stroke, never a
   muscle: STRONGER FINISH ("finish") when less of the force comes in the back half of the
   drive than in steady rowing, EARLIER PUSH ("legs") when the force builds later in the
-  drive, LONGER STROKES ("length") when strokes get clearly shorter, otherwise LOOKS GOOD.
+  drive, LONGER STROKES ("length") when strokes get clearly shorter, BETTER TRANSITION
+  ("transition") when the force stalls just after the peak on several of the last few strokes
+  (see stall_at), otherwise LOOKS GOOD.
   (The internal names are kept so saved sessions still read.)
 - Summary, after each effort: its average curve, peak force, stroke length, finish
   share and where the force peaks (and how consistently), and how even its strokes were
@@ -53,6 +55,14 @@ Calibrated on six real sessions (2,952 strokes, 15 efforts):
   its maximum, so a flat top doesn't jump about), as % of the drive, and its standard
   deviation over the interval: 2-5 % in these sessions. Suggested by Jaap van Ekris, who
   found the peak's stroke-to-stroke variability telling in his own rowing.
+- transition: a stall just after the peak, where the force stops falling for a sample or more and
+  then drops again (stall_at). Spotted by Jaap van Ekris on a chart of one effort's strokes; none of
+  the single-number measures moved, and averaged curves smooth it away, so it is counted stroke
+  by stroke. Over five sessions it sat at the same place every day (about 70 cm of handle travel,
+  85-90 % of peak force): on 3-6 % of Easy strokes, and up to 46 % of an effort's (Oct 29, I5).
+  Coaching sources put dips like this at a handover (legs to back, or back to arms) and advise
+  letting the phases overlap. The pulley reports force in 16 N steps, so one flat sample alone
+  could be rounding; a stall is only counted between clearly steeper drops.
 - consistency (also after Jaap van Ekris: smoothness and consistency are what matter): how
   much each stroke's curve (scaled to its own peak) differs from the one before (RMS over the
   drive), against the same in the Easy rowing before the effort, plus the spread of stroke
@@ -120,6 +130,11 @@ UNEVEN_LENGTH_SD_RATIO, UNEVEN_LENGTH_SD_MIN = 2.0, 6.0
 VARIATION_FLOOR = 0.02  # the least Easy-rowing variation an effort's is divided by
 SHORT_STROKE_PCT = 15.0  # a stroke this much shorter than the Easy ones is counted as cut short
 SETTLE_STROKES = 3  # an effort's first strokes (the step up) are left out of its consistency
+# Transition (stall_at): a drop per sample this small against the steepest drops after the peak is
+# a stall, if a drop at least STALL_STEEP of them comes before and after it.
+STALL_FLAT, STALL_STEEP = 0.25, 0.5
+SAMPLE_CM = 5.8  # handle travel between force samples (about; they are spaced by distance)
+STALL_FLAG_PCT, STALL_FLAG_OVER = 25.0, 15.0  # summary: stalls on this % of strokes, and this many points over Easy
 SPLIT_MIN_STROKES = 15  # an effort that steps up (or down) an intensity for this long is split in two
 
 CUE_WINDOW = 8  # strokes in the live cue
@@ -169,12 +184,14 @@ class CueThresholds:
     legs_clear: float
     length_cue_pct: float  # strokes shorter than steady by this %
     length_clear_pct: float
+    transition_cue: int = 3  # strokes with a stall after the peak, of the last CUE_WINDOW: cue at ...
+    transition_clear: int = 1  # ... clear at or below
 
 
 SENSITIVITY = {
-    "low": CueThresholds(0.84, 0.88, 4.0, 3.0, 3.5, 2.5),
-    "normal": CueThresholds(0.88, 0.92, 3.0, 2.3, 2.6, 1.7),  # calibrated
-    "high": CueThresholds(0.91, 0.94, 2.3, 1.8, 2.0, 1.3),
+    "low": CueThresholds(0.84, 0.88, 4.0, 3.0, 3.5, 2.5, 4, 2),
+    "normal": CueThresholds(0.88, 0.92, 3.0, 2.3, 2.6, 1.7, 3, 1),  # calibrated
+    "high": CueThresholds(0.91, 0.94, 2.3, 1.8, 2.0, 1.3, 2, 0),
 }
 
 
@@ -293,6 +310,45 @@ def length_balance(length_delta_pct: float, cues: CueThresholds) -> float:
     return length_delta_pct / cues.length_cue_pct
 
 
+def stall_at(force: list[int] | list[float]) -> int | None:
+    """The sample where the force stalls just after the peak, or None for a smooth fall.
+
+    After the peak the force should fall steadily to the end of the drive. A stall is a stretch
+    where it falls by under STALL_FLAT of the steepest drops (or not at all), with a drop of at least
+    STALL_STEEP of them before and after it: the curve flattens, then falls again.
+    """
+    top = max(force) if force else 0
+    if top <= 0:
+        return None
+    at = max(i for i, f in enumerate(force) if f == top)  # the last sample of a flat top
+    drops = [force[i] - force[i + 1] for i in range(at, drive_end(force))]
+    if len(drops) < 5:
+        return None
+    steep = statistics.fmean(sorted(drops)[-3:])
+    i = 1
+    while i < len(drops) - 1:
+        if drops[i] <= STALL_FLAT * steep and max(drops[:i]) >= STALL_STEEP * steep:
+            j = i
+            while j + 1 < len(drops) and drops[j + 1] <= STALL_FLAT * steep:
+                j += 1
+            if j + 1 < len(drops) and drops[j + 1] >= STALL_STEEP * steep:
+                return at + i
+            i = j + 1
+        else:
+            i += 1
+    return None
+
+
+def stall_stats(strokes) -> tuple[float, float]:
+    """% of strokes with a stall after the peak, and where (median, cm of handle travel; 0 if none)."""
+    strokes = [s for s in strokes if s.force_n]
+    at = [stall_at(s.force_n) for s in strokes]
+    hits = [a for a in at if a is not None]
+    if not strokes:
+        return 0.0, 0.0
+    return len(hits) / len(strokes) * 100, (statistics.median(hits) + 1) * SAMPLE_CM if hits else 0.0
+
+
 def curve_variation(strokes) -> float:
     """Stroke-to-stroke variation: the RMS difference between each stroke's curve and the one before
     (both scaled to their own peak, over the longer drive of the two), averaged. 0 = identical strokes."""
@@ -351,6 +407,14 @@ class IntervalSummary:
     steady_length_sd_cm: float = 0.0
     short_strokes: int = 0  # strokes cut clearly short (SHORT_STROKE_PCT)
     shortest_cm: float = 0.0
+    stall_pct: float = 0.0  # strokes with a stall just after the peak (stall_at), %
+    stall_cm: float = 0.0  # ... where, cm of handle travel
+    steady_stall_pct: float = 0.0  # ... in the Easy rowing before
+
+    @property
+    def transition(self) -> bool:
+        """The force stalled after the peak on clearly more strokes than in Easy rowing."""
+        return self.stall_pct >= max(STALL_FLAG_PCT, self.steady_stall_pct + STALL_FLAG_OVER)
 
     @property
     def variation_ratio(self) -> float:
@@ -437,6 +501,10 @@ class IntervalSummary:
             "short_strokes": self.short_strokes,
             "shortest_cm": round(self.shortest_cm),
             "uneven": self.uneven,
+            "stall_pct": round(self.stall_pct),
+            "stall_cm": round(self.stall_cm),
+            "steady_stall_pct": round(self.steady_stall_pct),
+            "transition": self.transition,
             "reference": "local",  # judged against the Easy rowing just before (sessions.learned_finish)
             "fade_pct": round((self.last_third_back_share / self.first_third_back_share - 1) * 100)
             if self.first_third_back_share else 0,
@@ -457,6 +525,9 @@ class IntervalSummary:
                 f"(Easy \u00b1{self.steady_length_sd_cm:.1f})"
                 + (f", {self.short_strokes} cut short (shortest {self.shortest_cm:.0f} cm)" if self.short_strokes else "")
                 + (", UNEVEN" if self.uneven else "")
+                + f", stall after the peak on {self.stall_pct:.0f}% (Easy {self.steady_stall_pct:.0f}%)"
+                + (" at about {:.0f} cm".format(self.stall_cm) if self.stall_cm else "")
+                + (", TRANSITION" if self.transition else "")
                 + (f", late push ({self.lateness:+.1f}% of the drive)" if self.legs_late else ""))
 
 
@@ -766,6 +837,7 @@ class IntervalCoach:
         settled = strokes[SETTLE_STROKES:] if n > 2 * SETTLE_STROKES + 4 else strokes
         lengths = [s.stroke_length_cm for s in strokes]
         local_lengths = [s.stroke_length_cm for s in local]
+        stall_pct, stall_cm = stall_stats(strokes)
         cut = [x for x in lengths if ref["length_cm"] and x < ref["length_cm"] * (1 - SHORT_STROKE_PCT / 100)]
         intensity = self.intensity(statistics.fmean(stroke_power(s) for s in strokes))
         return IntervalSummary(
@@ -801,6 +873,9 @@ class IntervalCoach:
             steady_length_sd_cm=statistics.pstdev(local_lengths) if len(local_lengths) > 1 else 0.0,
             short_strokes=len(cut),
             shortest_cm=min(lengths),
+            stall_pct=stall_pct,
+            stall_cm=stall_cm,
+            steady_stall_pct=stall_stats(local)[0],
         )
 
     # ------------------------------------------------------------ live cue
@@ -819,7 +894,7 @@ class IntervalCoach:
         short_by_pct = (ref_len - statistics.fmean(s.stroke_length_cm for s in window)) / ref_len * 100
         return ratio, drive_lateness(curve, ref["curve"]), short_by_pct
 
-    def _judge(self, previous: str | None, ratio: float, late: float, short_by_pct: float) -> str:
+    def _judge(self, previous: str | None, ratio: float, late: float, short_by_pct: float, stalls: int = 0) -> str:
         """The cue for a window of strokes against a reference (with a little hysteresis)."""
         t = self.settings.cues
         if ratio < t.finish_cue or (previous == "finish" and ratio < t.finish_clear):
@@ -828,6 +903,8 @@ class IntervalCoach:
             return "legs"
         if short_by_pct > t.length_cue_pct or (previous == "length" and short_by_pct > t.length_clear_pct):
             return "length"
+        if stalls >= t.transition_cue or (previous == "transition" and stalls > t.transition_clear):
+            return "transition"
         return "good"
 
     def _update_cue(self) -> None:
@@ -835,7 +912,7 @@ class IntervalCoach:
         if len(e.strokes) < CUE_MIN:
             e.cue = None
             return
-        e.cue = self._judge(e.cue, *self._window_measures())
+        e.cue = self._judge(e.cue, *self._window_measures(), stalls=_stalls(self._window()))
 
     def _easy_measures(self) -> tuple[float, float, float]:
         """The last few Easy strokes against the early Easy ones: finish ratio, lateness, % shorter."""
@@ -854,7 +931,7 @@ class IntervalCoach:
         if self.baseline is None or len(self.easy_window) < CUE_MIN or self.warming_up():
             self.easy_cue = None
             return
-        self.easy_cue = self._judge(self.easy_cue, *self._easy_measures())
+        self.easy_cue = self._judge(self.easy_cue, *self._easy_measures(), stalls=_stalls(self.easy_window))
 
     # ------------------------------------------------------------ session summary
 
@@ -978,6 +1055,11 @@ class IntervalCoach:
         return out
 
 
+def _stalls(strokes) -> int:
+    """How many of these strokes stall after the peak (stall_at)."""
+    return sum(stall_at(s.force_n) is not None for s in strokes if s.force_n)
+
+
 def _pct(value: int) -> str:
     """+3%, −15% (a real minus sign, as on the screens)."""
     return f"{value:+d}%".replace("-", "\u2212")
@@ -1062,6 +1144,16 @@ def findings(intervals: list[dict]) -> list[str]:
             n_short = i["short_strokes"]
             detail.append(f"{n_short} stroke{'s' if n_short > 1 else ''} cut short (shortest {i['shortest_cm']} cm)")
         out.append(f"I{i['index']} was uneven: " + ", ".join(detail) + ".")
+
+    stalled = [i for i in intervals if i.get("transition")]
+    if stalled:
+        pcts = ", ".join(f"{i['stall_pct']}%" for i in stalled)
+        cm = round(statistics.median(i["stall_cm"] for i in stalled))
+        easy = max(i.get("steady_stall_pct", 0) for i in stalled)
+        out.append(f"The force stalled just after the peak (about {cm} cm into the drive) in {_names(stalled)} "
+                   f"({pcts} of strokes, against {easy}% or less in Easy rowing): a break in the handover after the "
+                   f"peak. The curve can't say which one; keeping the arms relaxed until the swing is nearly done "
+                   f"tells legs-to-back from back-to-arms, and a video shows it.")
 
     wander = [i for i in intervals if i.get("peak_wanders")]
     if wander:

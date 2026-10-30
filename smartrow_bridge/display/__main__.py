@@ -233,6 +233,7 @@ def preview(directory: str) -> None:
         "07h-interval-legs-cue": screens.interval_screen(coached(live("legs", late, 14, 0, 1.4, 0.0)), now, up),
         "07i-summary-legs-late": screens.summary_screen(coached(last=legs_last, show_summary=True), now, up),
         "07d-interval-length-cue": screens.interval_screen(coached(live("length", short, -1, -5, -0.3, -1.7)), now, up),
+        "07n-interval-transition-cue": screens.interval_screen(coached(live("transition", full, -2, 1, -0.2, 0.3)), now, up),
         "07e-summary-good": screens.summary_screen(coached(last=good_last, show_summary=True), now, up),
         "07f-summary-short": screens.summary_screen(coached(last=short_last, show_summary=True), now, up),
         "07g-rowing-with-last": screens.rowing_screen(coached(last=short_last), now, up),

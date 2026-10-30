@@ -409,6 +409,8 @@ at 70 W or 250 W.
     curve's centre of force sits, at least 3 % of the drive later).
   - **LONGER STROKES** (amber): strokes clearly shorter than your steady ones (by 2.6 %, about 3 cm on a
     115 cm stroke).
+  - **BETTER TRANSITION** (amber): the force stalls just after the peak (falls, holds, falls again) on 3 of
+    your last 8 strokes: a break in the handover after the peak. Let the phases overlap.
 
   The pulley measures force at fixed distances along the stroke (about every 5.8 cm), so a shorter stroke
   simply has fewer points. The finish and the push are measured against each stroke's own length, so a
@@ -499,6 +501,14 @@ LONGER STROKES speaks up, and the summary says so. Recovery gets the numbers onl
 summary adds how the last minutes of Easy rowing compared with the fresh ones. (Efforts are not judged
 against the fresh stroke: your Easy stroke changes over a row, by up to 15 % in the finish, and against
 the early stroke a late effort that held the shape you were rowing at the time read as going short.)
+
+**BETTER TRANSITION.** A fourth live cue, for a stall just after the peak: the force stops falling for a
+sample or two, then drops again. It shows when 3 of the last 8 strokes have one, and the summary counts it
+per effort against the Easy rowing before (flagged at 25 % of strokes and 15 points over Easy). Coaching
+sources put dips like this at a handover, legs to back or back to arms; keeping the arms relaxed until the
+swing is nearly done tells which, and a video shows it. Spotted by Jaap van Ekris on a chart of one
+effort's strokes: in five sessions it sat at about 70 cm every day, on 3-6 % of Easy strokes and up to
+46 % of an effort's.
 
 **Consistency.** Each effort's summary also says how even its strokes were: how much each stroke's
 curve differs from the one before, and the spread of stroke length, against the Easy rowing just before.
