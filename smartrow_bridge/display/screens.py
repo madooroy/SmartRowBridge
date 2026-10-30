@@ -345,7 +345,7 @@ def _shade(colour: tuple, amount: float = 0.35) -> tuple:
 
 
 def _plot_curves(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], curve: list, steady: list,
-                 colour: tuple, gap_half: str = "back") -> None:
+                 colour: tuple, gap_half: str = "back", stall: dict | None = None) -> None:
     """The effort's force curve, filled, over the steady curve as a thin grey line.
 
     The steady curve is scaled to the same total force, so the picture compares shape
@@ -394,6 +394,16 @@ def _plot_curves(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], curv
     if curve:
         for y in range(y0 + 16, y1, 8):  # dashed line half-way along the steady drive
             draw.line((mid, y, mid, y + 3), fill=FAINT, width=1)
+    if curve and stall and 0 <= stall.get("sample", -1) < len(curve) - 1:
+        # BETTER TRANSITION: the stretch after the peak where the fall stalls, drawn over in white
+        # (this stroke's; grey where the recent strokes stalled when this one didn't), labelled.
+        k = stall["sample"] + 1  # +1: the leading zero
+        until = min(max(stall.get("until", stall["sample"] + 1), stall["sample"] + 1), len(curve) - 1) + 1
+        mark = FG if stall.get("now") else DIM
+        draw.line(pts[k:until + 1], fill=mark, width=6, joint="curve")
+        cx = (pts[k][0] + pts[until][0]) / 2
+        cy = min(pts[k][1], pts[until][1])
+        draw.text((cx, cy - 8), "stall", font=font(12, True), fill=mark, anchor="mb")
 
 
 BAR_RANGE = 2.0  # the summary's shape block moves up to +-2 cue thresholds
@@ -444,7 +454,8 @@ def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
     # missing against steady filled in light grey. A shorter stroke ends before the steady curve does.
     stroke = live.get("stroke_curve") or live.get("curve") or []
     curve_colour = CUES.get(live.get("cue"), ("", FG))[1] if live.get("cue") else FG
-    _plot_curves(draw, (4, 84, WIDTH - 4, 179), stroke, live.get("steady_curve") or [], curve_colour, "both")
+    _plot_curves(draw, (4, 84, WIDTH - 4, 179), stroke, live.get("steady_curve") or [], curve_colour, "both",
+                 live.get("stall"))
     if live.get("balance") is not None and live.get("length_delta_cm") is not None:
         length = f"length {live['length_delta_cm']:+d} cm".replace("-", "\u2212")
         draw.text((12, 89), length, font=font(12), fill=DIM)

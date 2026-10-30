@@ -502,6 +502,7 @@ STALLED[11:14] = [360, 356, 354]
 class TransitionTest(unittest.TestCase):
     def test_stall_at(self):
         self.assertEqual(coach.stall_at(STALLED), 11)
+        self.assertEqual(coach.stall_span(STALLED), (11, 13))
         for smooth in (STEADY, FULL, SHORT, FADED, LATE):
             self.assertIsNone(coach.stall_at(smooth))
         self.assertIsNone(coach.stall_at([0] * 24))
@@ -532,11 +533,22 @@ class TransitionTest(unittest.TestCase):
         r.row(20, 105)
         self.assertFalse(r.coach.intervals[-1].transition)
 
-    def test_easy_rowing_cue(self):
+    def test_not_in_easy_rowing(self):
+        # Easy force is too low for the pulley's 16 N steps to tell a stall from rounding
         r = Rower(ftp=185)
         r.row(200, 105)
         r.row(8, 105, curve=STALLED)
-        self.assertEqual(r.coach.easy_cue, "transition")
+        self.assertNotEqual(r.coach.easy_cue, "transition")
+
+    def test_marker(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(10, 150, curve=STALLED)
+        self.assertEqual(r.state()["live"]["stall"], {"sample": 11, "until": 13, "now": True})
+        r.row(1, 150)  # this stroke is smooth: the recent strokes' spot, dimmed
+        self.assertEqual(r.state()["live"]["stall"], {"sample": 11, "until": 13, "now": False})
+        r.row(8, 150)
+        self.assertIsNone(r.state()["live"]["stall"])  # the cue has cleared
 
 
 class SettingsTest(unittest.TestCase):

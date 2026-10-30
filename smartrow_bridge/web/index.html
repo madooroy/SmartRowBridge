@@ -287,19 +287,19 @@ function show(id) {
 
 // ------------------------------------------------------------------ curve
 
-function drawCurve(canvas, curve, steady, colour, gapHalf = "back", labels = true) {
+function drawCurve(canvas, curve, steady, colour, gapHalf = "back", labels = true, stall = null) {
   const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
   if (!w || !h) return;
   canvas.width = w * dpr; canvas.height = h * dpr;
   const g = canvas.getContext("2d");
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, w, h);
-  plotCurve(g, 0, 0, w, h, curve, steady, colour, gapHalf, labels);
+  plotCurve(g, 0, 0, w, h, curve, steady, colour, gapHalf, labels, 1, stall);
 }
 
 // The effort's curve (filled) over the steady shape (grey line, scaled to the same total
 // force), with the force missing against steady filled in the half that matters.
-function plotCurve(g, bx, by, w, h, curve, steady, colour, gapHalf = "back", labels = true, scale = 1) {
+function plotCurve(g, bx, by, w, h, curve, steady, colour, gapHalf = "back", labels = true, scale = 1, stall = null) {
   curve = curve || []; steady = steady || [];
   const sumC = curve.reduce((a, b) => a + b, 0), sumS = steady.reduce((a, b) => a + b, 0);
   if (sumC && sumS) steady = steady.map((v) => v * sumC / sumS);  // compare shape, not size
@@ -342,6 +342,17 @@ function plotCurve(g, bx, by, w, h, curve, steady, colour, gapHalf = "back", lab
   if (pc) { area(pc); g.globalAlpha = .35; g.fillStyle = colour; g.fill(); g.globalAlpha = 1; }
   if (pc) line(pc, colour, 3 * scale);
   if (steady.length) line(pts(steady), C.dim, 2 * scale);
+  if (pc && stall && stall.sample >= 0 && stall.sample < curve.length - 1) {
+    // BETTER TRANSITION (as screens.py): the stretch after the peak where the fall stalls, drawn over
+    // in white (this stroke's; grey where the recent strokes stalled when this one didn't), labelled.
+    const k = stall.sample + 1;  // +1: the leading zero
+    const until = Math.min(Math.max(stall.until ?? stall.sample + 1, stall.sample + 1), curve.length - 1) + 1;
+    const mark = stall.now ? C.fg : C.dim, seg = pc.slice(k, until + 1);
+    line(seg, mark, 6 * scale);
+    const cx = (seg[0][0] + seg[seg.length - 1][0]) / 2, cy = Math.min(seg[0][1], seg[seg.length - 1][1]);
+    g.font = `bold ${13 * scale}px system-ui, sans-serif`; g.fillStyle = mark;
+    g.textAlign = "center"; g.textBaseline = "alphabetic"; g.fillText("stall", cx, cy - 10 * scale);
+  }
   if (!labels) return;
   g.font = `${12 * scale}px system-ui, sans-serif`; g.fillStyle = C.dim; g.textBaseline = "alphabetic";
   if (steady.length) { g.textAlign = "right"; g.fillText("Easy shape", x1, by + 16 * scale); }
@@ -381,7 +392,7 @@ function renderInterval(live) {
   cue.className = cueColour ? "cue" : "cue none";
   cue.style.background = cueColour || "";
   // As in the SmartRow app: each stroke over your steady shape, the force missing against it in light grey.
-  drawCurve($("iCurve"), live.stroke_curve || live.curve, live.steady_curve, cueColour || C.fg, "both");
+  drawCurve($("iCurve"), live.stroke_curve || live.curve, live.steady_curve, cueColour || C.fg, "both", true, live.stall);
 }
 
 function renderSummary(last) {
@@ -906,7 +917,7 @@ function drawPip() {
     const [, curveColour] = CUES[live.cue] || ["", C.fg];
     const top = 80, cueY = H - FOOT - CUE_H - 6;
     box(top, cueY - top - 8, C.tile);
-    plotCurve(g, 10, top, W - 20, cueY - top - 8, live.stroke_curve || live.curve, live.steady_curve, curveColour, "both", false);
+    plotCurve(g, 10, top, W - 20, cueY - top - 8, live.stroke_curve || live.curve, live.steady_curve, curveColour, "both", false, 1, live.stall);
     const [label, cueColour] = CUES[live.cue] || ["…", C.tile];
     box(cueY, CUE_H, cueColour, 14);
     const size = Math.min(44, Math.floor((W - 40) / (label.length * 0.62)));

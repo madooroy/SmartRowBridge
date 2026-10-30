@@ -410,7 +410,9 @@ at 70 W or 250 W.
   - **LONGER STROKES** (amber): strokes clearly shorter than your steady ones (by 2.6 %, about 3 cm on a
     115 cm stroke).
   - **BETTER TRANSITION** (amber): the force stalls just after the peak (falls, holds, falls again) on 3 of
-    your last 8 strokes: a break in the handover after the peak. Let the phases overlap.
+    your last 8 strokes: a break in the handover after the peak. Let the phases overlap. The screens ring
+    the stall on the curve (white on this stroke; grey where the recent ones stalled when this one didn't).
+    Efforts only: at Easy force the pulley's 16 N steps can't tell a stall from rounding.
 
   The pulley measures force at fixed distances along the stroke (about every 5.8 cm), so a shorter stroke
   simply has fewer points. The finish and the push are measured against each stroke's own length, so a
@@ -503,7 +505,8 @@ against the fresh stroke: your Easy stroke changes over a row, by up to 15 % in 
 the early stroke a late effort that held the shape you were rowing at the time read as going short.)
 
 **BETTER TRANSITION.** A fourth live cue, for a stall just after the peak: the force stops falling for a
-sample or two, then drops again. It shows when 3 of the last 8 strokes have one, and the summary counts it
+sample or two, then drops again. In efforts only, as the pulley's 16 N force steps are too coarse at Easy
+force (checked against each stroke's own smooth fit). It shows when 3 of the last 8 strokes have one, and the summary counts it
 per effort against the Easy rowing before (flagged at 25 % of strokes and 15 points over Easy). Coaching
 sources put dips like this at a handover, legs to back or back to arms; keeping the arms relaxed until the
 swing is nearly done tells which, and a video shows it. Spotted by Jaap van Ekris on a chart of one

@@ -188,6 +188,9 @@ def preview(directory: str) -> None:
             28, 0, 0]
 
     faded = [round(v * (0.7 if 11 <= i <= 19 else 1)) for i, v in enumerate(full)]  # the finish fading
+    # A real stroke with a stall just after the peak (Oct 29, I5): falls, holds at 480 N, falls again.
+    stalled = [128, 208, 272, 336, 384, 432, 480, 496, 512, 512, 512, 480, 480, 448, 416, 368, 320, 272, 208, 144,
+               96, 64, 48, 0]
     late = [40, 80, 131, 210, 286, 344, 389, 422, 445, 465, 467, 455, 430, 401, 375, 340, 295, 246, 196, 148, 104,
             68, 32, 7]  # steady shape, pushed 3 samples later: a slow push off the catch
 
@@ -233,7 +236,8 @@ def preview(directory: str) -> None:
         "07h-interval-legs-cue": screens.interval_screen(coached(live("legs", late, 14, 0, 1.4, 0.0)), now, up),
         "07i-summary-legs-late": screens.summary_screen(coached(last=legs_last, show_summary=True), now, up),
         "07d-interval-length-cue": screens.interval_screen(coached(live("length", short, -1, -5, -0.3, -1.7)), now, up),
-        "07n-interval-transition-cue": screens.interval_screen(coached(live("transition", full, -2, 1, -0.2, 0.3)), now, up),
+        "07n-interval-transition-cue": screens.interval_screen(coached(
+            {**live("transition", stalled, -2, 1, -0.2, 0.3), "stall": {"sample": 11, "until": 12, "now": True}}), now, up),
         "07e-summary-good": screens.summary_screen(coached(last=good_last, show_summary=True), now, up),
         "07f-summary-short": screens.summary_screen(coached(last=short_last, show_summary=True), now, up),
         "07g-rowing-with-last": screens.rowing_screen(coached(last=short_last), now, up),

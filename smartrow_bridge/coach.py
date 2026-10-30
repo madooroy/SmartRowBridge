@@ -61,8 +61,11 @@ Calibrated on six real sessions (2,952 strokes, 15 efforts):
   by stroke. Over five sessions it sat at the same place every day (about 70 cm of handle travel,
   85-90 % of peak force): on 3-6 % of Easy strokes, and up to 46 % of an effort's (Oct 29, I5).
   Coaching sources put dips like this at a handover (legs to back, or back to arms) and advise
-  letting the phases overlap. The pulley reports force in 16 N steps, so one flat sample alone
-  could be rounding; a stall is only counted between clearly steeper drops.
+  letting the phases overlap. The pulley reports force in 16 N steps, which is coarse here: the drops
+  around a stall are two or three steps. Checked against each stroke's own smooth fit (a degree-4
+  polynomial, rounded to 16 N): in efforts that finds 0-4 % stalls against 9-46 % in the real strokes,
+  so those are real; in Easy rowing (less force, so coarser steps) 7 % against 6 % real, rounding
+  only. So BETTER TRANSITION is an effort cue; Easy rowing gets none.
 - consistency (also after Jaap van Ekris: smoothness and consistency are what matter): how
   much each stroke's curve (scaled to its own peak) differs from the one before (RMS over the
   drive), against the same in the Easy rowing before the effort, plus the spread of stroke
@@ -310,12 +313,15 @@ def length_balance(length_delta_pct: float, cues: CueThresholds) -> float:
     return length_delta_pct / cues.length_cue_pct
 
 
-def stall_at(force: list[int] | list[float]) -> int | None:
-    """The sample where the force stalls just after the peak, or None for a smooth fall.
+def stall_span(force: list[int] | list[float]) -> tuple[int, int] | None:
+    """The stall just after the peak, as (first sample, sample where the fall resumes), or None.
 
-    After the peak the force should fall steadily to the end of the drive. A stall is a stretch
+    After the peak the force should fall ever faster to the end of the drive. A stall is a stretch
     where it falls by under STALL_FLAT of the steepest drops (or not at all), with a drop of at least
-    STALL_STEEP of them before and after it: the curve flattens, then falls again.
+    STALL_STEEP of them before and after it: the curve flattens, then falls again. Mostly it is a
+    shoulder (the fall slows for two or three samples) rather than a flat stop: requiring a flat
+    stop two force steps below the drops around it leaves 0-10 % of effort strokes (Oct 29, I5: 8 %
+    against 46 %), while a smooth fit of each stroke rounded to 16 N shows the shoulder 0-9 %.
     """
     top = max(force) if force else 0
     if top <= 0:
@@ -332,11 +338,17 @@ def stall_at(force: list[int] | list[float]) -> int | None:
             while j + 1 < len(drops) and drops[j + 1] <= STALL_FLAT * steep:
                 j += 1
             if j + 1 < len(drops) and drops[j + 1] >= STALL_STEEP * steep:
-                return at + i
+                return at + i, at + j + 1
             i = j + 1
         else:
             i += 1
     return None
+
+
+def stall_at(force: list[int] | list[float]) -> int | None:
+    """The first sample of the stall just after the peak (stall_span), or None for a smooth fall."""
+    span = stall_span(force)
+    return span[0] if span else None
 
 
 def stall_stats(strokes) -> tuple[float, float]:
@@ -931,7 +943,7 @@ class IntervalCoach:
         if self.baseline is None or len(self.easy_window) < CUE_MIN or self.warming_up():
             self.easy_cue = None
             return
-        self.easy_cue = self._judge(self.easy_cue, *self._easy_measures(), stalls=_stalls(self.easy_window))
+        self.easy_cue = self._judge(self.easy_cue, *self._easy_measures())  # no BETTER TRANSITION (see stall_at)
 
     # ------------------------------------------------------------ session summary
 
@@ -1050,9 +1062,25 @@ class IntervalCoach:
                 "length_balance": round(length_balance(-short_by_pct, self.settings.cues), 2) if judged else None,
                 "curve": [round(v) for v in mean_curve(window)],
                 "stroke_curve": list(strokes[-1].force_n),  # the latest stroke, drawn live over steady
+                "stall": stall_marker(window, self.effort.cue),  # where to mark it (BETTER TRANSITION)
                 "steady_curve": [round(v) for v in self.effort_ref()["curve"]],
             }
         return out
+
+
+def stall_marker(strokes, cue: str | None) -> dict | None:
+    """Where to mark the stall on the latest stroke's curve while BETTER TRANSITION shows: the
+    samples where that stroke stalls ("now": true), or else where the recent ones did (false)."""
+    if cue != "transition" or not strokes:
+        return None
+    latest = stall_span(strokes[-1].force_n) if strokes[-1].force_n else None
+    if latest is not None:
+        return {"sample": latest[0], "until": latest[1], "now": True}
+    hits = [a for a in (stall_span(s.force_n) for s in strokes if s.force_n) if a is not None]
+    if not hits:
+        return None
+    return {"sample": round(statistics.median(a for a, _ in hits)),
+            "until": round(statistics.median(b for _, b in hits)), "now": False}
 
 
 def _stalls(strokes) -> int:
