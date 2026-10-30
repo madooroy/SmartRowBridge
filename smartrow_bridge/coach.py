@@ -112,6 +112,10 @@ LEAD_GAP_S, LEAD_STROKES = 30.0, 10  # a few pulls, then a pause this long: the 
 # becomes the reference unless it is more than LENGTH_SAME_CM shorter than the saved one; then the
 # saved one stays (so the cue speaks up) and the summary says so.
 FRESH_FROM_S, FRESH_TO_S = 120.0, 480.0
+# Too few by FRESH_TO_S (efforts early in the row take their strokes, and the strokes just after them):
+# keep collecting until there are FRESH_MIN, up to FRESH_LATEST_S. (Oct 29: a 15-minute row with
+# three early efforts had none at 8 minutes, and a 45-minute class had 61, one over.)
+FRESH_LATEST_S = 720.0
 FRESH_MIN = 60  # strokes needed for a fresh Easy stroke
 PROVISIONAL_MIN = 30  # with nothing saved: fresh strokes before a provisional reference
 FRESH_MAX_AGE_DAYS = 30
@@ -699,7 +703,8 @@ class IntervalCoach:
                                 s.stroke_length_cm, tuple(s.force_n)))
         self.recent.append(s)
         smoothed = statistics.median(stroke_power(r) for r in self.recent)
-        if not self.fresh_done and s.time - self.first_time >= FRESH_TO_S:
+        if not self.fresh_done and s.time - self.first_time >= FRESH_TO_S and (
+                len(self.fresh) >= FRESH_MIN or s.time - self.first_time >= FRESH_LATEST_S):
             self._settle_fresh()
 
         if self.effort is None:
@@ -739,7 +744,8 @@ class IntervalCoach:
         elapsed = s.time - self.first_time
         if elapsed >= FRESH_FROM_S:
             self.shape.append(s)
-        if FRESH_FROM_S <= elapsed < FRESH_TO_S and (not self.ready or self.intensity(stroke_power(s)) == "Easy"):
+        if FRESH_FROM_S <= elapsed and not self.fresh_done and \
+                (not self.ready or self.intensity(stroke_power(s)) == "Easy"):
             self.fresh.append(s)
             if self.baseline is None and len(self.fresh) >= PROVISIONAL_MIN:
                 self.baseline = fresh_stats(self.fresh)
@@ -797,9 +803,13 @@ class IntervalCoach:
             return None
         end_at = self._end_at()
         strokes = list(effort.strokes)
+        eased = 0
         while strokes and stroke_power(strokes[-1]) < end_at:  # the easy strokes that ended it
             strokes.pop()
-        self.recovery_left = RECOVERY_STROKES
+            eased += 1
+        # Recovery counts as if the effort had ended on the first stroke below its end: the strokes
+        # it took to confirm the end (END_CONFIRM) count towards the recovery.
+        self.recovery_left = RECOVERY_STROKES - min(max(0, eased - 1), END_CONFIRM - 1)
         if len(strokes) < self.settings.min_effort_strokes:
             return None
         summary = None

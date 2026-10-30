@@ -570,6 +570,29 @@ class EffortEndTest(unittest.TestCase):
         self.assertEqual(r.coach.intervals[0].strokes, 20)
 
 
+class FreshStrokeTest(unittest.TestCase):
+    def test_early_efforts_still_leave_a_fresh_stroke(self):
+        # Efforts in minutes 2-8 take most of the Easy strokes there: keep collecting, up to 12 minutes.
+        r = Rower(ftp=185)
+        r.row(45, 105)
+        for _ in range(3):
+            r.row(20, 150)
+            r.row(25, 105)
+        self.assertLess(len(r.coach.fresh), coach.FRESH_MIN)
+        self.assertFalse(r.coach.fresh_done)  # past 8 minutes, still collecting
+        r.row(100, 105)
+        self.assertTrue(r.coach.fresh_done)
+        self.assertIsNotNone(r.coach.fresh_result)
+
+    def test_recovery_counts_from_the_first_easy_stroke(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(20, 150)
+        while not r.coach.intervals:  # Easy strokes until the effort is over
+            r.row(1, 105)
+        self.assertEqual(r.coach.recovery_left, coach.RECOVERY_STROKES - (coach.END_CONFIRM - 1))
+
+
 class WaitingTextTest(unittest.TestCase):
     def test_back_to_easy_after_an_effort(self):
         r = Rower(ftp=185)
