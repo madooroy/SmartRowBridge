@@ -16,8 +16,13 @@ Fed one StrokeCurve per completed stroke (see protocol.SmartRowParser.on_stroke)
   drive, LONGER STROKES ("length") when strokes get clearly shorter, otherwise LOOKS GOOD.
   (The internal names are kept so saved sessions still read.)
 - Summary, after each effort: its average curve, peak force, stroke length, finish
-  share and where the force peaks (and how consistently), all against the steady
-  reference. Also logged, so it lands in the session record. Summaries describe (a late
+  share and where the force peaks (and how consistently), and how even its strokes were
+  (consistency), all against the Easy rowing just before it (the last LOCAL_EASY Easy
+  strokes). Not against the fresh Easy stroke from the start of the row: your Easy stroke
+  itself changes over a row (Oct 2026: its finish down 3-16 % from the first minutes to the
+  last), and against the early stroke an effort late in the row read as a -15 % finish when
+  it held the shape you were rowing at the time (-2 to -4 %). That change is reported on its
+  own (easy_drift), and the fresh stroke still coaches the Easy rowing. Also logged, so it lands in the session record. Summaries describe (a late
   push, a fading finish); only the live cues instruct.
 
 The pulley measures the total force on the strap, and different causes look alike (an
@@ -48,6 +53,15 @@ Calibrated on six real sessions (2,952 strokes, 15 efforts):
   its maximum, so a flat top doesn't jump about), as % of the drive, and its standard
   deviation over the interval: 2-5 % in these sessions. Suggested by Jaap van Ekris, who
   found the peak's stroke-to-stroke variability telling in his own rowing.
+- consistency (also after Jaap van Ekris: smoothness and consistency are what matter): how
+  much each stroke's curve (scaled to its own peak) differs from the one before (RMS over the
+  drive), against the same in the Easy rowing before the effort, plus the spread of stroke
+  length and any clearly short strokes. Over five sessions (21 efforts) efforts ran 0.72-1.20x
+  their Easy rowing; the two flagged (1.68x and 1.90x, length spread 15 and 12 cm against 2-4)
+  each had a couple of strokes cut 30-40 cm short and uneven power. A deliberately eased finish
+  (Oct 29, I3) did not show in the finish measure against the Easy rowing before it (-3 %, as
+  an ordinary Moderate effort that day): with 24 samples a stroke can change in ways the curve
+  can't separate from normal effort-to-effort variation.
 
 Stroke length is judged as a percentage of the steady stroke, so tall and short rowers
 are treated alike. CoachSettings holds what a rower may want to change (how much harder
@@ -98,6 +112,14 @@ EXPECTED_FINISH = {"Moderate": 1.0, "Challenging": 0.90, "Max": 0.85}
 EXPECT_RANGE = (0.80, 1.05)
 EXPECT_MIN = 3
 SHAPE_MIN = 20  # Easy strokes after the warm-up needed before efforts are judged against them alone
+LOCAL_EASY = 40  # efforts are judged against this many of the Easy strokes just before them
+# Consistency (see the module notes): an effort is uneven when its strokes vary this much more than
+# the Easy rowing before it, or its stroke length spreads this much more (and by at least so many cm).
+UNEVEN_VARIATION = 1.4
+UNEVEN_LENGTH_SD_RATIO, UNEVEN_LENGTH_SD_MIN = 2.0, 6.0
+VARIATION_FLOOR = 0.02  # the least Easy-rowing variation an effort's is divided by
+SHORT_STROKE_PCT = 15.0  # a stroke this much shorter than the Easy ones is counted as cut short
+SETTLE_STROKES = 3  # an effort's first strokes (the step up) are left out of its consistency
 SPLIT_MIN_STROKES = 15  # an effort that steps up (or down) an intensity for this long is split in two
 
 CUE_WINDOW = 8  # strokes in the live cue
@@ -271,6 +293,19 @@ def length_balance(length_delta_pct: float, cues: CueThresholds) -> float:
     return length_delta_pct / cues.length_cue_pct
 
 
+def curve_variation(strokes) -> float:
+    """Stroke-to-stroke variation: the RMS difference between each stroke's curve and the one before
+    (both scaled to their own peak, over the longer drive of the two), averaged. 0 = identical strokes."""
+    diffs = []
+    for a, b in zip(strokes, list(strokes)[1:]):
+        ta, tb = max(a.force_n, default=0), max(b.force_n, default=0)
+        if ta <= 0 or tb <= 0:
+            continue
+        n = max(drive_end(a.force_n), drive_end(b.force_n)) + 1
+        diffs.append((sum((a.force_n[i] / ta - b.force_n[i] / tb) ** 2 for i in range(n)) / n) ** 0.5)
+    return statistics.fmean(diffs) if diffs else 0.0
+
+
 def stroke_power(s: StrokeCurve) -> float:
     return s.work_j * s.stroke_rate_spm / 60.0 if s.work_j and s.stroke_rate_spm else float(s.power_w)
 
@@ -310,6 +345,23 @@ class IntervalSummary:
     peak_spread_pct: float = 0.0  # ... and how much that varies from stroke to stroke (std dev)
     steady_peak_at_pct: float = 0.0
     steady_peak_spread_pct: float = 0.0
+    variation: float = 0.0  # stroke-to-stroke variation of the curve (curve_variation)
+    steady_variation: float = 0.0  # ... in the Easy rowing it is judged against
+    length_sd_cm: float = 0.0  # spread of stroke length
+    steady_length_sd_cm: float = 0.0
+    short_strokes: int = 0  # strokes cut clearly short (SHORT_STROKE_PCT)
+    shortest_cm: float = 0.0
+
+    @property
+    def variation_ratio(self) -> float:
+        # (floored: real Easy rowing varies 0.05-0.08, so a near-zero reference can't blow the ratio up)
+        return self.variation / max(self.steady_variation, VARIATION_FLOOR)
+
+    @property
+    def uneven(self) -> bool:
+        """The strokes were clearly less even than in the Easy rowing before the effort."""
+        return self.variation_ratio >= UNEVEN_VARIATION or self.length_sd_cm >= max(
+            self.steady_length_sd_cm * UNEVEN_LENGTH_SD_RATIO, UNEVEN_LENGTH_SD_MIN)
 
     @property
     def peak_wanders(self) -> bool:
@@ -379,6 +431,13 @@ class IntervalSummary:
             "steady_peak_at_pct": round(self.steady_peak_at_pct),
             "steady_peak_spread_pct": round(self.steady_peak_spread_pct, 1),
             "peak_wanders": self.peak_wanders,
+            "variation_ratio": round(self.variation_ratio, 2),
+            "length_sd_cm": round(self.length_sd_cm, 1),
+            "steady_length_sd_cm": round(self.steady_length_sd_cm, 1),
+            "short_strokes": self.short_strokes,
+            "shortest_cm": round(self.shortest_cm),
+            "uneven": self.uneven,
+            "reference": "local",  # judged against the Easy rowing just before (sessions.learned_finish)
             "fade_pct": round((self.last_third_back_share / self.first_third_back_share - 1) * 100)
             if self.first_third_back_share else 0,
             "curve": [round(v) for v in self.curve],
@@ -393,7 +452,11 @@ class IntervalSummary:
                 f"peak {self.peak_n:.0f} N at {self.peak_at_pct:.0f}% \u00b1{self.peak_spread_pct:.1f} "
                 f"(Easy {self.steady_peak_at_pct:.0f}% \u00b1{self.steady_peak_spread_pct:.1f}), "
                 f"finish {self.finish_pct:+d}% vs usual {self.intensity or 'Easy'} ({self.rating}), "
-                f"over the effort {round((self.last_third_back_share / (self.first_third_back_share or 1) - 1) * 100):+d}%"
+                f"over the effort {round((self.last_third_back_share / (self.first_third_back_share or 1) - 1) * 100):+d}%, "
+                f"strokes varied x{self.variation_ratio:.2f} Easy, length \u00b1{self.length_sd_cm:.1f} cm "
+                f"(Easy \u00b1{self.steady_length_sd_cm:.1f})"
+                + (f", {self.short_strokes} cut short (shortest {self.shortest_cm:.0f} cm)" if self.short_strokes else "")
+                + (", UNEVEN" if self.uneven else "")
                 + (f", late push ({self.lateness:+.1f}% of the drive)" if self.legs_late else ""))
 
 
@@ -502,12 +565,20 @@ class IntervalCoach:
     def steady_back_share(self) -> float:
         return back_share(mean_curve(self.shape_strokes()))
 
+    def local_easy(self) -> list[StrokeCurve]:
+        """The Easy strokes just before now (after the warm-up, efforts and their recovery left out)."""
+        return list(self.shape)[-LOCAL_EASY:]
+
     def effort_ref(self) -> dict:
-        """What efforts are judged against: your fresh Easy stroke (last session's, or today's once
-        learned), else the Easy strokes after the warm-up."""
-        if self.baseline:
+        """What efforts are judged against: the Easy rowing just before them (LOCAL_EASY strokes after
+        the warm-up), so a change in your Easy stroke over the row isn't blamed on the efforts. Before
+        there are SHAPE_MIN of those: your fresh Easy stroke (last session's), else the Easy strokes so far."""
+        if len(self.shape) >= SHAPE_MIN:
+            ref = self.local_easy()
+        elif self.baseline:
             return self.baseline
-        ref = self.shape_strokes()
+        else:
+            ref = list(self.steady)
         curve = mean_curve(ref)
         return {"curve": curve, "back_share": back_share(curve),
                 "length_cm": statistics.fmean(s.stroke_length_cm for s in ref) if ref else 0.0}
@@ -689,8 +760,13 @@ class IntervalCoach:
         period = 60.0 / statistics.fmean(s.stroke_rate_spm for s in strokes)
         third = max(1, n // 3)
         peak_at, peak_spread = peak_stats(strokes)
-        steady_at, steady_spread = peak_stats(self.shape_strokes())
+        local = self.local_easy() if len(self.shape) >= SHAPE_MIN else self.shape_strokes()
+        steady_at, steady_spread = peak_stats(local)
         ref = self.effort_ref()
+        settled = strokes[SETTLE_STROKES:] if n > 2 * SETTLE_STROKES + 4 else strokes
+        lengths = [s.stroke_length_cm for s in strokes]
+        local_lengths = [s.stroke_length_cm for s in local]
+        cut = [x for x in lengths if ref["length_cm"] and x < ref["length_cm"] * (1 - SHORT_STROKE_PCT / 100)]
         intensity = self.intensity(statistics.fmean(stroke_power(s) for s in strokes))
         return IntervalSummary(
             index=len(self.intervals) + 1,
@@ -719,6 +795,12 @@ class IntervalCoach:
             peak_spread_pct=peak_spread,
             steady_peak_at_pct=steady_at,
             steady_peak_spread_pct=steady_spread,
+            variation=curve_variation(settled),
+            steady_variation=curve_variation(local),
+            length_sd_cm=statistics.pstdev(x.stroke_length_cm for x in settled) if len(settled) > 1 else 0.0,
+            steady_length_sd_cm=statistics.pstdev(local_lengths) if len(local_lengths) > 1 else 0.0,
+            short_strokes=len(cut),
+            shortest_cm=min(lengths),
         )
 
     # ------------------------------------------------------------ live cue
@@ -971,6 +1053,16 @@ def findings(intervals: list[dict]) -> list[str]:
         out.append(f"The push came later in the drive than in Easy rowing in {_names(legs)}. The curve can't say "
                    f"why (an early arm pull and a slow push off the catch look alike); a video of an effort can.")
 
+    uneven = [i for i in intervals if i.get("uneven")]
+    for i in uneven:
+        detail = [f"strokes varied {i['variation_ratio']:.1f}\u00d7 as much as in the Easy rowing before it"]
+        if i.get("length_sd_cm", 0) >= max(2 * i.get("steady_length_sd_cm", 0), UNEVEN_LENGTH_SD_MIN):
+            detail.append(f"length \u00b1{i['length_sd_cm']:.0f} cm against \u00b1{i['steady_length_sd_cm']:.0f}")
+        if i.get("short_strokes"):
+            n_short = i["short_strokes"]
+            detail.append(f"{n_short} stroke{'s' if n_short > 1 else ''} cut short (shortest {i['shortest_cm']} cm)")
+        out.append(f"I{i['index']} was uneven: " + ", ".join(detail) + ".")
+
     wander = [i for i in intervals if i.get("peak_wanders")]
     if wander:
         spreads = ", ".join(f"\u00b1{i['peak_spread_pct']:.0f}%" for i in wander)
@@ -1029,7 +1121,8 @@ def easy_findings(drift: dict | None) -> list[str]:
         parts.append(f"strokes {abs(drift['length_delta_cm'])} cm {'longer' if drift['length_delta_cm'] > 0 else 'shorter'}")
     if not parts:
         return ["Easy rowing kept its shape from the first minutes to the last."]
-    return [f"Easy rowing, last minutes against the first: {' and '.join(parts)}."]
+    return [f"Easy rowing, last minutes against the first: {' and '.join(parts)} "
+            "(efforts are judged against the Easy rowing just before them, so this isn't counted against them)."]
 
 
 def heart_rate_summary(trace: list[tuple[float, int, float]], intervals: list[IntervalSummary],

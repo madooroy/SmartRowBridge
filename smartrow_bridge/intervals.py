@@ -118,6 +118,8 @@ def effort_line(i: dict) -> str:
         notes.append("late push")
     if i.get("peak_wanders"):
         notes.append("peak wandered")
+    if i.get("uneven"):
+        notes.append("uneven strokes")
     parts = [f"I{i['index']}" + (f" {i['intensity']}" if i.get("intensity") else ""),
              f"{_clock(i['duration_s'])} at {i['power_w']} W", ", ".join(notes) or "good"]
     if i.get("hr_peak"):

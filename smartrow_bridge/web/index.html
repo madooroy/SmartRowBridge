@@ -613,7 +613,7 @@ function renderSession(s) {
     `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join("");
   $("ssFindings").innerHTML = (s.findings || []).map((f) => `<li>${f}</li>`).join("");
   $("ssCards").innerHTML = iv.map((i) => {
-    const flags = [i.legs_late ? "LATE PUSH" : "", i.peak_wanders ? "PEAK LESS CONSISTENT" : "",
+    const flags = [i.legs_late ? "LATE PUSH" : "", i.peak_wanders ? "PEAK LESS CONSISTENT" : "", i.uneven ? "UNEVEN" : "",
                    i.duration_s >= 90 && i.fade_pct <= -5 ? `FADED ${signed(i.fade_pct, "%")}` : ""]
       .filter(Boolean).join(" · ");
     return `<div class="tile card">

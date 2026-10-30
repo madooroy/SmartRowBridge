@@ -259,8 +259,12 @@ class IntensityTest(unittest.TestCase):
                 started = now - (k + 1) * 86400
                 sessions.save(d, {"id": sessions.session_id(started), "started_at": started,
                                   "fresh_easy": saved_stroke() if k == 0 else None,
-                                  "intervals": [{"intensity": "Challenging", "easy_finish_ratio": ratio},
-                                                {"intensity": "Moderate", "easy_finish_ratio": 0.99}]})
+                                  "intervals": [{"intensity": "Challenging", "easy_finish_ratio": ratio,
+                                                 "reference": "local"},
+                                                {"intensity": "Moderate", "easy_finish_ratio": 0.99,
+                                                 "reference": "local"},
+                                                # judged against the fresh stroke (before Oct 29): not learned from
+                                                {"intensity": "Max", "easy_finish_ratio": 0.70}]})
             self.assertEqual(sessions.learned_finish(d, now), {"Challenging": 0.85, "Moderate": 0.99})
             ref = sessions.latest_fresh_easy(d, now)
             self.assertEqual(ref["expect"]["Challenging"], 0.85)
@@ -424,6 +428,70 @@ class PeakTest(unittest.TestCase):
         self.assertEqual((d["peak_spread_pct"], d["steady_peak_spread_pct"], d["peak_wanders"]), (7.0, 3.0, True))
         text = " ".join(coach.findings([{**d, "rating": "good"}]))
         self.assertIn("force peak landed less consistently from stroke to stroke in I1", text)
+
+
+class LocalReferenceTest(unittest.TestCase):
+    def test_efforts_judged_against_the_easy_rowing_just_before(self):
+        # The fresh Easy stroke (saved) has the full finish; over the row the Easy stroke fades, and an
+        # effort rowed the same way is not called short: the fade is the Easy rowing's, reported apart.
+        r = Rower(ftp=185)
+        r.coach = IntervalCoach(ftp=185, reference=lambda: saved_stroke())
+        r.row(200, 105)  # into the row, Easy, the saved shape
+        r.row(80, 105, curve=FADED)  # the Easy stroke has faded
+        r.row(30, 150, curve=FADED)  # an effort, rowed as the Easy rowing around it
+        r.row(20, 105, curve=FADED)
+        last = r.coach.intervals[-1]
+        self.assertEqual(last.rating, "good")
+        self.assertEqual(last.finish_pct, 0)
+        self.assertEqual(last.as_dict()["reference"], "local")
+
+    def test_early_effort_uses_the_saved_stroke(self):
+        r = Rower(ftp=185)
+        r.coach = IntervalCoach(ftp=185, reference=lambda: saved_stroke())
+        r.row(40, 105, curve=FADED)  # still in the warm-up: no Easy strokes after it yet
+        self.assertEqual(r.coach.effort_ref()["back_share"], saved_stroke()["back_share"])
+
+
+class ConsistencyTest(unittest.TestCase):
+    def test_curve_variation(self):
+        def s(curve):
+            return StrokeCurve(time=0, force_n=list(curve))
+        self.assertEqual(coach.curve_variation([s(STEADY)] * 5), 0.0)
+        self.assertEqual(coach.curve_variation([s(STEADY)]), 0.0)
+        self.assertGreater(coach.curve_variation([s(STEADY), s(LATE), s(STEADY)]), 0.1)
+        # scaled to each stroke's own peak: a harder stroke of the same shape doesn't count
+        self.assertAlmostEqual(coach.curve_variation([s(STEADY), s([2 * v for v in STEADY])]), 0.0)
+
+    def rowed(self, effort):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        effort(r)
+        r.row(20, 105)
+        return r.coach.intervals[-1]
+
+    def test_even_effort(self):
+        i = self.rowed(lambda r: r.row(30, 150))
+        self.assertFalse(i.uneven)
+        self.assertEqual((i.short_strokes, i.as_dict()["uneven"]), (0, False))
+
+    def test_strokes_cut_short_make_it_uneven(self):
+        def effort(r):
+            for k in range(30):
+                r.row(1, 150, length=80 if k % 6 == 5 else 115)
+        i = self.rowed(effort)
+        self.assertTrue(i.uneven)
+        self.assertEqual((i.short_strokes, round(i.shortest_cm)), (5, 80))
+        text = " ".join(coach.findings([{**i.as_dict()}]))
+        self.assertIn("I1 was uneven", text)
+        self.assertIn("5 strokes cut short (shortest 80 cm)", text)
+
+    def test_changing_shape_makes_it_uneven(self):
+        def effort(r):
+            for k in range(30):
+                r.row(1, 150, curve=LATE if k % 2 else STEADY)
+        i = self.rowed(effort)
+        self.assertTrue(i.uneven)
+        self.assertGreaterEqual(i.variation_ratio, coach.UNEVEN_VARIATION)
 
 
 class SettingsTest(unittest.TestCase):

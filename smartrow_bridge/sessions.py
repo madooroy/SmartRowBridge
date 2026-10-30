@@ -298,7 +298,9 @@ def latest_fresh_easy(directory: str, now: float | None = None, max_age_days: fl
 
 def learned_finish(directory: str, now: float | None = None, days: float = 60, last: int = 20) -> dict:
     """Your usual finish at each intensity, as a share of your Easy one: the median of your last
-    `last` efforts at it (within `days`), once there are coach.EXPECT_MIN. Empty without enough."""
+    `last` efforts at it (within `days`), once there are coach.EXPECT_MIN. Empty without enough.
+    Only efforts judged against the Easy rowing just before them count ("reference": "local"); older
+    ones were judged against the fresh Easy stroke, a different yardstick."""
     from .coach import EXPECT_MIN, EXPECT_RANGE
     now = time.time() if now is None else now
     seen: dict[str, list[float]] = {}
@@ -312,7 +314,7 @@ def learned_finish(directory: str, now: float | None = None, days: float = 60, l
             break
         for i in reversed(record.get("intervals") or []):
             k, r = i.get("intensity"), i.get("easy_finish_ratio")
-            if k and r and len(seen.setdefault(k, [])) < last:
+            if k and r and i.get("reference") == "local" and len(seen.setdefault(k, [])) < last:
                 seen[k].append(r)
     lo, hi = EXPECT_RANGE
     return {k: round(min(hi, max(lo, statistics.median(v))), 3) for k, v in seen.items() if len(v) >= EXPECT_MIN}

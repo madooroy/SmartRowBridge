@@ -496,7 +496,15 @@ from the first stroke or fades as you tire shows up. The first 2 minutes are the
 cues). With nothing saved, today's is learned instead. Stroke length is calibrated at 8 minutes: today's
 becomes the reference, unless it is more than 3 cm shorter than last time's; then last time's stays, so
 LONGER STROKES speaks up, and the summary says so. Recovery gets the numbers only. The
-summary adds how the last minutes of Easy rowing compared with the fresh ones.
+summary adds how the last minutes of Easy rowing compared with the fresh ones. (Efforts are not judged
+against the fresh stroke: your Easy stroke changes over a row, by up to 15 % in the finish, and against
+the early stroke a late effort that held the shape you were rowing at the time read as going short.)
+
+**Consistency.** Each effort's summary also says how even its strokes were: how much each stroke's
+curve differs from the one before, and the spread of stroke length, against the Easy rowing just before.
+An effort is marked *uneven* when its strokes vary 1.4 times as much or more, or its length spreads
+twice as much (at least ±6 cm), and strokes cut more than 15 % short are counted. After Jaap van
+Ekris (Open Rowing Monitor), for whom smoothness and consistency matter most.
 
 **With your FTP.** On its own the coach judges efforts against your recent Easy rowing, and has to treat
 anything longer than 5 minutes as a new Easy pace (otherwise a warm-up ramping into the main set could pass
