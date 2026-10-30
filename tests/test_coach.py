@@ -551,6 +551,43 @@ class TransitionTest(unittest.TestCase):
         self.assertIsNone(r.state()["live"]["stall"])  # the cue has cleared
 
 
+class EffortEndTest(unittest.TestCase):
+    def test_a_dip_does_not_end_the_effort(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(20, 150)
+        r.row(2, 100)  # two weak strokes (a short one, a breath)
+        r.row(20, 150)
+        r.row(20, 105)
+        self.assertEqual([i.strokes for i in r.coach.intervals], [42])  # the dip stays in it
+
+    def test_a_real_drop_still_ends_it(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(20, 150)
+        r.row(30, 105)
+        self.assertEqual(len(r.coach.intervals), 1)
+        self.assertEqual(r.coach.intervals[0].strokes, 20)
+
+
+class WaitingTextTest(unittest.TestCase):
+    def test_back_to_easy_after_an_effort(self):
+        r = Rower(ftp=185)
+        r.coach = IntervalCoach(ftp=185, reference=lambda: saved_stroke())
+        self.assertEqual(r.state()["waiting"], "warming up")
+        r.row(200, 105)
+        r.row(20, 150)
+        r.row(5, 105)  # recovery strokes: no cue yet
+        st = r.state()
+        self.assertIsNone(st["cue"])
+        self.assertEqual(st["waiting"], "back to Easy")
+
+    def test_learning_only_without_a_reference(self):
+        r = Rower(ftp=185)
+        r.row(45, 105)  # past the warm-up, nothing saved, too few fresh strokes yet
+        self.assertEqual(r.state()["waiting"], "learning your Easy stroke")
+
+
 class SettingsTest(unittest.TestCase):
     def test_defaults_are_the_calibrated_values(self):
         d = coach.CoachSettings()

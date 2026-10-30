@@ -439,7 +439,7 @@ function renderRowing(st) {
   $("rCurveTile").hidden = !curve || recovery;
   $("rCue").hidden = !curve || recovery;
   if (curve && !recovery) {  // Easy: each stroke over your early Easy strokes, and the cue
-    const [text, cueColour] = CUES[coach.cue] || [coach.warming_up ? "warming up" : "learning your Easy stroke", null];
+    const [text, cueColour] = CUES[coach.cue] || [coach.waiting || (coach.warming_up ? "warming up" : "learning your Easy stroke"), null];
     drawCurve($("rCurve"), coach.stroke_curve, coach.steady_curve, cueColour || C.blue, "both");
     $("rNote").textContent = "EASY" + (coach.length_delta_cm !== null && coach.length_delta_cm !== undefined
       ? ` · length ${signed(coach.length_delta_cm, " cm")}` : "");
@@ -936,7 +936,7 @@ function drawPip() {
     footer();
   } else if (coach && coach.stroke_curve && coach.stroke_curve.length && coach.intensity !== "Recovery") {
     // Easy: power, then pace and rate, each stroke over your fresh Easy stroke, and the cue.
-    const [label, cueColour] = CUES[coach.cue] || [coach.warming_up ? "warming up" : "learning your Easy stroke", null];
+    const [label, cueColour] = CUES[coach.cue] || [coach.waiting || (coach.warming_up ? "warming up" : "learning your Easy stroke"), null];
     text(rowing ? `${m.power_w} W` : "–", 16, 36, 44, rowing ? C.fg : C.faint, "left");
     text(rowing ? `${fmtPace(m.pace_s_per_500m)} · ${Math.round(m.stroke_rate_spm)} spm` : "paused",
          W - 16, 36, 24, rowing ? C.fg : C.dim, "right", false);

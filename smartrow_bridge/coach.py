@@ -101,6 +101,7 @@ SMOOTH = 5  # median of this many strokes decides start and end
 RECOVERY_STROKES = 12  # after an effort, not used for the steady reference
 EASY_RATIO = 0.80  # strokes this far below steady (easy paddling) are ignored too
 GAP_S = 10.0  # no stroke for this long ends an effort
+END_CONFIRM = 3  # an effort ends after this many strokes in a row below its end (one dip doesn't end it)
 NEW_SESSION_S = 300.0  # no stroke for this long starts over
 LEAD_GAP_S, LEAD_STROKES = 30.0, 10  # a few pulls, then a pause this long: the row starts after it
 
@@ -600,6 +601,7 @@ class IntervalCoach:
         self.shape: deque[StrokeCurve] = deque(maxlen=STEADY_WINDOW)
         self.recent: deque[StrokeCurve] = deque(maxlen=SMOOTH)
         self.effort: _Effort | None = None
+        self.below_end = 0  # strokes in a row below the end of the effort
         self.recovery_left = 0
         # Easy rowing: judged against the fresh Easy stroke (baseline): the last session's when there
         # is one, else today's (provisional from PROVISIONAL_MIN strokes, set at FRESH_TO_S).
@@ -708,6 +710,7 @@ class IntervalCoach:
                 recent = list(self.recent)
                 first = next(i for i, r in enumerate(recent) if stroke_power(r) >= start_at)
                 self.effort = _Effort(strokes=recent[first:])
+                self.below_end = 0
                 self._drop_from_steady(self.effort.strokes)
                 self.easy_window.clear()
                 self.easy_cue = None
@@ -718,9 +721,11 @@ class IntervalCoach:
             self.effort.strokes.append(s)
             if s.time - self.effort.strokes[0].time > self.max_effort_s:
                 self._rebaseline()
-            elif smoothed < self._end_at():
+            elif smoothed < self._end_at() and self.below_end + 1 >= END_CONFIRM:
                 finished = self._finish(s.time) or finished
             else:
+                # A stroke or two below the end (a dip, at a low rate say) stays part of the effort.
+                self.below_end = self.below_end + 1 if smoothed < self._end_at() else 0
                 self._update_cue()
         return finished
 
@@ -1029,6 +1034,10 @@ class IntervalCoach:
             if self.recent and self.effort is None else None,
             "cue": self.easy_cue if self.effort is None else None,
             "warming_up": self.warming_up(),
+            # What the Easy screen says while there is no cue: learning only when there is no Easy
+            # stroke to judge against yet; otherwise it is waiting for Easy strokes after an effort.
+            "waiting": "warming up" if self.warming_up() else
+            "learning your Easy stroke" if self.baseline is None else "back to Easy",
             "easy_reference": ("last session" if self.saved_ref else "today") if self.baseline else None,
             "stroke_curve": list(self.stroke_log[-1][6]) if self.stroke_log else [],
             "steady_curve": [round(v) for v in (self.baseline["curve"] if self.baseline else mean_curve(self.steady))]
