@@ -246,8 +246,9 @@ class Bridge:
                     log.exception("Uploads failed")
             await asyncio.sleep(STATUS_INTERVAL_S)
 
-    async def _ftp_loop(self) -> None:
-        """No SRB_COACH_FTP: read the rowing FTP from intervals.icu (when set up) once, at start.
+    async def _ftp_loop(self, read_ftp: bool = True) -> None:
+        """Read the rowing sport settings from intervals.icu (when set up) once, at start: the FTP
+        (unless SRB_COACH_FTP is set) and the heart-rate zones (for the photo cards' shading).
 
         It changes rarely, so one read per start is enough; the Pi is usually switched on for each
         row. Until the network is up (or intervals.icu answers) it tries again every few minutes.
@@ -259,7 +260,8 @@ class Bridge:
         warned = False
         while True:
             try:
-                ftp = await asyncio.to_thread(intervals.rowing_ftp, key)
+                settings = await asyncio.to_thread(intervals.rowing_settings, key)
+                ftp = settings["ftp"] if read_ftp else None
             except Exception as exc:  # noqa: BLE001 - offline: the coach carries on without one for now
                 if not warned:
                     log.warning("Could not read the rowing FTP from intervals.icu (trying again every %d s): %s",
@@ -267,6 +269,11 @@ class Bridge:
                     warned = True
                 await asyncio.sleep(FTP_RETRY_S)
                 continue
+            if settings.get("hr_zones"):
+                self.coach.hr_zones = {**settings["hr_zones"], "max_hr": settings.get("max_hr")}
+                log.info("Heart-rate zones from intervals.icu: %s bpm", "/".join(map(str, settings["hr_zones"]["tops"])))
+            if not read_ftp:
+                return
             if ftp:
                 log.info("Rowing FTP from intervals.icu: %.0f W (efforts from %.0f W)", ftp,
                          ftp * self.coach.settings.ftp_floor_pct / 100)
@@ -280,8 +287,8 @@ class Bridge:
         if self.cfg.status_file.lower() != "off":
             status_task = asyncio.create_task(self._status_loop())
         ftp_task = None
-        if self.coach and self.cfg.coach_ftp.strip().lower() in ("", "auto"):
-            ftp_task = asyncio.create_task(self._ftp_loop())
+        if self.coach:  # the FTP only when not set here; the heart-rate zones either way
+            ftp_task = asyncio.create_task(self._ftp_loop(self.cfg.coach_ftp.strip().lower() in ("", "auto")))
         try:
             await self._run()
         finally:

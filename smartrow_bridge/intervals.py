@@ -81,14 +81,24 @@ def describe_error(exc: BaseException) -> str:
 FTP_SPORTS = ("Rowing", "VirtualRow")
 
 
-def rowing_ftp(key: str) -> float | None:
-    """Your rowing FTP from intervals.icu's sport settings (the indoor one when set), or None."""
+def rowing_settings(key: str) -> dict:
+    """Your rowing sport settings on intervals.icu: FTP (the indoor one when set), max heart rate and
+    heart-rate zones (each zone's top, bpm, with its name). Missing ones are None."""
     me = _request("GET", "/athlete/0", key)
     for sport in me.get("sportSettings") or []:
         if any(t in FTP_SPORTS for t in sport.get("types") or []):
             ftp = sport.get("indoor_ftp") or sport.get("ftp")
-            return float(ftp) if ftp else None
-    return None
+            zones = [int(z) for z in sport.get("hr_zones") or [] if z]
+            names = list(sport.get("hr_zone_names") or [])
+            return {"ftp": float(ftp) if ftp else None,
+                    "max_hr": int(sport["max_hr"]) if sport.get("max_hr") else None,
+                    "hr_zones": {"tops": zones, "names": names[:len(zones)]} if zones else None}
+    return {"ftp": None, "max_hr": None, "hr_zones": None}
+
+
+def rowing_ftp(key: str) -> float | None:
+    """Your rowing FTP from intervals.icu's sport settings (the indoor one when set), or None."""
+    return rowing_settings(key)["ftp"]
 
 
 def athlete_name(key: str) -> str:
@@ -334,7 +344,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if n else 1
     try:
         print(f"intervals.icu: connected as {athlete_name(key)}")
-        ftp = rowing_ftp(key)
+        settings = rowing_settings(key)
+        ftp = settings["ftp"]
+        if settings["hr_zones"]:
+            print(f"Heart-rate zones (tops, bpm): {', '.join(map(str, settings['hr_zones']['tops']))}"
+                  + (f"; max {settings['max_hr']}" if settings["max_hr"] else ""))
         print(f"Rowing FTP: {ftp:.0f} W (the coach uses it unless SRB_COACH_FTP is set)" if ftp else
               "Rowing FTP: none set on intervals.icu (Settings, Rowing); the coach works without it")
         return 0

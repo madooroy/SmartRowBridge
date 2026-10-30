@@ -562,6 +562,9 @@ class IntervalCoach:
         self.settings = settings
         self.ftp = ftp  # rowing FTP, W (SRB_COACH_FTP, or from intervals.icu); None: efforts by steady alone
         self.reference = reference
+        # Heart-rate zones from intervals.icu ({"tops": [bpm...], "names": [...], "max_hr": bpm}), for the
+        # photo cards' shading; None without them.
+        self.hr_zones: dict | None = None
         self.expect = dict(EXPECTED_FINISH)
         self.session = 0
         self.reset()
@@ -981,6 +984,9 @@ class IntervalCoach:
             "steady_length_cm": round(self.steady_length(), 1),
             "steady_curve": [round(v) for v in mean_curve(self.steady)],
             "ftp": round(self.ftp) if self.ftp else None,
+            # For shading the photo cards: the intensity bands in watts, and the heart-rate zones.
+            "power_bands": [list(b) for b in intensity_bands(self.ftp, self.steady_power())],
+            "hr_zones": self.hr_zones,
             "settings": {"start_pct": self.settings.start_pct,
                          "max_effort_min": None if self.ftp else self.max_effort_s / 60,
                          "ftp_floor_pct": self.settings.ftp_floor_pct if self.ftp else None,

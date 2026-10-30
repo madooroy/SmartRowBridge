@@ -919,8 +919,9 @@ function cardCanvas() {
 }
 
 // A chart inside a tile: title, y gridlines with labels, x labels; returns the scale functions.
-function cardAxes(g, text, box, { title, xMax, yMin = 0, yMax, yStep, xStep, xFmt, yFmt = (v) => `${v}`, showX = true }) {
-  const [bx, by, bw, bh] = box, x0 = bx + 88, x1 = bx + bw - 44, y0 = by + 70, y1 = by + bh - (showX ? 56 : 22);
+function cardAxes(g, text, box, { title, xMax, yMin = 0, yMax, yStep, xStep, xFmt, yFmt = (v) => `${v}`, showX = true,
+                                   gutter = 44 }) {
+  const [bx, by, bw, bh] = box, x0 = bx + 88, x1 = bx + bw - gutter, y0 = by + 70, y1 = by + bh - (showX ? 56 : 22);
   const X = (v) => x0 + v / xMax * (x1 - x0), Y = (v) => y1 - (v - yMin) / (yMax - yMin) * (y1 - y0);
   text(title, bx + 24, by + 44, 24, C.dim, true);
   g.lineWidth = 1;
@@ -1023,15 +1024,22 @@ function sessionCard(s, rows) {
   });
   const flagged = (i) => i.uneven || i.transition || i.legs_late || i.rating === "short";
   const xStep = niceStep(minutes, 5), xFmt = (v) => v + xStep > minutes ? `${Math.round(v)} min` : `${Math.round(v)}`;
-  const chart = (box, values, colour, title, { fromZero = false, names = false, minStep = 0, yFmt, showX = false } = {}) => {
+  const chart = (box, values, colour, title, { fromZero = false, names = false, minStep = 0, yFmt, showX = false,
+                                               bands = [] } = {}) => {
     tile(...box);
     const vs = values.map((v) => v[1]), hi = Math.max(...vs), lo = fromZero ? 0 : Math.min(...vs);
     const yStep = Math.max(minStep, niceStep(hi - lo || 1, 3)), yMin = Math.floor(lo / yStep) * yStep, yMax = Math.ceil(hi / yStep) * yStep;
-    const ax = cardAxes(g, text, box, { title, xMax: minutes, yMin, yMax, yStep, xStep, xFmt, showX,
+    const ax = cardAxes(g, text, box, { title, xMax: minutes, yMin, yMax, yStep, xStep, xFmt, showX, gutter: GUTTER,
                                         ...(yFmt ? { yFmt } : {}) });
+    for (const z of bands) {  // zones: faint horizontal bands, named in the margin on the right where there's room
+      const top = ax.Y(Math.min(z.hi ?? yMax, yMax)), bottom = ax.Y(Math.max(z.lo ?? yMin, yMin));
+      if (bottom - top < 2) continue;
+      g.fillStyle = z.colour; g.globalAlpha = 0.26; g.fillRect(ax.x0, top, ax.x1 - ax.x0, bottom - top); g.globalAlpha = 1;
+      if (bottom - top >= 15) text(z.name, ax.x1 + 10, (top + bottom) / 2 + 6, 17, z.colour, true);
+    }
     for (const i of iv) {  // efforts
       const a = ax.X((i.started_at_s ?? 0) / 60), b = ax.X(((i.started_at_s ?? 0) + i.duration_s) / 60);
-      g.fillStyle = C.green; g.globalAlpha = 0.16; g.fillRect(a, ax.y0, b - a, ax.y1 - ax.y0); g.globalAlpha = 1;
+      g.fillStyle = C.fg; g.globalAlpha = bands.length ? 0.1 : 0.12; g.fillRect(a, ax.y0, b - a, ax.y1 - ax.y0); g.globalAlpha = 1;
       if (names) text(`I${i.index}`, (a + b) / 2, ax.y0 - 8, 20, flagged(i) ? C.amber : C.green, true, "center");
     }
     g.beginPath(); values.forEach(([t, v], k) => k ? g.lineTo(ax.X(t / 60), ax.Y(v)) : g.moveTo(ax.X(t / 60), ax.Y(v)));
@@ -1041,15 +1049,28 @@ function sessionCard(s, rows) {
   // pace per 500 m from power (Concept2: watts = 2.80 / (s per m)^3), negated so faster is higher
   const pace = power.filter(([, w]) => w > 20).map(([t, w]) => [t, -500 * Math.cbrt(2.8 / w)]);
   const paceFmt = (v) => { const sec = Math.round(-v); return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`; };
+  // Zone shading: power and pace by the coach's intensity bands (from your FTP), heart rate by your
+  // intervals.icu zones; each in order from grey (easiest) to red and beyond.
+  const ZONE = [C.dim, C.blue, C.green, C.amber, "#f0883e", C.red, "#d860a8"];
+  const zoneColours = (n) => n <= 5 ? [C.dim, C.blue, C.green, C.amber, C.red].slice(0, n) : ZONE.slice(0, n);
+  const pb = s.power_bands || [], pbColours = zoneColours(pb.length);
+  const powerBands = pb.map(([name, lo, hi], k) => ({ name, lo, hi, colour: pbColours[k] }));
+  const toPace = (w) => w ? -500 * Math.cbrt(2.8 / w) : null;
+  const paceBands = powerBands.map((z) => ({ ...z, lo: toPace(z.lo), hi: z.hi ? toPace(z.hi) : null }));
+  const hz = s.heart_rate && s.hr_zones && s.hr_zones.tops ? s.hr_zones.tops : [], hzColours = zoneColours(hz.length);
+  const hrBands = hz.map((top, k) => ({ name: `Z${k + 1}`, lo: k ? hz[k - 1] : null, hi: k === hz.length - 1 ? null : top,
+                                        colour: hzColours[k] }));
   const heights = withHr ? [270, 190, 170, 220] : [320, 240, 260];
+  // A margin on the right for the zone names, the same on every chart so the time axes line up.
+  const GUTTER = powerBands.length || hrBands.length ? 136 : 44;
   let y = 316;
-  chart([P, y, W, heights[0]], power, C.blue, "POWER (W) \u00b7 efforts shaded", { fromZero: true, names: true });
+  chart([P, y, W, heights[0]], power, C.fg, "POWER (W) \u00b7 efforts shaded", { fromZero: true, names: true, bands: powerBands });
   y += heights[0] + 16;
-  chart([P, y, W, heights[1]], pace, "#c3a6f2", "PACE (/500 m)", { minStep: 30, yFmt: paceFmt });
+  chart([P, y, W, heights[1]], pace, C.fg, "PACE (/500 m)", { minStep: 30, yFmt: paceFmt, bands: paceBands });
   y += heights[1] + 16;
   chart([P, y, W, heights[2]], smooth("spm"), C.fg, "STROKE RATE (spm)", { minStep: 5, showX: !withHr });
   y += heights[2] + 16;
-  if (withHr) { chart([P, y, W, heights[3]], hrValues, C.red, "HEART RATE (bpm)", { showX: true }); y += heights[3] + 16; }
+  if (withHr) { chart([P, y, W, heights[3]], hrValues, hrBands.length ? C.fg : C.red, "HEART RATE (bpm)", { showX: true, bands: hrBands }); y += heights[3] + 16; }
   let x = P;  // the note, in pieces (the colour words in their colours)
   for (const [t, colour, bold] of [[`${SMOOTH_S}-second averages \u00b7 effort names: `, C.dim, false],
                                    ["green", C.green, true], [" kept their shape, ", C.dim, false],

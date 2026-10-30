@@ -219,7 +219,8 @@ class FtpReadOnceTest(unittest.TestCase):
         import types
         from unittest import mock
         from smartrow_bridge import bridge, intervals
-        answers = [OSError("offline"), 185.0]
+        zones = {"tops": [130, 150, 165, 175, 185], "names": ["Z1", "Z2", "Z3", "Z4", "Z5"]}
+        answers = [OSError("offline"), {"ftp": 185.0, "max_hr": 185, "hr_zones": zones}]
         calls = []
 
         def fake(key):
@@ -230,10 +231,40 @@ class FtpReadOnceTest(unittest.TestCase):
             return a
 
         b = types.SimpleNamespace(cfg=types.SimpleNamespace(intervals_key_file="x"), coach=IntervalCoach())
-        with mock.patch.object(intervals, "rowing_ftp", fake), mock.patch.object(intervals, "read_key", lambda f: "k"), \
+        with mock.patch.object(intervals, "rowing_settings", fake), mock.patch.object(intervals, "read_key", lambda f: "k"), \
                 mock.patch.object(bridge, "FTP_RETRY_S", 0.01), self.assertLogs("smartrow_bridge.bridge"):
             asyncio.run(bridge.Bridge._ftp_loop(b))  # returns once it has an answer
         self.assertEqual((len(calls), b.coach.ftp), (2, 185.0))
+        self.assertEqual(b.coach.hr_zones, {**zones, "max_hr": 185})
+        self.assertEqual(b.coach.session_summary()["hr_zones"]["tops"][-1], 185)
+
+    def test_rowing_settings_from_intervals_icu(self):
+        from unittest import mock
+        from smartrow_bridge import intervals
+        me = {"sportSettings": [{"types": ["Ride"], "ftp": 250, "hr_zones": [1, 2]},
+                                {"types": ["Rowing", "VirtualRow"], "ftp": 180, "indoor_ftp": 185, "max_hr": 182,
+                                 "hr_zones": [128, 146, 155, 164, 170, 175, 182],
+                                 "hr_zone_names": ["Recovery", "Aerobic", "Tempo", "SubThreshold",
+                                                   "SuperThreshold", "Aerobic Capacity", "Anaerobic"]}]}
+        with mock.patch.object(intervals, "_request", lambda *a, **k: me):
+            got = intervals.rowing_settings("k")
+            self.assertEqual(intervals.rowing_ftp("k"), 185.0)
+        self.assertEqual((got["ftp"], got["max_hr"], got["hr_zones"]["tops"][0], got["hr_zones"]["names"][-1]),
+                         (185.0, 182, 128, "Anaerobic"))
+        with mock.patch.object(intervals, "_request", lambda *a, **k: {"sportSettings": []}):
+            self.assertEqual(intervals.rowing_settings("k"), {"ftp": None, "max_hr": None, "hr_zones": None})
+
+    def test_fixed_ftp_still_reads_the_heart_rate_zones(self):
+        import asyncio
+        import types
+        from unittest import mock
+        from smartrow_bridge import bridge, intervals
+        b = types.SimpleNamespace(cfg=types.SimpleNamespace(intervals_key_file="x"), coach=IntervalCoach(ftp=170))
+        answer = {"ftp": 185.0, "max_hr": None, "hr_zones": {"tops": [140, 160], "names": []}}
+        with mock.patch.object(intervals, "rowing_settings", lambda k: answer), \
+                mock.patch.object(intervals, "read_key", lambda f: "k"), self.assertLogs("smartrow_bridge.bridge"):
+            asyncio.run(bridge.Bridge._ftp_loop(b, read_ftp=False))
+        self.assertEqual((b.coach.ftp, b.coach.hr_zones["tops"]), (170, [140, 160]))  # the FTP set here stays
 
 
 class IntensityTest(unittest.TestCase):
