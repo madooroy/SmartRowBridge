@@ -1003,7 +1003,7 @@ function effortCard(s, i, rows) {
     marks.push([sampleCm(med(stalls.map(([, sp]) => sp[0]))) - 1, sampleCm(med(stalls.map(([, sp]) => sp[1]))) + 1,
                 `stall after the peak (${i.stall_pct}% of strokes)`]);
   }
-  if (i.rating === "short" || i.rating === "ok")
+  if (i.rating === "short")
     marks.push([sampleCm(easyEnd / 2), sampleCm(easyEnd), `finish ${signed(i.finish_pct, "%")}: less force here than usual`]);
   if (i.legs_late) marks.push([0, sampleCm(easyEnd / 2), "the push came later than in Easy rowing"]);
   if (i.peak_wanders && i.curve) {
