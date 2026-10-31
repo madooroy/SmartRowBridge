@@ -15,11 +15,15 @@ fi
 # Work from the folder this script is in, wherever it was started from.
 cd "$(dirname "$(readlink -f "$0")")"
 
-apt-get update
-apt-get install -y python3-venv python3-pip bluez
-# The TP-Link UB500 (Realtek RTL8761BU) needs this firmware; usually already present.
-apt-get install -y firmware-realtek || echo "firmware-realtek not installed (continuing)"
-apt-get install -y rfkill || true
+# System packages: only when one is missing (an update usually has nothing to install).
+have() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "install ok installed"; }
+if ! have python3-venv || ! have python3-pip || ! have bluez || ! have rfkill; then
+    apt-get update
+    apt-get install -y python3-venv python3-pip bluez
+    # The TP-Link UB500 (Realtek RTL8761BU) needs this firmware; usually already present.
+    apt-get install -y firmware-realtek || echo "firmware-realtek not installed (continuing)"
+    apt-get install -y rfkill || true
+fi
 
 # A fresh Raspberry Pi OS image starts with Bluetooth soft-blocked.
 rfkill unblock bluetooth || true
@@ -27,9 +31,21 @@ rfkill unblock bluetooth || true
 mkdir -p "$PREFIX"
 rm -rf "$PREFIX/smartrow_bridge"
 cp -r smartrow_bridge requirements.txt "$PREFIX"/
-python3 -m venv "$PREFIX/venv"
-"$PREFIX/venv/bin/pip" install --upgrade pip
-"$PREFIX/venv/bin/pip" install -r "$PREFIX/requirements.txt"
+# Python libraries: only when a requirements file changed since the last install.
+pip_install() {  # pip_install FILE
+    local stamp="$PREFIX/venv/.installed-$(basename "$1")"
+    if [[ -f "$stamp" ]] && cmp -s "$1" "$stamp"; then
+        echo "$(basename "$1"): unchanged, skipping pip"
+        return
+    fi
+    "$PREFIX/venv/bin/pip" install -r "$1"
+    cp "$1" "$stamp"
+}
+if [[ ! -x "$PREFIX/venv/bin/pip" ]]; then
+    python3 -m venv "$PREFIX/venv"
+    "$PREFIX/venv/bin/pip" install --upgrade pip
+fi
+pip_install "$PREFIX/requirements.txt"
 
 if [[ ! -f /etc/default/smartrow-bridge ]]; then
     install -m 644 deploy/smartrow-bridge.env /etc/default/smartrow-bridge
@@ -43,7 +59,7 @@ systemctl restart smartrow-bridge.service
 # Optional screen (tools/setup_display.sh): keep its libraries and files up to date.
 if [[ -f /etc/systemd/system/smartrow-display.service ]]; then
     cp requirements-display.txt "$PREFIX"/
-    "$PREFIX/venv/bin/pip" install -r "$PREFIX/requirements-display.txt"
+    pip_install "$PREFIX/requirements-display.txt"
     install -m 644 deploy/smartrow-display.service /etc/systemd/system/smartrow-display.service
     install -D -m 755 deploy/smartrow-display.shutdown /usr/lib/systemd/system-shutdown/smartrow-display.shutdown
     systemctl daemon-reload
