@@ -592,6 +592,19 @@ class EffortEndTest(unittest.TestCase):
         r.row(20, 105)
         self.assertEqual([i.strokes for i in r.coach.intervals], [42])  # the dip stays in it
 
+    def test_strokes_after_a_dip_go_to_the_next_effort(self):
+        # The 5-stroke median lags: when a 4-stroke dip ends the effort, the latest strokes may be hard
+        # again. They belong to the next effort only (Oct 31: counted in both, intervals.icu refused).
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(20, 150)
+        r.row(4, 110)  # the dip
+        r.row(30, 150)
+        r.row(20, 105)
+        a, b = r.coach.intervals
+        self.assertEqual((a.strokes, b.strokes), (20, 30))
+        self.assertLess(a.started_at + a.duration_s, b.started_at + 0.01)
+
     def test_a_real_drop_still_ends_it(self):
         r = Rower(ftp=185)
         r.row(200, 105)

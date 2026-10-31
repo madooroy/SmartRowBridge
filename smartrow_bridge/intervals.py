@@ -251,6 +251,10 @@ def work_intervals(record: dict, strokes: list[dict], times: list[float]) -> lis
             continue
         start = bisect.bisect_left(times, i["started_at_s"] + offset)
         end = min(bisect.bisect_left(times, i["started_at_s"] + i["duration_s"] + offset), len(times) - 1)
+        if out and start <= out[-1]["end_index"]:  # never overlapping (intervals.icu refuses that)
+            out[-1]["end_index"] = start - 1
+            if out[-1]["end_index"] <= out[-1]["start_index"]:
+                out.pop()
         if end > start:
             out.append({"start_index": start, "end_index": end, "type": "WORK",
                         "label": i.get("intensity") or "Effort"})

@@ -173,6 +173,14 @@ class UploadsTest(unittest.TestCase):
         self.assertNotIn("SmartRowBridge", report)
         self.assertNotIn("FTP", body["description"])
 
+    def test_marks_never_overlap(self):
+        strokes = [{"t": float(t)} for t in range(0, 300, 3)]
+        times = [s["t"] + 5 for s in strokes]
+        record = {"intervals": [{"intensity": "Moderate", "started_at_s": 150.0, "duration_s": 33},
+                                {"intensity": "Moderate", "started_at_s": 180.0, "duration_s": 96}]}
+        marks = intervals.work_intervals(record, strokes, times)
+        self.assertEqual([(m["start_index"], m["end_index"]) for m in marks], [(50, 59), (60, 92)])
+
     def test_efforts_marked_as_the_only_intervals(self):
         self.set_up_intervals(when=time.time() - 86400)
         record = self.saved()

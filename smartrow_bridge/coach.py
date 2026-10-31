@@ -609,6 +609,7 @@ class IntervalCoach:
         self.recent: deque[StrokeCurve] = deque(maxlen=SMOOTH)
         self.effort: _Effort | None = None
         self.below_end = 0  # strokes in a row below the end of the effort
+        self.dip_from = 0  # ... from this stroke of the effort on (where an effort that ends on a dip is cut)
         self.recovery_left = 0
         # Easy rowing: judged against the fresh Easy stroke (baseline): the last session's when there
         # is one, else today's (provisional from PROVISIONAL_MIN strokes, set at FRESH_TO_S).
@@ -730,10 +731,17 @@ class IntervalCoach:
             if s.time - self.effort.strokes[0].time > self.max_effort_s:
                 self._rebaseline()
             elif smoothed < self._end_at() and self.below_end + 1 >= END_CONFIRM:
-                finished = self._finish(s.time) or finished
+                # Over: cut where the dip began. The 5-stroke median lags, so the latest strokes may
+                # already be hard again: they belong to the next effort (it starts from them), not this one.
+                finished = self._finish(s.time, cut=self.dip_from) or finished
             else:
                 # A stroke or two below the end (a dip, at a low rate say) stays part of the effort.
-                self.below_end = self.below_end + 1 if smoothed < self._end_at() else 0
+                if smoothed < self._end_at():
+                    if not self.below_end:
+                        self.dip_from = len(self.effort.strokes) - 1
+                    self.below_end += 1
+                else:
+                    self.below_end = 0
                 self._update_cue()
         return finished
 
@@ -800,13 +808,16 @@ class IntervalCoach:
             ref.clear()
             ref.extend(kept)
 
-    def _finish(self, now: float) -> IntervalSummary | None:
+    def _finish(self, now: float, cut: int | None = None) -> IntervalSummary | None:
+        """End the effort. cut: it ended on a dip; drop its strokes from there on (see add())."""
         effort, self.effort = self.effort, None
         if effort is None:
             return None
         end_at = self._end_at()
         strokes = list(effort.strokes)
         eased = 0
+        if cut is not None and 0 < cut < len(strokes):
+            eased, strokes = len(strokes) - cut, strokes[:cut]
         while strokes and stroke_power(strokes[-1]) < end_at:  # the easy strokes that ended it
             strokes.pop()
             eased += 1
