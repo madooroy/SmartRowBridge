@@ -53,7 +53,7 @@ def strokes_from_csv(path: Path):
         for row in csv.DictReader(f):
             yield StrokeCurve(
                 time=float(row["Second (#)"]),
-                force_n=[int(float(row[f"#{i} (N)"])) for i in range(1, FORCE_SAMPLES + 1)],
+                force_n=[_number(row.get(f"#{i} (N)")) for i in range(1, FORCE_SAMPLES + 1)],  # a blank cell: no force
                 power_w=int(float(row["Actual power (W)"])),
                 stroke_rate_spm=float(row["Stroke rate (SPM)"]),
                 stroke_length_cm=int(float(row["Stroke length (cm)"])),
