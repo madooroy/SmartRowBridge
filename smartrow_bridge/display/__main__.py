@@ -92,9 +92,10 @@ def run() -> None:
     path = _env("SRB_STATUS_FILE", status_file.DEFAULT_PATH)
     use_led = _env("SRB_DISPLAY_LED", "1") not in ("0", "false", "no")
     hold_s = float(_env("SRB_DISPLAY_HOLD_S", "2"))
+    sleep_s = float(_env("SRB_DISPLAY_SLEEP_S", "300"))
 
     hat = DisplayHat(led=use_led)
-    controller = Controller(hold_s=hold_s)
+    controller = Controller(hold_s=hold_s, sleep_s=sleep_s)
     stop = False
 
     def on_term(*_):
@@ -111,7 +112,7 @@ def run() -> None:
         _record("Button A read as pressed when the screen started; ignored until released")
 
     address, address_at = "", 0.0
-    last_draw, last_buttons = 0.0, {}
+    last_draw, last_buttons, lit = 0.0, {}, True
     while not stop:
         now = time.monotonic()
         buttons = {name: hat.pressed(name) for name in ("A", "B", "X", "Y")}
@@ -126,6 +127,10 @@ def run() -> None:
                 except OSError as exc:
                     log.warning("Could not pass the request to the bridge: %s", exc)
             hat.show(frame.image)
+            if frame.screen_on != lit:
+                hat.backlight(frame.screen_on)
+                lit = frame.screen_on
+                log.info("Screen %s", "woken" if lit else "dark (nothing happening); any button wakes it")
             hat.set_led(frame.led)
             last_draw = now
             if frame.switch_off:
@@ -140,6 +145,7 @@ def run() -> None:
         # Shutting down (from here, SSH or the iPhone shortcut): say so; the shutdown
         # hook draws the final "Safe to unplug" screen at the very end.
         hat.show(screens.switching_off_screen())
+        hat.backlight(True)  # it may have been dark
     else:
         hat.show(screens.blank())
         hat.backlight(False)

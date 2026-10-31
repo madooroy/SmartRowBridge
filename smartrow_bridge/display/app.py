@@ -19,6 +19,9 @@
   to switch the Pi off on every boot. With a session still to upload, the Pi finishes
   it, uploads and then switches off by itself (A again: off now; B: cancel); a service
   that can't be reached gets it the next time the Pi is on.
+- The screen goes dark after SRB_DISPLAY_SLEEP_S seconds (300; 0 = never) with no
+  rowing, no button pressed and nothing still to upload; the LED stays on. Rowing or
+  any button wakes it, and the press that wakes it does nothing else.
 
 The screen asks the bridge to finish a session through a request file beside the status
 file (status.send_request); Frame.request carries it to the caller, which writes it.
@@ -46,6 +49,7 @@ FINISH_SHOW_S = 20.0  # the "Session finished" screen stays this long once its u
 FINISH_MAX_S = 120.0
 OFF_WAIT_MAX_S = 120.0  # A with uploads to go: switch off after this at the latest
 OFF_CLOSING_S = 3.0  # show how the uploads ended, then switch off
+SLEEP_S = 300.0  # the screen goes dark after this long with nothing happening (0: never)
 
 
 @dataclass
@@ -53,6 +57,7 @@ class Frame:
     image: Image.Image
     led: str | None  # "red", "green" or None (off)
     switch_off: bool = False  # the hold finished: shut the Pi down now
+    screen_on: bool = True  # False: dark (backlight off) until rowing or a button
     request: dict | None = None  # for the bridge: {"action": "finish", "token": ...} (status.request_path)
 
 
@@ -89,8 +94,12 @@ def led_for(status: dict | None, now: float, uptime: float, rowing_recently: boo
 
 
 class Controller:
-    def __init__(self, hold_s: float = 2.0) -> None:
+    def __init__(self, hold_s: float = 2.0, sleep_s: float = SLEEP_S) -> None:
         self.hold_s = hold_s
+        self.sleep_s = sleep_s
+        self.asleep = False
+        self._quiet_since: float | None = None
+        self._swallow = False  # the press that woke the screen: ignored until let go
         self.view = "status"
         self.screen = "status"  # what was drawn last: status, rowing, interval or summary
         self._manual: str | None = None  # view chosen with B
@@ -201,6 +210,32 @@ class Controller:
 
     def step(self, status: dict | None, now: float, uptime: float, buttons: dict[str, bool],
              address: str = "") -> Frame:
+        """_step, with the screen going dark when nothing has happened for a while."""
+        pressed = any(buttons.values())
+        if self._swallow and pressed:
+            buttons = dict.fromkeys(buttons, False)
+        else:
+            self._swallow = False
+        rowing = screens.bridge_state(status, now, uptime) == "ok" and bool(status.get("rowing"))
+        if self.asleep:
+            if not (pressed or rowing or _outstanding(status)):
+                return Frame(screens.blank(), led_for(status, now, uptime), screen_on=False)
+            self.asleep, self._quiet_since = False, now
+            if pressed:
+                self._swallow, buttons = True, dict.fromkeys(buttons, False)
+        frame = self._step(status, now, uptime, buttons, address)
+        busy = (pressed or rowing or self._rowing_recently(now) or _outstanding(status) or self.switching_off
+                or self._off is not None or self._finish is not None or self._discard is not None
+                or frame.switch_off or frame.request is not None)
+        if busy or self._quiet_since is None:
+            self._quiet_since = now
+        elif self.sleep_s > 0 and now - self._quiet_since >= self.sleep_s:
+            self.asleep = True
+            return Frame(screens.blank(), frame.led, screen_on=False)
+        return frame
+
+    def _step(self, status: dict | None, now: float, uptime: float, buttons: dict[str, bool],
+              address: str = "") -> Frame:
         if self.switching_off:
             return Frame(screens.switching_off_screen(), None)
 

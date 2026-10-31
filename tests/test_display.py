@@ -342,3 +342,53 @@ class DoneAndOffTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(screens is None, "Pillow not installed")
+class SleepTest(unittest.TestCase):
+    def step(self, c, st, t, **buttons):
+        return c.step(st, NOW + t, UPTIME, {**NO_BUTTONS, **buttons})
+
+    def fresh(self, t, **kw):
+        return status(age=-t, **kw)
+
+    def test_goes_dark_when_nothing_happens_and_rowing_wakes_it(self):
+        c = app.Controller(sleep_s=300)
+        self.assertTrue(self.step(c, self.fresh(0), 0).screen_on)
+        self.assertTrue(self.step(c, self.fresh(299), 299).screen_on)
+        f = self.step(c, self.fresh(300), 300)
+        self.assertFalse(f.screen_on)
+        self.assertEqual(f.led, "green")  # the LED stays on: asleep, not off
+        self.assertFalse(self.step(c, self.fresh(900), 900).screen_on)
+        self.assertTrue(self.step(c, self.fresh(901, rowing=True), 901).screen_on)
+        self.assertEqual(c.view, "rowing")
+
+    def test_rowing_keeps_it_on(self):
+        c = app.Controller(sleep_s=300)
+        for t in range(0, 1200, 30):
+            self.assertTrue(self.step(c, self.fresh(t, rowing=True), t).screen_on)
+
+    def test_the_waking_press_does_nothing_else(self):
+        c = app.Controller(sleep_s=300)
+        self.step(c, self.fresh(0), 0)
+        self.assertFalse(self.step(c, self.fresh(400), 400).screen_on)
+        for t in (401, 402, 403, 404):  # A held long enough to switch off, but it woke the screen
+            f = self.step(c, self.fresh(t), t, A=True)
+            self.assertTrue(f.screen_on)
+            self.assertFalse(f.switch_off)
+        self.assertFalse(c.switching_off)
+        self.step(c, self.fresh(405), 405)  # let go: buttons work again
+        self.step(c, self.fresh(406), 406, B=True)
+        self.step(c, self.fresh(406.2), 406.2)
+        self.assertEqual(c.view, "rowing")
+
+    def test_uploads_still_going_keep_it_on(self):
+        c = app.Controller(sleep_s=300)
+        st = lambda t: {**self.fresh(t), "uploads": {"sending": "strava", "waiting": 1}}
+        for t in range(0, 900, 60):
+            self.assertTrue(self.step(c, st(t), t).screen_on)
+
+    def test_zero_means_never(self):
+        c = app.Controller(sleep_s=0)
+        for t in range(0, 7200, 600):
+            self.assertTrue(self.step(c, self.fresh(t), t).screen_on)
