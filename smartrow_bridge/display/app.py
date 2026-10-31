@@ -98,7 +98,7 @@ class Controller:
         self.hold_s = hold_s
         self.sleep_s = sleep_s
         self.asleep = False
-        self._quiet_since: float | None = None
+        self._quiet_since: float | None = None  # in uptime: the wall clock jumps when the Pi syncs its time
         self._swallow = False  # the press that woke the screen: ignored until let go
         self.view = "status"
         self.screen = "status"  # what was drawn last: status, rowing, interval or summary
@@ -220,7 +220,7 @@ class Controller:
         if self.asleep:
             if not (pressed or rowing or _outstanding(status)):
                 return Frame(screens.blank(), led_for(status, now, uptime), screen_on=False)
-            self.asleep, self._quiet_since = False, now
+            self.asleep, self._quiet_since = False, uptime
             if pressed:
                 self._swallow, buttons = True, dict.fromkeys(buttons, False)
         frame = self._step(status, now, uptime, buttons, address)
@@ -228,8 +228,8 @@ class Controller:
                 or self._off is not None or self._finish is not None or self._discard is not None
                 or frame.switch_off or frame.request is not None)
         if busy or self._quiet_since is None:
-            self._quiet_since = now
-        elif self.sleep_s > 0 and now - self._quiet_since >= self.sleep_s:
+            self._quiet_since = uptime
+        elif self.sleep_s > 0 and uptime - self._quiet_since >= self.sleep_s:
             self.asleep = True
             return Frame(screens.blank(), frame.led, screen_on=False)
         return frame

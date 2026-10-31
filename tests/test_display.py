@@ -347,7 +347,7 @@ if __name__ == "__main__":
 @unittest.skipIf(screens is None, "Pillow not installed")
 class SleepTest(unittest.TestCase):
     def step(self, c, st, t, **buttons):
-        return c.step(st, NOW + t, UPTIME, {**NO_BUTTONS, **buttons})
+        return c.step(st, NOW + t, UPTIME + t, {**NO_BUTTONS, **buttons})
 
     def fresh(self, t, **kw):
         return status(age=-t, **kw)
@@ -387,6 +387,16 @@ class SleepTest(unittest.TestCase):
         st = lambda t: {**self.fresh(t), "uploads": {"sending": "strava", "waiting": 1}}
         for t in range(0, 900, 60):
             self.assertTrue(self.step(c, st(t), t).screen_on)
+
+    def test_a_clock_jump_after_boot_does_not_darken_it(self):
+        # The Pi has no clock battery: the time jumps forward by hours once it syncs.
+        c = app.Controller(sleep_s=300)
+        self.assertTrue(c.step(status(), 1000.0, 20.0, NO_BUTTONS).screen_on)
+        st = status()
+        st["time"] = 101030.0
+        self.assertTrue(c.step(st, 101030.0, 50.0, NO_BUTTONS).screen_on)
+        st["time"] = 101030.0 + 300
+        self.assertFalse(c.step(st, 101030.0 + 300, 350.0, NO_BUTTONS).screen_on)  # uptime, not the clock
 
     def test_zero_means_never(self):
         c = app.Controller(sleep_s=0)
