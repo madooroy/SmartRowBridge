@@ -52,7 +52,7 @@ class FindingsTest(unittest.TestCase):
     def test_all_good(self):
         self.assertEqual(coach.findings([{"index": 1, "rating": "good", "finish_pct": 1, "duration_s": 60,
                                           "length_delta_cm": 1, "fade_pct": 0}])[0],
-                         "All 1 efforts kept their shape and length: finish within 5% of your usual at that intensity.")
+                         "The effort kept its shape and length: finish within 5% of your usual at that intensity.")
 
     def test_faded_finish(self):
         iv = [{"index": 1, "rating": "short", "finish_pct": -15, "duration_s": 120, "length_delta_cm": 0,
