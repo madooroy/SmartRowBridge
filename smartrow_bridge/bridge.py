@@ -8,7 +8,7 @@ import logging
 import time
 from typing import IO, TYPE_CHECKING
 
-from . import adapters, addresses, protocol, status
+from . import adapters, addresses, coach, protocol, sessions, status
 from .central import PulleyLink
 from .config import Config
 
@@ -31,10 +31,41 @@ STATS_INTERVAL_S = 60.0
 STATUS_INTERVAL_S = 1.0
 
 
+FTP_RETRY_S = 30  # until the first answer from intervals.icu (the network may come up after the bridge)
+
+
+def _fixed_ftp(setting: str) -> float | None:
+    """SRB_COACH_FTP: watts, or empty / "auto" (from intervals.icu, later) / "off": none for now."""
+    try:
+        ftp = float(setting.strip())
+    except ValueError:
+        return None
+    return ftp if ftp > 0 else None
+
+
 class Bridge:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         self.parser = protocol.SmartRowParser()
+        self.coach: coach.IntervalCoach | None = None
+        if cfg.coach and cfg.status_file.lower() != "off":
+            saved = cfg.session_dir.lower() != "off"
+            self.coach = coach.IntervalCoach(coach.CoachSettings(
+                start_pct=cfg.coach_start_pct, max_effort_s=cfg.coach_max_min * 60,
+                sensitivity=cfg.coach_sensitivity), ftp=_fixed_ftp(cfg.coach_ftp),
+                reference=(lambda: sessions.latest_fresh_easy(cfg.session_dir, max_age_days=coach.FRESH_MAX_AGE_DAYS))
+                if saved else None)
+            self.parser.on_stroke = self.coach.add
+        self.hr_link = None  # heartrate.HeartRateLink, created once the pulley's adapter is known
+        self.recorder: sessions.SessionRecorder | None = None
+        if self.coach and cfg.session_dir.lower() != "off":
+            self.recorder = sessions.SessionRecorder(cfg.session_dir, self.coach)
+        self.uploader = None
+        self._finish_result: dict | None = None  # the last "Done" (button Y) handled, for the screen
+        if self.recorder is not None:
+            from .uploads import Settings, Uploader
+            self.uploader = Uploader(Settings(cfg.session_dir, cfg.intervals_key_file, cfg.intervals_upload,
+                                              cfg.strava_file, cfg.strava_sport_type))
         self.peripheral: BridgePeripheral | None = None
         self.link: PulleyLink | None = None
         self._driver_initialized = False
@@ -75,6 +106,9 @@ class Bridge:
                 log.info("Answering V3 KEYLOCK challenge")
                 self.link.write_uuid(protocol.WRITE_CHAR_UUID, protocol.keylock_response(data), bytewise=True)
         self.parser.feed(data)
+
+    def _on_heart_rate(self, bpm: int) -> None:
+        self.parser.metrics.heart_rate_bpm = bpm
 
     def _on_pulley_connected(self) -> None:
         """Called once notifications are subscribed, so replies to our commands are seen."""
@@ -143,7 +177,44 @@ class Bridge:
             fitness_name=self.cfg.fitness_name,
             metrics=snap,
             rowing=snap.stroke_rate_spm > 0 or snap.power_w > 0,
+            coach=self.coach.state(time.monotonic()) if self.coach else None,
+            heart_rate=({"name": self.hr_link.name, "connected": self.hr_link.connected}
+                        if self.hr_link else None),
+            uploads=self.uploader.snapshot() if self.uploader else None,
+            finish=self._finish_result,
         )
+
+    def _handle_request(self) -> None:
+        """Requests from the screen (status.send_request): "finish" = button Y, you're done."""
+        request = status.take_request(self.cfg.status_file)
+        if not request:
+            return
+        if request.get("action") == "discard":
+            session, sent = self.recorder.discard() if self.recorder else (None, [])
+            if self.coach and self.coach.strokes_total:
+                self.coach.reset()  # rowing again is a new session
+            if session:
+                log.info("Session discarded: %s (from the screen)%s", session,
+                         f"; already uploaded to {', '.join(sent)}" if sent else "")
+            if self.uploader:
+                self.uploader.check_now(request.get("token"))
+            self._finish_result = {"token": request.get("token"), "session": session, "action": "discard",
+                                   "uploaded": sent}
+            return
+        if request.get("action") != "finish":
+            return
+        session = self.recorder.finish(self.parser.metrics) if self.recorder else None
+        if session:
+            self.coach.reset()  # rowing again is a new session
+            log.info("Session finished: %s (from the screen)", session)
+        elif self.uploader and self.uploader.latest_waiting():
+            # Already saved as complete, its uploads waiting for the session to be over for good.
+            session = self.uploader.latest_waiting()
+            sessions.mark_finished(self.cfg.session_dir, session)
+            log.info("Session finished: %s (from the screen)", session)
+        if self.uploader:
+            self.uploader.check_now(request.get("token"))
+        self._finish_result = {"token": request.get("token"), "session": session}
 
     async def _status_loop(self) -> None:
         """Keep the status file (read by the optional screen) up to date."""
@@ -151,23 +222,85 @@ class Bridge:
         failed = False
         while True:
             try:
+                self._handle_request()
+            except Exception:  # noqa: BLE001 - nor may a request from the screen
+                log.exception("Request from the screen failed")
+            if self.hr_link is not None and not self.hr_link.fresh():
+                self.parser.metrics.heart_rate_bpm = 0  # strap off or out of range: no reading
+            try:
                 status.write(path, self._status())
                 failed = False
             except Exception as exc:  # noqa: BLE001 - the status file must never stop the bridge
                 if not failed:
                     log.warning("Could not write status file %s: %s", path, exc)
                 failed = True
+            if self.recorder is not None:
+                try:
+                    self.recorder.update(self.parser.metrics)
+                except Exception:  # noqa: BLE001 - nor may the session summary
+                    log.exception("Session summary failed")
+            if self.uploader is not None:
+                try:
+                    self.uploader.tick()
+                except Exception:  # noqa: BLE001 - nor the uploads
+                    log.exception("Uploads failed")
             await asyncio.sleep(STATUS_INTERVAL_S)
+
+    async def _ftp_loop(self, read_ftp: bool = True) -> None:
+        """Read the rowing sport settings from intervals.icu (when set up) once, at start: the FTP
+        (unless SRB_COACH_FTP is set) and the heart-rate zones (for the photo cards' shading).
+
+        It changes rarely, so one read per start is enough; the Pi is usually switched on for each
+        row. Until the network is up (or intervals.icu answers) it tries again every few minutes.
+        """
+        from . import intervals
+        key = intervals.read_key(self.cfg.intervals_key_file)
+        if not key:
+            return
+        warned = False
+        while True:
+            try:
+                settings = await asyncio.to_thread(intervals.rowing_settings, key)
+                ftp = settings["ftp"] if read_ftp else None
+            except Exception as exc:  # noqa: BLE001 - offline: the coach carries on without one for now
+                if not warned:
+                    log.warning("Could not read the rowing FTP from intervals.icu (trying again every %d s): %s",
+                                FTP_RETRY_S, intervals.describe_error(exc))
+                    warned = True
+                await asyncio.sleep(FTP_RETRY_S)
+                continue
+            if settings.get("hr_zones"):
+                self.coach.hr_zones = {**settings["hr_zones"], "max_hr": settings.get("max_hr")}
+                log.info("Heart-rate zones from intervals.icu: %s bpm", "/".join(map(str, settings["hr_zones"]["tops"])))
+            if not read_ftp:
+                return
+            if ftp:
+                log.info("Rowing FTP from intervals.icu: %.0f W (efforts from %.0f W)", ftp,
+                         ftp * self.coach.settings.ftp_floor_pct / 100)
+                self.coach.ftp = ftp
+            else:
+                log.info("No rowing FTP set on intervals.icu: the coach works without one")
+            return
 
     async def run(self) -> None:
         status_task = None
         if self.cfg.status_file.lower() != "off":
             status_task = asyncio.create_task(self._status_loop())
+        ftp_task = None
+        if self.coach:  # the FTP only when not set here; the heart-rate zones either way
+            ftp_task = asyncio.create_task(self._ftp_loop(self.cfg.coach_ftp.strip().lower() in ("", "auto")))
         try:
             await self._run()
         finally:
             if status_task is not None:
                 status_task.cancel()
+            if ftp_task is not None:
+                ftp_task.cancel()
+            if self.recorder is not None:
+                try:
+                    self.recorder.close(self.parser.metrics)  # stopping: save the session as it is
+                except Exception:  # noqa: BLE001
+                    log.exception("Session summary failed")
 
     async def _run(self) -> None:
         # Bumble is only needed once the pulley is connected, so load it in a thread
@@ -199,6 +332,10 @@ class Bridge:
             on_notify=self._on_notify,
         )
         self.link.on_connected = self._on_pulley_connected
+        if self.cfg.heart_rate.lower() not in ("", "off", "0", "no"):
+            from .heartrate import HeartRateLink
+            self.hr_link = HeartRateLink(central_hci, self.cfg.heart_rate, self.link.scan_lock,
+                                         on_reading=self._on_heart_rate)
         self._stage = status.SEARCHING
         snapshot = await self.link.connect_first()
         self._pulley_label = status.pulley_label(snapshot.name, snapshot.manufacturer_data)
@@ -215,12 +352,14 @@ class Bridge:
                 pulley=snapshot,
                 advertise_pulley_id=self.cfg.advertise_pulley_id,
                 on_clone_write=self.link.write,
+                heart_rate=self.hr_link is not None and self.cfg.heart_rate_to_fitness,
             ) as peripheral:
                 self.peripheral = peripheral
                 self._stage = status.CONNECTED
-                await asyncio.gather(
-                    self.link.run(), self._driver_loop(), self._ftms_loop(), self._stats_loop()
-                )
+                tasks = [self.link.run(), self._driver_loop(), self._ftms_loop(), self._stats_loop()]
+                if self.hr_link is not None:
+                    tasks.append(self.hr_link.run())  # only now: the pulley is connected first
+                await asyncio.gather(*tasks)
         finally:
             if self._sniff is not None:
                 self._sniff.close()

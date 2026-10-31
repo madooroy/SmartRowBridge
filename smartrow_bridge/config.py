@@ -6,7 +6,7 @@ import argparse
 import os
 from dataclasses import dataclass
 
-from . import session_log, status
+from . import session_log, sessions, status
 
 
 @dataclass
@@ -28,6 +28,18 @@ class Config:
     session_log: str
     status_file: str
     gatt_log: bool
+    coach: bool
+    coach_start_pct: float
+    coach_max_min: float
+    coach_sensitivity: str
+    coach_ftp: str
+    session_dir: str
+    heart_rate: str
+    heart_rate_to_fitness: bool
+    intervals_key_file: str
+    intervals_upload: str
+    strava_file: str
+    strava_sport_type: str
     log_level: str
 
 
@@ -78,5 +90,40 @@ def parse(argv: list[str] | None = None) -> Config:
     p.add_argument("--gatt-log", action="store_true",
                    default=_env("SRB_GATT_LOG", "0") in ("1", "true", "yes"),
                    help="debugging: log every GATT request the apps make to the virtual devices")
+    p.add_argument("--coach", dest="coach", action="store_true",
+                   default=_env("SRB_COACH", "0") in ("1", "true", "yes"),
+                   help="experimental: interval coach, force-curve feedback on the screen and web page")
+    p.add_argument("--no-coach", dest="coach", action="store_false", help="turn the interval coach off")
+    p.add_argument("--coach-start-pct", type=float, default=float(_env("SRB_COACH_START_PCT", "20")),
+                   help="coach: an interval is at least this %% above your steady power (default 20)")
+    p.add_argument("--coach-max-min", type=float, default=float(_env("SRB_COACH_MAX_MIN", "5")),
+                   help="coach: longest effort, in minutes, to count as an interval (default 5)")
+    p.add_argument("--coach-sensitivity", choices=("low", "normal", "high"),
+                   default=_env("SRB_COACH_SENSITIVITY", "normal"),
+                   help="coach: how readily the technique cues speak up (default normal)")
+    p.add_argument("--coach-ftp", default=_env("SRB_COACH_FTP", ""),
+                   help="coach: your rowing FTP in watts; empty = read it from intervals.icu (when set up), "
+                        "off = none. With it, an effort is Moderate or harder (67%% of FTP and up), with no time limit")
+    p.add_argument("--session-dir", default=_env("SRB_SESSION_DIR", sessions.DEFAULT_DIR),
+                   help="coach: where each session's summary is saved, for the web page ('off' to disable)")
+    p.add_argument("--heart-rate", default=_env("SRB_HEART_RATE", "off"),
+                   help="heart rate strap for the bridge: off, auto (first strap found), a MAC address, "
+                        "or part of its name such as COROS")
+    # Off by default: Peloton ignored the rowing data once it carried heart rate (Oct 29, 2026);
+    # pair the strap with the fitness app directly instead.
+    p.add_argument("--heart-rate-to-fitness", dest="heart_rate_to_fitness", action="store_true",
+                   default=_env("SRB_HEART_RATE_TO_FITNESS", "0") in ("1", "true", "yes"),
+                   help="also pass the strap's heart rate on to the fitness app (off by default: Peloton "
+                        "then ignored the rowing data)")
+    p.add_argument("--no-heart-rate-to-fitness", dest="heart_rate_to_fitness", action="store_false")
+    p.add_argument("--intervals-key-file", default=_env("SRB_INTERVALS_KEY_FILE", "/etc/smartrow-bridge/intervals.key"),
+                   help="intervals.icu API key (tools/setup_intervals.sh); with it, sessions go to intervals.icu")
+    p.add_argument("--intervals-upload", choices=("activity", "note", "off"),
+                   default=_env("SRB_INTERVALS_UPLOAD", "activity").lower(),
+                   help="what goes to intervals.icu: the session as an activity (default), a calendar note, or off")
+    p.add_argument("--strava-file", default=_env("SRB_STRAVA_FILE", "/etc/smartrow-bridge/strava.json"),
+                   help="Strava authorization (tools/setup_strava.sh); with it, sessions are uploaded to Strava")
+    p.add_argument("--strava-sport-type", default=_env("SRB_STRAVA_SPORT_TYPE", "Rowing"),
+                   help="Strava activity type for uploads (Rowing, or VirtualRow)")
     p.add_argument("--log-level", default=_env("SRB_LOG_LEVEL", "INFO"))
     return Config(**vars(p.parse_args(argv)))

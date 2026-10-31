@@ -40,15 +40,29 @@ def _uptime() -> float:
         return 1e9
 
 
+WEB_UNIT = Path("/etc/systemd/system/smartrow-web.service")
+
+
 def _address() -> str:
-    """Host name and IP address, so you can find the Pi for SSH."""
+    """For the status screen's corner: the web page's address once it is set up
+    (tools/setup_web.sh), by name and by IP address, as Android does not always find
+    .local names; otherwise the host name and IP address, so you can find the Pi for SSH."""
     host = socket.gethostname()
     try:
         ips = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=2).stdout.split()
     except (OSError, subprocess.TimeoutExpired):
         ips = []
     ipv4 = [ip for ip in ips if "." in ip]
-    return f"{host}  {ipv4[0]}" if ipv4 else host
+    return address_lines(host, ipv4[0] if ipv4 else None, _env("SRB_WEB_PORT", "8080") if WEB_UNIT.exists() else None)
+
+
+def address_lines(host: str, ip: str | None, web_port: str | None) -> str:
+    if web_port:
+        lines = [f"http://{host}.local:{web_port}"]
+        if ip:
+            lines.append(f"http://{ip}:{web_port}")
+        return "\n".join(lines)
+    return f"{host}  {ip}" if ip else host
 
 
 def _system_stopping() -> bool:
@@ -106,6 +120,11 @@ def run() -> None:
             if now - address_at >= ADDRESS_EVERY_S:
                 address, address_at = _address(), now
             frame = controller.step(status_file.read(path), time.time(), _uptime(), buttons, address)
+            if frame.request:  # Y (done) or A with uploads to go: ask the bridge to finish the session
+                try:
+                    status_file.write(status_file.request_path(path), frame.request)
+                except OSError as exc:
+                    log.warning("Could not pass the request to the bridge: %s", exc)
             hat.show(frame.image)
             hat.set_led(frame.led)
             last_draw = now
@@ -157,9 +176,49 @@ def preview(directory: str) -> None:
                 "fitness_app": fitness, "clone_name": "SmartRow", "fitness_name": "PiRower",
                 "rowing": rowing, "metrics": m}
 
-    addr = "raspberrypi  192.168.1.23"
+    addr = address_lines("raspberrypi", "192.168.1.23", "8080")
     rowing = dict(distance_m=1834, power_w=168, stroke_rate_spm=24.5, stroke_count=212,
                   pace_s_per_500m=118, elapsed_s=455)
+    # Interval coach, with average curves from a real 45-minute session.
+    steady = [131, 210, 286, 344, 389, 422, 445, 465, 467, 455, 430, 401, 375, 340, 295, 246, 196, 148, 104, 68, 32,
+              7, 0, 0]
+    short = [176, 295, 414, 512, 593, 656, 696, 714, 701, 666, 613, 550, 492, 416, 339, 269, 203, 146, 95, 51, 14, 2,
+             0, 0]
+    full = [143, 232, 325, 401, 467, 520, 566, 593, 612, 604, 575, 537, 502, 461, 402, 337, 272, 211, 153, 100, 63,
+            28, 0, 0]
+
+    faded = [round(v * (0.7 if 11 <= i <= 19 else 1)) for i, v in enumerate(full)]  # the finish fading
+    # A real stroke with a stall just after the peak (Oct 29, I5): falls, holds at 480 N, falls again.
+    stalled = [128, 208, 272, 336, 384, 432, 480, 496, 512, 512, 512, 480, 480, 448, 416, 368, 320, 272, 208, 144,
+               96, 64, 48, 0]
+    late = [40, 80, 131, 210, 286, 344, 389, 422, 445, 465, 467, 455, 430, 401, 375, 340, 295, 246, 196, 148, 104,
+            68, 32, 7]  # steady shape, pushed 3 samples later: a slow push off the catch
+
+    # A steady stroke a little different from the average steady shape, as real strokes are.
+    steady_stroke = [round(v * (1.06 if i < 9 else 0.95)) for i, v in enumerate(steady)]
+
+    def coached(live=None, last=None, show_summary=False):
+        status = st("connected", "SmartRow-34", True, True, True, **rowing)
+        status["coach"] = {"mode": "interval" if live else "steady", "steady_power_w": 111, "intervals": 2,
+                           "live": live, "last": last, "show_summary": show_summary,
+                           "stroke_curve": steady_stroke, "steady_curve": steady, "intensity": "Easy", "cue": "good"}
+        return status
+
+    def live(cue, curve, finish_pct=None, length_delta=None, balance=None, length_balance=None):
+        return {"index": 3, "elapsed_s": 72, "strokes": 25, "power_w": 154, "length_cm": 112, "cue": cue,
+                "finish_pct": finish_pct, "length_delta_cm": length_delta, "curve": curve, "steady_curve": steady,
+                "balance": balance, "length_balance": length_balance, "intensity": "Moderate"}
+
+    good_last = {"index": 2, "duration_s": 62, "strokes": 22, "power_w": 150, "stroke_rate_spm": 21.5,
+                 "length_cm": 118.7, "length_delta_cm": 4.6, "peak_n": 623, "finish_pct": 0, "rating": "good",
+                 "fade_pct": -3, "curve": full, "steady_curve": steady, "balance": 0.2, "length_balance": 1.5,
+                 "intensity": "Moderate"}
+    short_last = {**good_last, "index": 7, "duration_s": 182, "strokes": 64, "power_w": 156, "length_cm": 112.5,
+                  "length_delta_cm": -3.6, "peak_n": 719, "finish_pct": -15, "rating": "short", "curve": short,
+                  "balance": -1.4, "length_balance": -1.2}
+    legs_last = {**good_last, "index": 4, "finish_pct": 14, "curve": late, "length_delta_cm": 0.0,
+                 "drive_late": 4.3, "legs_late": True, "peak_at_pct": 52, "steady_peak_at_pct": 41,
+                 "balance": 1.4, "length_balance": 0.0}
     shots = {
         "01-starting-up": screens.status_screen(None, now, 12.0, addr),
         "02-preparing": screens.status_screen(st("starting"), now, up, addr),
@@ -171,11 +230,73 @@ def preview(directory: str) -> None:
         "08-paused": screens.rowing_screen(
             st("connected", "SmartRow-34", True, True, False, **{**rowing, "power_w": 0, "stroke_rate_spm": 0,
                                                                 "pace_s_per_500m": 0}), now, up),
+        "07a-interval-starting": screens.interval_screen(coached(live(None, full)), now, up),
+        "07b-interval-good": screens.interval_screen(coached(live("good", full, 2, 4, 0.2, 1.5)), now, up),
+        "07c-interval-finish-cue": screens.interval_screen(coached(live("finish", faded, -15, 0, -1.5, 0.0)), now, up),
+        "07h-interval-legs-cue": screens.interval_screen(coached(live("legs", late, 14, 0, 1.4, 0.0)), now, up),
+        "07i-summary-legs-late": screens.summary_screen(coached(last=legs_last, show_summary=True), now, up),
+        "07d-interval-length-cue": screens.interval_screen(coached(live("length", short, -1, -5, -0.3, -1.7)), now, up),
+        "07n-interval-transition-cue": screens.interval_screen(coached(
+            {**live("transition", stalled, -2, 1, -0.2, 0.3), "stall": {"sample": 11, "until": 12, "now": True}}), now, up),
+        "07e-summary-good": screens.summary_screen(coached(last=good_last, show_summary=True), now, up),
+        "07f-summary-short": screens.summary_screen(coached(last=short_last, show_summary=True), now, up),
+        "07g-rowing-with-last": screens.rowing_screen(coached(last=short_last), now, up),
+        "07j-rowing-coach-steady": screens.rowing_screen(coached(), now, up),
+        "07k-rowing-coach-warmup": screens.rowing_screen({**coached(), "coach": {**coached()["coach"], "mode": "warmup",
+                                                                              "steady_curve": [], "cue": None}}, now, up),
+        "07l-rowing-easy-finish-cue": screens.rowing_screen({**coached(), "coach": {**coached()["coach"], "cue": "finish",
+                                                                                 "stroke_curve": short}}, now, up),
+        "07m-rowing-recovery": screens.rowing_screen({**coached(), "coach": {**coached()["coach"],
+                                                                          "intensity": "Recovery"}}, now, up),
         "09-hold-to-switch-off": screens.hold_screen(0.6),
         "10-switching-off": screens.switching_off_screen(),
         "11-safe-to-unplug": screens.final_screen("poweroff"),
         "12-bridge-not-running": screens.status_screen(None, now, up, addr),
+        "13-both-apps-no-web-page": screens.status_screen(st("connected", "SmartRow-34", True, True), now, up,
+                                                          address_lines("raspberrypi", "192.168.1.23", None)),
+        "14-strap-waiting": screens.status_screen({**st("searching"), "heart_rate": {"name": None,
+                                                                                     "connected": False}}, now, up, addr),
+        "15-strap-looking": screens.status_screen({**st("connected", "SmartRow-34", True, True),
+                                                   "heart_rate": {"name": None, "connected": False}}, now, up, addr),
+        "16-strap-connected": screens.status_screen({**st("connected", "SmartRow-34", True, True, heart_rate_bpm=96),
+                                                     "heart_rate": {"name": "COROS HRM 8A2F", "connected": True}},
+                                                    now, up, addr),
+        "17-strap-no-web-page": screens.status_screen({**st("connected", "SmartRow-34", True, False, heart_rate_bpm=96),
+                                                       "heart_rate": {"name": "COROS HRM 8A2F", "connected": True}},
+                                                      now, up, address_lines("raspberrypi", "192.168.1.23", None)),
     }
+    # Y (done) and A with uploads to go.
+    from .app import Controller
+
+    def with_session(st, strokes=420):
+        st["coach"] = {**(st.get("coach") or {}), "session_strokes": strokes}
+        return st
+
+    def uploads(states, sending=None):
+        return {"configured": list(states), "sending": sending, "waiting": 1, "retrying": 0, "error": None,
+                "latest": {"id": "2026-10-28T0702", "dests": states}, "ack": "t"}
+
+    c = Controller()
+    rowing_y = c.step(with_session(st("connected", "SmartRow-34", True, True, True, **rowing)), now, up,
+                      {"A": False, "B": False, "X": False, "Y": False}).image
+    interval_y = screens.add_tab(screens.interval_screen(coached(live("good", full, 2, 4, 0.2, 1.5)), now, up),
+                                 "Y", "check", "Hold: done")
+    fin = {"token": "t", "session": "2026-10-28T0702"}
+    going = {**st("connected"), "finish": fin,
+             "uploads": uploads({"intervals.icu activity": "sent", "Strava": "waiting"}, sending="Strava")}
+    done = {**st("connected"), "finish": fin,
+            "uploads": uploads({"intervals.icu activity": "sent", "Strava": "sent"})}
+    offline = {**st("connected"), "finish": fin,
+               "uploads": {**uploads({"intervals.icu activity": "sent", "Strava": "retrying"}), "retrying": 1}}
+    shots.update({
+        "18-rowing-y-done": rowing_y,
+        "19-interval-y-done": interval_y,
+        "20-hold-y": screens.hold_screen(0.6, "Keep holding: done rowing"),
+        "21-finished-uploading": screens.finish_screen(going, fin["session"], True),
+        "22-finished-sent": screens.finish_screen(done, fin["session"], True),
+        "23-off-uploading-first": screens.upload_off_screen(going, False),
+        "24-off-closing-offline": screens.upload_off_screen(offline, True),
+    })
     for name, image in shots.items():
         image.save(out / f"{name}.png")
     print(f"{len(shots)} screens saved in {out}")

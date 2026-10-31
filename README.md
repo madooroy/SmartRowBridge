@@ -47,6 +47,10 @@ the same Pi 4.
 Cold boot to both apps recording needs no interaction. Other firmware versions, dongles and apps are
 untested - reports welcome.
 
+The [interval coach](#optional-interval-coach-experimental) and the
+[web page](#optional-a-web-page-for-phones-and-tablets) are new and experimental: the coach is calibrated on
+the author's rowing only and is off unless turned on; the web page has not yet been tried on a tablet.
+
 Peloton shows stroke rate, pace and heart rate live, and output (watts, kJ), distance and stroke count in the
 workout summary.
 
@@ -191,6 +195,9 @@ Common problems:
 | `SRB_GATT_LOG` | empty | `1` logs every GATT request the apps make to the virtual devices (verbose) |
 | `SRB_LOG_LEVEL` | `INFO` | `DEBUG` adds a line per second |
 | `SRB_STATUS_FILE` | `/run/smartrow-bridge/status.json` | Status the optional screen shows, rewritten every second in RAM; `off` disables |
+| `SRB_COACH` | `0` | `1` turns on the [interval coach](#optional-interval-coach-experimental) (experimental) |
+| `SRB_COACH_START_PCT`, `SRB_COACH_MAX_MIN`, `SRB_COACH_SENSITIVITY` | `20`, `5`, `normal` | Coach tuning: how much harder than steady an interval is (%), the longest effort to count (minutes), how readily the cues speak up (`low`, `normal`, `high`) |
+| `SRB_WEB_PORT` | `8080` | Port of the optional [web page](#optional-a-web-page-for-phones-and-tablets) |
 | `SRB_DISPLAY_LED`, `SRB_DISPLAY_HOLD_S` | `1`, `2` | Screen only: `0` leaves its LED off; seconds to hold button A to switch the Pi off |
 
 ## How it works
@@ -199,12 +206,17 @@ Common problems:
 |---|---|
 | `smartrow_bridge/central.py` | Finds and holds the pulley, copies its GATT table, reconnects, keeps writes in order |
 | `smartrow_bridge/peripheral.py` | Bumble GATT server: pulley clone + FTMS rower, two advertising sets |
-| `smartrow_bridge/protocol.py` | SmartRow record decoding, checksum, V3 KEYLOCK handshake |
+| `smartrow_bridge/protocol.py` | SmartRow record decoding (including each stroke's force curve), checksum, V3 KEYLOCK handshake |
+| `smartrow_bridge/coach.py` | Interval coach: steady reference, automatic interval detection, live cue, per-interval summary |
 | `smartrow_bridge/ftms.py` | FTMS Rower Data (0x2AD1), Feature, Control Point |
 | `smartrow_bridge/bridge.py` | Wiring; runs the pulley handshake when the SmartRow app is absent; 1 Hz FTMS; data-flow log |
 | `smartrow_bridge/adapters.py` | Picks the two radios, clears rfkill, hands the dongle to Bumble |
 | `smartrow_bridge/addresses.py`, `advertising.py`, `session_log.py`, `config.py` | Virtual device addresses, advertising payloads, session record, settings |
-| `smartrow_bridge/status.py`, `smartrow_bridge/display/` | Status file; the optional screen, a separate service that only reads it |
+| `smartrow_bridge/status.py`, `smartrow_bridge/display/`, `smartrow_bridge/web/` | Status file; the optional screen and web page, separate services that only read it |
+| `smartrow_bridge/sessions.py` | Saves each session's summary for the web page; progress over weeks |
+| `smartrow_bridge/heartrate.py` | Optional heart rate strap, on the pulley's radio |
+| `smartrow_bridge/uploads.py`, `intervals.py`, `strava.py`, `fitfile.py` | Optional uploads: when and where, the two services, the session's FIT file |
+| `tools/coach_replay.py` | Runs SmartRow app CSV exports through the coach (and can save their summaries) |
 
 - **Pass-through.** Every pulley notification is forwarded to the clone first, unchanged and in order; parsing
   works on a copy. The SmartRow app's writes go back to the pulley unchanged.
@@ -240,7 +252,17 @@ checksum of bytes 0-13 (bytes 14-15), CR.
 | `d` | strokes/min ×10 [6:9], stroke count [9:13] |
 | `e` | instantaneous split `mss` [6:9], average split [9:12] |
 | `f` | `!` at [11] = rowing stopped |
-| `b`, `x`/`y`/`z` | work and stroke length, force curve (passed through, not translated) |
+| `b` | work J×10 [6:11], stroke length cm [11:14] |
+| `x`, `y`, `z` | force curve: 8 samples each at [6:14], catch to finish (24 per stroke); sample = (code − `!`) × 16 N |
+
+The force curve of a stroke arrives as `x`, `y`, `z`, then that stroke's `b` record. The samples are spaced by
+distance, not time: over 2,952 strokes the last sample with force follows stroke length (correlation 0.97; about
+sample 17 at 100 cm, 20 at 120 cm) and not stroke rate, so the curve is force against handle position, about
+5.8 cm per sample. The SmartRow app's CSV export holds exactly these values and nothing finer. The decoding matches a
+SmartRow app CSV export exactly (every force value is a multiple of 16 N), and the curve's integral over the
+stroke length comes within about 10 % of the `b` record's work. The `c` record's instantaneous power is the
+*previous* stroke's (the same lag shows in the app's CSV export), so the coach uses each stroke's own
+work × rate / 60 instead. None of this changes what is forwarded to the apps.
 
 ## Optional: switch the Pi off from an iPhone
 
@@ -296,18 +318,40 @@ buttons, an RGB LED) on the Pi's 40-pin header shows what the bridge is doing, a
 without a phone:
 
 - **Status:** the pulley (waiting, connected, lost), and whether the SmartRow app and the fitness app are
-  connected. The Pi's name and IP address are at the bottom.
-- **Rowing:** watts, strokes per minute, pace and distance, with time and stroke count. It appears by itself
+  connected. The Pi's name and IP address are at the bottom; once the
+  [web page](#optional-a-web-page-for-phones-and-tablets) is set up, its address instead, by name and by IP
+  address, ready to type into a tablet.
+- **Rowing:** watts, strokes per minute, pace and distance, with time and stroke count. With the
+  [interval coach](#optional-interval-coach-experimental) on: watts, pace and stroke rate, and each stroke's
+  force curve (blue) over your steady shape (grey line), as during efforts but without a cue, since steady
+  rowing is the reference. It appears by itself
   when you start rowing and goes back to the status a minute after you stop. Button **B** switches between
   the two.
 - **Switching off:** hold button **A** for 2 seconds (you can let go once it says *Switching off…*).
   Unplug when the screen goes dark: it shows *Safe to unplug* for a moment at the very end, after the SD
   card has been closed, and goes dark as the Pi stops. The Pi's own green light may flash a few more
   times; that is fine. It does the same however the Pi is shut down (the iPhone shortcut, SSH).
-- **Buttons:** small tabs in the screen's corners show what A and B do: a power symbol on A, and on B
-  the screen it switches to.
+  With [uploads](#optional-uploads-to-intervalsicu-and-strava) set up and a session still to go, holding A
+  first finishes the session and uploads it, showing each service as it goes (*Uploading, then off*), then
+  switches off by itself; A again switches off at once, B cancels. A service that can't be reached gets the
+  session the next time the Pi is on.
+- **Done:** with the interval coach on, once you've rowed a session, hold button **Y** for a second when
+  you're done. The session is saved as finished and uploaded straight away (instead of about seven minutes
+  after the last stroke), and the screen shows *Session finished* with each upload as it goes; X closes it.
+  Rowing again after that starts a new session.
+- **Discard:** rowed a warm-up you don't want kept? Hold button **X** for 2 seconds. The Pi deletes that
+  session, so it is neither kept nor uploaded, and starts a new one when you row on. (A quick tap of X still
+  brings back the interval summary.) The pulley's own metres, which the SmartRow app and the rowing screen
+  show, reset when you start a new workout in the SmartRow app. If the session had already been uploaded,
+  the screen says where, so you can delete it there.
+- **Buttons:** small tabs in the screen's corners show what each does: a power symbol on A, on B the screen
+  it switches to, on X once there is an interval to look back at (or *Hold: discard* before then), and a tick on Y
+  (*Hold: done*) once there is a session to finish.
 - **LED:** dim red while the bridge starts and waits for the pulley (or is not running), dim green
   when ready, and off while you row, until the screen goes back to the status.
+- **Interval coach** (experimental, off unless you turn it on): the screen shows each interval's
+  force-curve feedback; button **X** brings back the last interval's summary. See
+  [the interval coach](#optional-interval-coach-experimental).
 
 The screen is a separate service that only reads a status file the bridge writes, so the bridge works the
 same with or without it, and a problem with the screen cannot stop the bridge.
@@ -332,6 +376,305 @@ same with or without it, and a problem with the screen cannot stop the bridge.
 
 To remove it: `sudo bash ~/smartrow-bridge/tools/setup_display.sh --undo`. To see the screens without the
 hardware: `python3 -m smartrow_bridge.display --preview /tmp/screens` (needs Pillow) saves them as images.
+
+## Optional: interval coach (experimental)
+
+<img src="docs/images/screen-interval.png" alt="Interval screen: time, watts, a stroke's force curve over the steady shape and a STRONGER FINISH cue" width="320"> <img src="docs/images/screen-interval-summary.png" alt="Interval summary: average force curve against steady, finish, length and peak" width="320">
+
+The pulley sends a force curve for every stroke (the SmartRow app draws it). The coach watches those curves
+for you while you row: it spots harder efforts by itself and tells you, in one word, when your stroke starts
+to slip during one. It shows on the [screen](#optional-a-status-screen-on-the-pi) and the
+[web page](#optional-a-web-page-for-phones-and-tablets).
+
+**Turning it on:** add `SRB_COACH=1` to `/etc/default/smartrow-bridge`, then
+`sudo systemctl restart smartrow-bridge`. (`install.sh` never overwrites that file, so an existing install
+needs the line added by hand.)
+
+**How it works.** No buttons to press: the coach learns your steady rowing during the first minute or two,
+then treats any stretch clearly harder than that (20 % and 15 W above, for at least 8 strokes, by default)
+as an interval. Everything is judged against *your own* steady rowing in that session, so it works the same
+at 70 W or 250 W.
+
+- **During an interval:** time into the effort and watts (the same size), the **force curve** and one cue in
+  large type. The force curve is drawn as in the SmartRow app: each stroke as it comes, over your **steady
+  shape** (grey line, scaled to the same total force, so it compares shape, not size), with the force missing
+  against steady filled in light grey. A fading finish shows as grey under the back of the curve, a late push
+  as grey under the front, and a shorter stroke as a curve that ends before the steady one. The curve takes
+  the cue's colour. The cue itself is judged over your last 8 strokes, so one odd stroke doesn't set it off.
+  No percentages to read while you row; the numbers are in the summary afterwards.
+  - **LOOKS GOOD** (green): the curve keeps your steady shape and length.
+  - **STRONGER FINISH** (amber): less of the force comes in the back half of the drive than in your steady
+    strokes: the pull fades before the end.
+  - **EARLIER PUSH** (amber): the force builds later in the drive than in your steady strokes (where the
+    curve's centre of force sits, at least 3 % of the drive later).
+  - **LONGER STROKES** (amber): strokes clearly shorter than your steady ones (by 2.6 %, about 3 cm on a
+    115 cm stroke).
+  - **BETTER TRANSITION** (amber): the force stalls just after the peak (falls, holds, falls again) on 3 of
+    your last 8 strokes: a break in the handover after the peak. Let the phases overlap. The screens ring
+    the stall on the curve (white on this stroke; grey where the recent ones stalled when this one didn't).
+    Efforts only: at Easy force the pulley's 16 N steps can't tell a stall from rounding.
+
+  The pulley measures force at fixed distances along the stroke (about every 5.8 cm), so a shorter stroke
+  simply has fewer points. The finish and the push are measured against each stroke's own length, so a
+  shorter stroke shows as LONGER STROKES only, not as a weaker finish too.
+- **After an interval:** for 45 seconds, its duration and watts, its average force curve against your steady
+  shape (the force missing against it filled in light grey),
+  and three tiles: **shape** (STEADY, FADED or LATE, with small force and steady blocks), **length** and
+  **peak** force. Underneath, the finish figure when it faded (*FINISH −15% vs steady*), or where the force
+  peaked after a late push (*LATE PUSH · peak 52%, steady 41%*). The same summary goes into the session record, one line per interval.
+
+On the summary, the grey line is scaled to the same total force as the coloured curve, so the picture compares
+where in the drive the force comes, not how much there is. The difference is real but small on a 2" screen,
+which is why the live screen shows the meter instead of the curve. The strokes just after an interval
+(recovery) and easy paddling never count towards your steady reference, and a new SmartRow app session starts
+over.
+
+**After the session.** When you stop rowing (two minutes without a stroke), the bridge saves the session's
+summary on the Pi, in `/var/lib/smartrow-bridge/sessions/` (the newest 60 are kept). The
+[web page](#optional-a-web-page-for-phones-and-tablets) then shows **Summary ready**: time, distance, average
+and steady watts, a few plain sentences on what the coach saw (which intervals kept their shape, which went
+short and whether those were the longer ones, any fade within an effort, force arriving late, how steady the
+pace between efforts was), and each interval's average curve against your steady shape, with **peak at**:
+where in the drive the force peaks and how much that varies from stroke to stroke, against your steady
+rowing (an idea from Jaap van Ekris of Open Rowing Monitor). The pulley measures the force about every 5.8 cm
+of handle travel (24 points, of which a 115 cm stroke fills about 20), so a point is about 5 % of the drive and
+only a clear change is called out. **Sessions** lists
+earlier ones. **Share** turns the summary into a picture for the share sheet (Messages, email, ...), or saves
+it where the browser has no share sheet.
+
+<img src="docs/images/session-summary.png" alt="Shared session summary: totals, what the coach saw, and each interval's force curve against steady" width="360">
+
+With a [heart rate strap connected to the bridge](#optional-heart-rate-strap) the summary also has heart rate:
+average and maximum, each interval's peak and how far it dropped in the minute after, and the drift of heart
+rate against power through the steady rowing (more beats for the same watts later in the session: fatigue,
+heat or not enough fuel). A session rowed before the coach was on can be added from its SmartRow CSV export,
+heart rate included: `sudo python3 tools/coach_replay.py --save /var/lib/smartrow-bridge/sessions SESSION.csv`.
+
+**Progress.** From the summary, **Progress** shows the saved sessions over the last 4 or 12 weeks, 6 months or
+all of them, with a few sentences on what changed: distance per week, steady and interval power, the finish
+in intervals (efforts of 1:30 or more apart from shorter ones; within 5% of steady is the aim) and, with a
+strap, **watts per heartbeat** at steady pace, which rises as aerobic fitness does. Tap a session for its
+summary. The newest 500 sessions are kept.
+
+**To intervals.icu and Strava.** Optionally, each session is uploaded as an activity of its own, much like
+a Garmin or Hammerhead head unit does it: stroke by stroke (power, stroke rate, distance, pace and, with a
+[strap](#optional-heart-rate-strap), heart rate), each interval the coach found as a lap, and the coach's
+summary as the description. See [uploads](#optional-uploads-to-intervalsicu-and-strava).
+
+**Where it works, and where it doesn't yet.** It was calibrated on one rower's sessions: steady rowing at
+about 21 spm with harder efforts of 1 to 3 minutes at the same rate. In that pattern it found every effort,
+none in steady-only sessions, and cued only the efforts that went short. Expect it to be less reliable with:
+
+- **intervals with easy paddling between them** (8 x 500 m with 2-minute paddles, say): the "steady"
+  reference becomes the paddling stroke, whose curve is shaped differently, so the finish cue may speak up
+  on good strokes;
+- **rate changes** (18 → 24 → 28 spm): higher rates naturally give shorter, more front-loaded curves;
+- **pieces longer than 5 minutes**: by default a rise in pace that long becomes the new steady pace instead
+  of an interval (`SRB_COACH_MAX_MIN` raises the limit);
+- **small steps** (under 20 % above steady; `SRB_COACH_START_PCT` lowers the threshold).
+
+The leg-drive cue is set well clear of anything in those sessions, as none had a weak leg drive; it has not
+yet been seen on one.
+
+**Intensity labels.** Each stretch of rowing is labelled the way Peloton does: **Recovery**, **Easy**,
+**Moderate**, **Challenging** or **Max**. Your FTP is the middle of Challenging, as on Peloton's targets
+(FTP 185 W: Easy about 100 W, Moderate about 145 W), and the boundaries sit half-way between Peloton's
+targets:
+
+| Label | % of FTP | FTP 185 W |
+|---|---|---|
+| Recovery | under 44 % | under 81 W |
+| Easy | 44-67 % | 81-124 W |
+| Moderate | 67-89 % | 124-165 W |
+| Challenging | 89-113 % | 165-209 W |
+| Max | 113 % and up | 209 W and up |
+
+Without an FTP the same ratios are taken from your Easy power (Easy is 55 % of FTP).
+
+**Coaching in every interval but Recovery.** Efforts (Moderate and up) are coached as above, against your
+Easy shape (the Easy rowing just before). Easy rowing is coached too, against your **fresh Easy stroke**:
+your Easy strokes from 2 to 8 minutes into a row (after the warm-up, whose strokes are shorter, and before
+you tire; efforts, Recovery and the strokes just after an effort left out). Each session saves it, and the
+next one (within a month) is judged against it from the start, shown in grey, so a finish that is weak
+from the first stroke or fades as you tire shows up. The first 2 minutes are the warm-up (*warming up*, no
+cues). With nothing saved, today's is learned instead. Stroke length is calibrated at 8 minutes: today's
+becomes the reference, unless it is more than 3 cm shorter than last time's; then last time's stays, so
+LONGER STROKES speaks up, and the summary says so. Recovery gets the numbers only. The
+summary adds how the last minutes of Easy rowing compared with the fresh ones. (Efforts are not judged
+against the fresh stroke: your Easy stroke changes over a row, by up to 15 % in the finish, and against
+the early stroke a late effort that held the shape you were rowing at the time read as going short.)
+
+**BETTER TRANSITION.** A fourth live cue, for a stall just after the peak: the force stops falling for a
+sample or two, then drops again. In efforts only, as the pulley's 16 N force steps are too coarse at Easy
+force (checked against each stroke's own smooth fit). It shows when 3 of the last 8 strokes have one, and the summary counts it
+per effort against the Easy rowing before (flagged at 25 % of strokes and 15 points over Easy). Coaching
+sources put dips like this at a handover, legs to back or back to arms; keeping the arms relaxed until the
+swing is nearly done tells which, and a video shows it. Spotted by Jaap van Ekris on a chart of one
+effort's strokes: in five sessions it sat at about 70 cm every day, on 3-6 % of Easy strokes and up to
+46 % of an effort's.
+
+**Consistency.** Each effort's summary also says how even its strokes were: how much each stroke's
+curve differs from the one before, and the spread of stroke length, against the Easy rowing just before.
+An effort is marked *uneven* when its strokes vary 1.4 times as much or more, or its length spreads
+twice as much (at least ±6 cm), and strokes cut more than 15 % short are counted. After Jaap van
+Ekris (Open Rowing Monitor), for whom smoothness and consistency matter most.
+
+**With your FTP.** On its own the coach judges efforts against your recent Easy rowing, and has to treat
+anything longer than 5 minutes as a new Easy pace (otherwise a warm-up ramping into the main set could pass
+for one long effort), which cuts off longer efforts. With your rowing FTP, an effort is anything Moderate or
+harder (67 % of FTP and up), with **no time limit**: it lasts until you drop back to Recovery or Easy. On a 45-minute
+class (FTP 185 W: Easy rowing 98-109 W, efforts 130-150 W, the last one 6 minutes) this found all eight
+efforts, where without an FTP the six-minute one was taken for a new Easy pace. The summary then lists the
+intensity ranges in watts and each effort's label (no FTP: rowing doesn't really have one), and the uploaded activity marks the efforts as its work intervals. The FTP comes from intervals.icu by itself (your rowing
+sport settings), read once each time the bridge starts (so after changing it there, restart the Pi or
+`sudo systemctl restart smartrow-bridge`), or set `SRB_COACH_FTP`. To check what intervals.icu has:
+`sudo /opt/smartrow-bridge/venv/bin/python -m smartrow_bridge.intervals --test`.
+
+**Settings** (in `/etc/default/smartrow-bridge`, all optional):
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `SRB_COACH_START_PCT` | `20` | An interval is at least this % above your steady power (and 15 W) |
+| `SRB_COACH_MAX_MIN` | `5` | Longest effort, in minutes, to count as an interval; longer is a new Easy pace (only without an FTP: with one there is no limit) |
+| `SRB_COACH_FTP` | empty: from intervals.icu | Your rowing FTP in watts (the middle of Challenging). With it, intensities are labelled by % of FTP, and an effort is Moderate or harder (67 % and up) with no time limit. Empty: read from intervals.icu (Settings, Rowing, indoor FTP if set) each time the bridge starts, once [uploads](#optional-uploads-to-intervalsicu-and-strava) are set up; `off`: none |
+| `SRB_COACH_SENSITIVITY` | `normal` | How readily the cues speak up: `low`, `normal` or `high` |
+| `SRB_SESSION_DIR` | `/var/lib/smartrow-bridge/sessions` | Where session summaries are saved; `off` disables |
+| `SRB_HEART_RATE`, `SRB_HEART_RATE_TO_FITNESS` | `off`, `0` | [Heart rate strap](#optional-heart-rate-strap) read by the bridge, and whether it also goes to the fitness app (off: Peloton ignored the rowing data with it) |
+| `SRB_INTERVALS_KEY_FILE`, `SRB_INTERVALS_UPLOAD` | `/etc/smartrow-bridge/intervals.key`, `activity` | intervals.icu API key (`tools/setup_intervals.sh`); upload the session as an `activity`, a calendar `note`, or `off` |
+| `SRB_STRAVA_FILE`, `SRB_STRAVA_SPORT_TYPE` | `/etc/smartrow-bridge/strava.json`, `Rowing` | Strava authorization (`tools/setup_strava.sh`); activity type `Rowing` or `VirtualRow` |
+
+**Try it on your own rowing first.** Export a session from the SmartRow app as CSV and run it through the
+coach on any computer with Python 3.10 or later (nothing to install):
+
+```bash
+python3 tools/coach_replay.py 2026-10-24T100219_9392m.csv
+python3 tools/coach_replay.py --start-pct 12 --sensitivity high *.csv    # try settings
+```
+
+It prints the intervals it finds, each interval's summary line, and how much of each interval each cue was
+showing, so you can see what it would have told you, and pick settings, before relying on it.
+
+## Optional: uploads to intervals.icu and Strava
+
+With the [interval coach](#optional-interval-coach-experimental) on, the bridge can upload each session
+itself, so the SmartRow app's own Strava link is no longer needed:
+
+- **intervals.icu:** the session as an activity, named like "Morning Row", with "Rowed using SmartRow" as its
+  description (so the calendar reads "Morning Row ~ Rowed using SmartRow"). Its intervals are the coach's efforts only (Moderate and harder), set through the API after
+  the upload, so the Easy and Recovery rowing between them doesn't clutter the activity; leave intervals.icu's
+  *Use laps for intervals* (Sport Settings, Rowing) off, or a later re-analysis puts every lap back. The
+  files (FIT here, TCX to Strava, and so on to TrainerRoad) have a lap for each effort and one for the rowing
+  between, marked as rest, so other tools see the work intervals too. To mark the efforts on
+  an activity already there:
+  `sudo /opt/smartrow-bridge/venv/bin/python -m smartrow_bridge.intervals --mark-efforts SESSION i123456789`
+  (the session as listed on the web page's Sessions, the activity id from its intervals.icu address). Each stroke also carries its force curve (with drive length,
+  average and peak force and where the peak lands) as FIT developer fields, laid out as Open Rowing Monitor
+  writes them, following the rowing industry's draft for force curves in FIT files; intervals.icu doesn't
+  show force curves yet, but the data is there for when it, or another tool, does. intervals.icu treats activities that start within a minute
+  of each other, with distance and time within 1%, as the same one, and an uploaded copy takes the place of
+  the one from Strava (as Garmin and Hammerhead uploads do), so a session shows once, linked to Strava.
+  Activities that come from Strava can't be changed through the intervals.icu API (Strava's terms), which
+  is why the bridge uploads its own copy. `SRB_INTERVALS_UPLOAD=note` puts the summary on that day of your
+  calendar as a note instead.
+- **Strava:** the same activity, type Rowing (indoor), with the coach's full report as its description. This
+  needs your own Strava API application, which Strava offers to every account with a subscription; it
+  stays in "single-player mode" (only your account can use it).
+  Strava gets it as a TCX file naming no device, like the SmartRow app's own uploads. Strava doesn't
+  show the name of a personal API application on the activity, so the description starts with
+  "Rowed using SmartRow" instead. When authorizing, leave every box ticked: setting the type and the
+  description after the upload needs "View data about your private activities" as well as "Upload".
+  To rewrite activities already uploaded (after a coach update):
+  `sudo /opt/smartrow-bridge/venv/bin/python -m smartrow_bridge.uploads --update SESSION`.
+
+```bash
+sudo bash ~/smartrow-bridge/tools/setup_intervals.sh     # your intervals.icu API key (Settings, Developer settings)
+sudo bash ~/smartrow-bridge/tools/setup_strava.sh        # your Strava app's Client ID and Secret, then authorize once
+```
+
+The key and the Strava authorization are kept in `/etc/smartrow-bridge/`, readable by root only; Strava's
+access is renewed by the Pi itself. A session is uploaded about seven minutes after its last stroke (rowing
+again within five minutes continues the same session, so it waits until that can't happen), or straight away
+when you hold **Y** on the Pi's screen (*Done*); an intervals.icu note goes two minutes after. Uploads that fail (Pi offline, a service down) are retried every ten minutes,
+for up to a week; one session that fails doesn't hold up the others, and one a service turns down for good
+(a file it can't read) is marked "failed" in `--status` and only tried again with `--send`. Switching the
+Pi off with the screen's button or `sudo poweroff` saves the session there and then; if the power is
+simply cut, the session is still uploaded, minus at most its last five minutes. Each session is uploaded
+once; what went where is kept in its file:
+
+```bash
+cd /opt/smartrow-bridge
+sudo venv/bin/python -m smartrow_bridge.uploads --status            # recent sessions and where each went
+sudo venv/bin/python -m smartrow_bridge.uploads --send ID            # send a saved session now
+sudo venv/bin/python -m smartrow_bridge.uploads --fit ID row.fit     # write its FIT file (intervals.icu's)
+sudo venv/bin/python -m smartrow_bridge.uploads --tcx ID row.tcx     # write its TCX file (Strava's)
+```
+
+Only sessions rowed with the bridge after a service was set up are sent by themselves. Sessions added from
+CSV exports are never sent by themselves (they are usually there already); `--send` sends one on purpose.
+
+**Switching over from the SmartRow app's Strava link**, one step at a time:
+
+1. Set up intervals.icu only, row a session, and check on intervals.icu that it shows once (the bridge's
+   copy, with the coach's summary), not twice.
+2. Then set up Strava and, before the next session, switch off the SmartRow app's Strava link; otherwise
+   Strava gets the session twice.
+
+`--undo` on either setup script stops that service and deletes its credentials.
+
+## Optional: heart rate strap
+
+The bridge can read a Bluetooth heart rate strap itself, on the same radio as the pulley: for the coach's
+session summaries and progress (above), on the screen and web page, and passed on to the fitness app with
+the rowing data. Straps that take several connections at once can stay paired with a watch or app as well
+(the COROS heart rate monitor takes three).
+
+In `/etc/default/smartrow-bridge`, set `SRB_HEART_RATE` to `auto` (the first strap found advertising heart
+rate), part of the strap's name (`COROS`), or its MAC address (best where other people's straps are in range),
+then `sudo systemctl restart smartrow-bridge`. The strap is looked for once the pulley is connected, in short
+scans that leave the radio to the pulley in between; put it on to wake it. The heart rate stays out of
+the rowing data sent to the fitness app: with it in, Peloton showed only the heart rate and ignored pace,
+distance and stroke rate, so pair the strap with Peloton directly (the COROS takes three connections).
+`SRB_HEART_RATE_TO_FITNESS=1` puts it in, for an app that wants it there. `tools/health_check.sh`
+has a *Heart rate strap* section.
+
+## Optional: a web page for phones and tablets
+
+The screen's information, larger, on any phone or tablet on the same Wi-Fi as the Pi: live watts, pace and
+strokes per minute; with the coach on, the finish meter, the cue, the live force curve, each interval's
+summary, a list of this session's intervals, and afterwards the session summary and progress over weeks.
+Put it next to the SmartRow app in split screen on an Android tablet, or on a phone on the rower.
+
+1. Update the bridge, then set the page up:
+
+   ```bash
+   cd ~/smartrow-bridge && git pull && sudo bash install.sh
+   sudo bash ~/smartrow-bridge/tools/setup_web.sh
+   ```
+
+2. Open the address it prints, `http://<pi name>.local:8080`, or the IP address version if that doesn't
+   load (Android does not always find `.local` names). The status screen shows both.
+
+**As an app, with the screen kept on (Chrome on Android).** Over plain `http://` on a home network, Chrome
+won't install the page as an app or let it keep the screen awake. To allow both on your own tablet, open
+`chrome://flags/#unsafely-treat-insecure-origin-as-secure`, type the page's addresses into the box,
+comma-separated (for example `http://pirower.local:8080,http://192.168.1.23:8080`, using the address you
+actually open), set it to **Enabled** and tap **Relaunch**. The page then shows *screen stays on* at the top
+while it holds the screen awake, and Chrome's menu can add it to the home screen. Chrome updates can reset
+flags now and then.
+
+**Full screen.** Chrome makes a true installed app (no address bar) only for https addresses its servers can
+reach, which a Pi on a home network is not, so the home-screen icon still opens with the address bar. Tap
+**Full screen** at the top of the page to hide it (and the status bar), in split screen too; swipe from the
+top edge or tap *Exit full screen* to leave. Chrome doesn't keep it between visits, so it's one tap each
+time.
+
+**Float** (shown where the browser supports it) puts a compact version in a floating Picture-in-Picture window,
+which stays on top of other apps, Peloton included. Whether it keeps updating while another app is in front
+depends on the browser; try it before relying on it.
+
+Like the screen, the page is a separate service that only reads the bridge's status file. It is read-only,
+serves only on your local network and needs nothing beyond the Python already installed. To remove it:
+`sudo bash ~/smartrow-bridge/tools/setup_web.sh --undo`.
 
 ## Optional: faster start-up
 
@@ -399,7 +742,10 @@ phone, with far wider device support, use QZ.
 The findings from this project (record checksum, elapsed-time format, stop marker) and a draft "virtual
 SmartRow" profile were offered back to QZ; the patches are in `contrib/qz-virtual-smartrow/`.
 
-Built on [bleak](https://github.com/hbldh/bleak) and [Bumble](https://github.com/google/bumble).
+Built on [bleak](https://github.com/hbldh/bleak) and [Bumble](https://github.com/google/bumble); activity
+files are written with [fit-tool](https://pypi.org/project/fit-tool/) (Stages Cycling). The COROS strap's slow
+accept when it already serves other receivers was found in
+[Grupetto](https://github.com/madooroy/grupetto).
 
 ## Licence
 

@@ -195,6 +195,45 @@ if [[ -f /etc/systemd/system/smartrow-display.service ]]; then
     fi
 fi
 
+if [[ -f /etc/systemd/system/smartrow-web.service ]]; then
+    section "Web page"
+    WEB_PORT=$(sed -n 's/^SRB_WEB_PORT=//p' "$ENV_FILE" 2>/dev/null | tail -n 1)
+    WEB_PORT=${WEB_PORT:-8080}
+    if [[ $(systemctl is-active smartrow-web 2>/dev/null) == active ]]; then
+        ok "web page service running (port $WEB_PORT)"
+    else
+        bad "web page service not running - see: journalctl -u smartrow-web -b"
+    fi
+    if command -v curl >/dev/null && curl -fsS -m 3 "http://127.0.0.1:$WEB_PORT/status.json" >/dev/null 2>&1; then
+        ok "page answers: http://$(hostname).local:$WEB_PORT"
+    else
+        warn "no answer on port $WEB_PORT"
+    fi
+fi
+if grep -qE '^SRB_COACH=(1|true|yes)' "$ENV_FILE" 2>/dev/null; then
+    info "interval coach: on"
+fi
+HR_SETTING=$(sed -n 's/^SRB_HEART_RATE=//p' "$ENV_FILE" 2>/dev/null | tail -n 1)
+if [[ -n $HR_SETTING && $HR_SETTING != off ]]; then
+    section "Heart rate strap ($HR_SETTING)"
+    hr_line=$(journalctl -u smartrow-bridge -b --no-pager 2>/dev/null | grep -E 'Heart rate strap (connected|disconnected)' | tail -n 1)
+    if [[ $hr_line == *connected:* ]]; then
+        ok "${hr_line#*: }"
+    elif [[ -n $hr_line ]]; then
+        warn "strap disconnected - put it on (a dry strap may not be detected)"
+    else
+        warn "strap not connected yet - it is looked for once the pulley is connected; put the strap on"
+    fi
+fi
+if [[ -f /etc/smartrow-bridge/intervals.key || -f /etc/smartrow-bridge/strava.json ]]; then
+    section "Uploads"
+    [[ -f /etc/smartrow-bridge/intervals.key ]] && ok "intervals.icu: API key saved (root only), mode: $(sed -n 's/^SRB_INTERVALS_UPLOAD=//p' "$ENV_FILE" 2>/dev/null | tail -n 1 | grep . || echo activity)"
+    [[ -f /etc/smartrow-bridge/strava.json ]] && ok "Strava: authorized (root only)"
+    last=$(grep -E 'Upload: |not sent:' /var/lib/smartrow-bridge/sessions.log 2>/dev/null | tail -n 3)
+    [[ -n $last ]] && while IFS= read -r line; do info "${line#* * }"; done <<<"$last"
+    info "per session: cd $PREFIX && sudo venv/bin/python -m smartrow_bridge.uploads --status"
+fi
+
 section "SD card and system"
 root_dev=$(findmnt -no SOURCE /)
 if findmnt -no OPTIONS / | grep -qE '(^|,)rw(,|$)'; then
