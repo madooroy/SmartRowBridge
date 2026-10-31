@@ -1147,9 +1147,9 @@ function sessionCard(s, rows) {
   y += heights[2] + 16;
   if (withHr) { chart([P, y, W, heights[3]], hrValues, hrBands.length ? C.fg : C.red, "HEART RATE (bpm)", { showX: true, bands: hrBands }); y += heights[3] + 16; }
   let x = P;  // the note, in pieces (the colour words in their colours)
-  for (const [t, colour, bold] of [[`${SMOOTH_S}-second averages \u00b7 effort names: `, C.dim, false],
-                                   ["green", C.green, true], [" kept their shape, ", C.dim, false],
-                                   ["amber", C.amber, true], [" flagged", C.dim, false]]) {
+  for (const [t, colour, bold] of [[`${SMOOTH_S}-second averages \u00b7 I1, I2\u2026 `, C.dim, false],
+                                   ["green", C.green, true], [" clean strokes, ", C.dim, false],
+                                   ["amber", C.amber, true], [" see its effort card", C.dim, false]]) {
     text(t, x, y + 26, 22, colour, bold); x += g.measureText(t).width;
   }
   text("SmartRow pulley + PiRowerCoach", CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
