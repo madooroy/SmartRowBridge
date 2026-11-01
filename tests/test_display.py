@@ -238,6 +238,21 @@ class DoneAndOffTest(unittest.TestCase):
         self.step(c, done, 6 + app.FINISH_SHOW_S + 1)
         self.assertIsNone(c._finish)
 
+    def test_finishing_does_not_wait_on_an_upload_already_in_flight(self):
+        c = app.Controller()
+        self.step(c, session_status(0), 0)
+        self.step(c, session_status(1), 1, Y=True)
+        frame = self.step(c, session_status(2), 2.0, Y=True)
+        token = frame.request["token"]
+        # The bridge has finished the session, but the uploader is mid-send and hasn't echoed the token.
+        st = session_status(4, strokes=0, finish={"token": token, "session": "2026-10-28T0702"},
+                            uploads=ups({"Strava": "waiting"}, waiting=1, sending="Strava", ack=None))
+        self.step(c, st, 4)
+        self.assertIsNotNone(c._finish)
+        st["time"] = NOW + 3 + app.ACK_WAIT_S
+        self.step(c, st, 3 + app.ACK_WAIT_S)
+        self.assertIsNotNone(c._finish)  # still showing: the uploads, not "Finishing…" (drawn without error)
+
     def test_x_closes_the_finished_screen(self):
         c = app.Controller()
         self.step(c, session_status(0), 0)

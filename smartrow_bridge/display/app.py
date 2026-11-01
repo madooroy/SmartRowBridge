@@ -194,7 +194,9 @@ class Controller:
         if closed or now - fin["at"] > FINISH_MAX_S or (coach.get("live") and now - fin["at"] > 5):
             self._finish = None
             return None
-        acked = _acked(status, fin["token"])
+        # The uploader only echoes the token once its current send is through, which can take a
+        # while mid-upload: show what is known rather than "Finishing…" for that long.
+        acked = _acked(status, fin["token"]) or now - fin["at"] > ACK_WAIT_S
         session = ((status or {}).get("finish") or {}).get("session") if acked else None
         if acked and fin["settled_at"] is None:
             states = ((_uploads(status).get("latest") or {}).get("dests") or {}).values()

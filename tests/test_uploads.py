@@ -611,3 +611,19 @@ class FitFileTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BadSessionFileTest(unittest.TestCase):
+    def test_a_malformed_session_file_does_not_block_the_others(self):
+        import tempfile, json, time
+        from pathlib import Path
+        from smartrow_bridge import uploads
+        with tempfile.TemporaryDirectory() as d:
+            now = time.time()
+            good = time.strftime("%Y-%m-%dT%H%M", time.localtime(now - 600))
+            (Path(d) / f"{good}.json").write_text(json.dumps({"id": good, "started_at": now - 600}))
+            bad = time.strftime("%Y-%m-%dT%H%M", time.localtime(now - 300))
+            (Path(d) / f"{bad}.json").write_text("[]")  # a list, not a record
+            (Path(d) / f"{bad}.strokes.json").write_text("[]")
+            ids = [r["id"] for r in uploads.recent_sessions(d, now)]
+        self.assertEqual(ids, [good])

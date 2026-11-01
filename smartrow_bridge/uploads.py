@@ -194,8 +194,10 @@ def recent_sessions(directory: str, now: float, days: float = SEND_WITHIN_DAYS +
     for path in sorted(Path(directory).glob("*.json")):
         if sessions.ID_PATTERN.match(path.stem) and path.stem >= oldest:
             record = sessions.read_session(directory, path.stem)
-            if record is not None:
+            if isinstance(record, dict) and record.get("id") and record.get("started_at"):
                 out.append(record)
+            elif record is not None:
+                log.warning("Session file %s is not a session record; skipped", path.name)
     return out
 
 
