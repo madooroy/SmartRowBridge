@@ -1181,24 +1181,31 @@ function easyCard(s, rows) {
 // The last picture: what the words and numbers on the others mean, for someone who doesn't row.
 // The effort levels come from this session's bands (in watts), set from one number: the middle of
 // the Challenging zone (the FTP intervals.icu holds; "FTP" alone is loosely defined in rowing).
+// First person for your own sessions; a session with a "rower" (someone else's rows, replayed) is
+// described neutrally.
 function glossary(s) {
+  const my = s.rower ? "the rower\u2019s" : "my";
   const band = (name) => (s.power_bands || []).find((b) => b[0] === name);
-  const w = (name) => { const b = band(name); return b ? `${b[1]}\u2013${b[2]} W` : null; };
-  const levels = [["Easy", w("Easy")], ["Moderate", w("Moderate")], ["Challenging", w("Challenging")]]
-    .filter(([, v]) => v).map(([n, v]) => `${n} ${v}`).join(", ");
+  const w = (name) => {
+    const b = band(name);
+    if (!b) return null;
+    return b[1] == null ? `under ${b[2]}\u00a0W` : b[2] == null ? `over ${b[1]}\u00a0W` : `${b[1]}\u2013${b[2]}\u00a0W`;
+  };
+  const levels = ["Recovery", "Easy", "Moderate", "Challenging", "Max"]
+    .map((n) => [n, w(n)]).filter(([, v]) => v).map(([n, v]) => `${n} ${v}`).join(", ");
   return [
     ["The drive", C.fg, "The pull: from the catch (knees up, arms out) to the finish (legs flat, handle at the body). " +
       "Measured in cm of handle travel."],
     ["Force curve", C.blue, "How hard the handle is pulled at each point of the drive, in newtons (100\u00a0N is about " +
       "10\u00a0kg). One line per stroke; the dashed line is the average Easy stroke it is compared with."],
-    ["Easy \u00b7 Moderate \u00b7 Challenging", C.fg, (s.ftp
-      ? `Effort levels, all set from one number: ${s.ftp} W, the middle of my Challenging zone. ${levels}.`
-      : "Effort levels, set from my Easy pace.") + " I1, I2: each harder effort, found by the coach."],
-    ["Finish", C.fg, "Share of the force in the second half of the drive, against my usual at that level. \u22125% " +
-      "means 5% less there; within 5% is normal. A fading finish is the classic sign of tiring."],
+    ["Effort levels", C.fg, (s.ftp
+      ? `All set from one number: ${s.ftp}\u00a0W, the middle of ${my} Challenging zone. ${levels}.`
+      : `Set from ${my} Easy pace.`) + " I1, I2: each harder effort, found by the coach."],
+    ["Finish", C.fg, `Share of the force in the second half of the drive, against ${my} usual at that level. ` +
+      "\u22125% means 5% less there; within 5% is normal. A fading finish is the classic sign of tiring."],
     ["Length", C.fg, "How far the handle travels each stroke, against the Easy rowing just before."],
     ["Consistency", C.fg, "How much the curve changes from stroke to stroke, as a multiple of Easy rowing: " +
-      "1.0\u00d7 is as steady as Easy; from 1.4\u00d7 it is uneven."],
+      "1.0\u00d7 is as steady as Easy; from 1.4\u00d7 the coach calls it uneven."],
     ["Stall after the peak", C.amber, "The force stops falling for a moment just after the peak, then falls again: " +
       "a hitch at a handover, legs to back or back to arms. Shaded on the curve; flagged from 25% of strokes, " +
       "small from 10%."],

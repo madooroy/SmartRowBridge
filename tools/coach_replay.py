@@ -75,7 +75,7 @@ def export_totals(path: Path) -> dict:
 
 
 def replay(path: Path, settings: CoachSettings, save_dir: Path | None = None, ftp: float | None = None,
-           reference: dict | None = None) -> dict:
+           reference: dict | None = None, rower: str | None = None) -> dict:
     """Run one export through a fresh coach (reference: the last session's fresh Easy stroke).
     Returns its intervals, live-cue counts and today's fresh Easy stroke."""
     coach = IntervalCoach(settings, ftp=ftp, reference=(lambda: reference) if reference else None)
@@ -89,7 +89,7 @@ def replay(path: Path, settings: CoachSettings, save_dir: Path | None = None, ft
         if last_time is not None and stroke.time - last_time > NEW_SESSION_S and coach.strokes_total:
             coach.state(last_time + GAP_S + 1)  # the Pi would have closed an open effort during the pause
             if save_dir is not None:
-                saved.append(_save_part(coach, totals, save_dir, parts, last_time))
+                saved.append(_save_part(coach, totals, save_dir, parts, last_time, rower))
             parts += 1
         last_time = stroke.time
         coach.add(stroke)
@@ -101,14 +101,15 @@ def replay(path: Path, settings: CoachSettings, save_dir: Path | None = None, ft
             cues.setdefault(0, Counter())[st.get("cue")] += 1
     coach.state(float("inf"))  # an effort still running at the end of the file
     if save_dir is not None:
-        saved.append(_save_part(coach, totals, save_dir, parts, None))
+        saved.append(_save_part(coach, totals, save_dir, parts, None, rower))
     summary = coach.session_summary()
     return {"intervals": coach.intervals, "cues": cues, "steady_power_w": coach.steady_power(),
             "strokes": coach.last_count, "saved": saved[-1] if saved else None, "parts": parts + 1,
             "fresh_easy": summary.get("fresh_easy"), "reference": reference, "length_note": coach.length_note}
 
 
-def _save_part(coach: IntervalCoach, totals: dict, save_dir: Path, part: int, ended: float | None) -> Path:
+def _save_part(coach: IntervalCoach, totals: dict, save_dir: Path, part: int, ended: float | None,
+               rower: str | None = None) -> Path:
     """Save what the coach has as a session record: the whole export, or one part of it (a pause
     longer than NEW_SESSION_S splits an export, as it would a live session)."""
     first = coach.first_time or 0.0
@@ -119,6 +120,8 @@ def _save_part(coach: IntervalCoach, totals: dict, save_dir: Path, part: int, en
     else:  # the export's total is the whole file's: this part's is its last stroke's metres
         distance = int(next((d for _, d, *_ in reversed(coach.stroke_log) if d), 0) or 0)
     record = sessions.build_record(coach, started_at, started_at + elapsed, True, distance, elapsed, source="replay")
+    if rower:  # someone else's rows: the pictures describe them neutrally ("the rower's", not "my")
+        record["rower"] = rower
     return sessions.save(save_dir, record, sessions.stroke_rows(coach))
 
 
@@ -170,6 +173,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="how readily the technique cues speak up (default normal)")
     p.add_argument("--ftp", type=float, help="your rowing FTP in watts (as SRB_COACH_FTP): efforts must reach "
                    "67%% of it (Moderate), with no time limit")
+    p.add_argument("--rower", metavar="NAME",
+                   help="someone else's rows: saved with their name, and the pictures speak of \"the rower\", not \"my\"")
     p.add_argument("--save", type=Path, metavar="DIR",
                    help="also write each session's summary file into DIR, as the bridge does")
     args = p.parse_args(argv)
@@ -188,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             t0 = started(path)
             ref = previous[1] if previous and t0 - previous[0] <= FRESH_MAX_AGE_DAYS * 86400 else None
-            result = replay(path, settings, args.save, args.ftp, ref)
+            result = replay(path, settings, args.save, args.ftp, ref, args.rower)
             if result.get("fresh_easy"):
                 previous = (t0, result["fresh_easy"])
             print(describe(path, result))
