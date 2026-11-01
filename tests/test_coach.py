@@ -481,6 +481,27 @@ class LocalReferenceTest(unittest.TestCase):
         r.coach = IntervalCoach(ftp=185, reference=lambda: saved_stroke())
         r.row(40, 105, curve=FADED)  # still in the warm-up: no Easy strokes after it yet
         self.assertEqual(r.coach.effort_ref()["back_share"], saved_stroke()["back_share"])
+        r.row(30, 150, curve=FADED)  # an effort before there are SHAPE_MIN Easy strokes after the warm-up
+        r.row(20, 105, curve=FADED)
+        self.assertEqual(r.coach.intervals[-1].as_dict()["reference"], "fresh")  # so it mustn't teach the finish
+
+    def test_without_a_saved_stroke_an_early_effort_is_marked_so(self):
+        r = Rower(ftp=185)
+        r.row(40, 105)
+        r.row(30, 150)
+        r.row(20, 105)
+        self.assertEqual(r.coach.intervals[-1].as_dict()["reference"], "steady")
+
+    def test_zero_stroke_rate_does_not_lose_the_effort(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        for _ in range(30):  # a pulley that reports no rate: power alone still finds the effort
+            r.t += PERIOD
+            r.count += 1
+            r.coach.add(StrokeCurve(time=r.t, force_n=list(FULL), stroke_rate_spm=0, stroke_length_cm=119,
+                                    work_j=150 * 60 / RATE, stroke_count=r.count, power_w=150))
+        r.row(20, 105)
+        self.assertEqual(len(r.coach.intervals), 1)
 
 
 class ConsistencyTest(unittest.TestCase):

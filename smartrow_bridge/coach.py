@@ -427,6 +427,7 @@ class IntervalSummary:
     stall_pct: float = 0.0  # strokes with a stall just after the peak (stall_at), %
     stall_cm: float = 0.0  # ... where, cm of handle travel
     steady_stall_pct: float = 0.0  # ... in the Easy rowing before
+    reference: str = "local"  # what it was judged against: local (the Easy rowing just before), fresh, steady
 
     @property
     def transition(self) -> bool:
@@ -522,7 +523,7 @@ class IntervalSummary:
             "stall_cm": round(self.stall_cm),
             "steady_stall_pct": round(self.steady_stall_pct),
             "transition": self.transition,
-            "reference": "local",  # judged against the Easy rowing just before (sessions.learned_finish)
+            "reference": self.reference,  # only "local" ones teach sessions.learned_finish
             "fade_pct": round((self.last_third_back_share / self.first_third_back_share - 1) * 100)
             if self.first_third_back_share else 0,
             "curve": [round(v) for v in self.curve],
@@ -667,13 +668,13 @@ class IntervalCoach:
         the warm-up), so a change in your Easy stroke over the row isn't blamed on the efforts. Before
         there are SHAPE_MIN of those: your fresh Easy stroke (last session's), else the Easy strokes so far."""
         if len(self.shape) >= SHAPE_MIN:
-            ref = self.local_easy()
+            ref, source = self.local_easy(), "local"
         elif self.baseline:
-            return self.baseline
+            return {**self.baseline, "source": "fresh"}
         else:
-            ref = list(self.steady)
+            ref, source = list(self.steady), "steady"
         curve = mean_curve(ref)
-        return {"curve": curve, "back_share": back_share(curve),
+        return {"curve": curve, "back_share": back_share(curve), "source": source,
                 "length_cm": statistics.fmean(s.stroke_length_cm for s in ref) if ref else 0.0}
 
     def expected(self, intensity: str) -> float:
@@ -869,7 +870,8 @@ class IntervalCoach:
 
     def _summarise(self, strokes: list[StrokeCurve], now: float) -> IntervalSummary:
         n = len(strokes)
-        period = 60.0 / statistics.fmean(s.stroke_rate_spm for s in strokes)
+        rate = statistics.fmean(s.stroke_rate_spm for s in strokes)
+        period = 60.0 / rate if rate else 0.0
         third = max(1, n // 3)
         peak_at, peak_spread = peak_stats(strokes)
         local = self.local_easy() if len(self.shape) >= SHAPE_MIN else self.shape_strokes()
@@ -894,6 +896,7 @@ class IntervalCoach:
             steady_length_cm=ref["length_cm"],
             curve=mean_curve(strokes),
             steady_curve=list(ref["curve"]),
+            reference=ref.get("source", "local"),
             first_third_back_share=back_share(mean_curve(strokes[:third])),
             last_third_back_share=back_share(mean_curve(strokes[-third:])),
             ended_at=now,
