@@ -1179,26 +1179,39 @@ function easyCard(s, rows) {
 }
 
 // The last picture: what the words and numbers on the others mean, for someone who doesn't row.
-const GLOSSARY = [
-  ["The drive", C.fg, "The pull: from the catch (knees up, arms out) to the finish (legs flat, handle at the body). " +
-    "Measured in cm of handle travel."],
-  ["Force curve", C.blue, "How hard the handle is pulled at each point of the drive, in newtons (100 N is " +
-    "about 10 kg). One line per stroke; the dashed line is the Easy rowing it is compared with."],
-  ["Easy · Moderate · Challenging", C.fg, "Effort levels from my FTP (the power I can hold for about an hour): " +
-    "Easy 44\u201367%, Moderate 67\u201389%, Challenging 89\u2013113%. I1, I2: each harder effort, found by the coach."],
-  ["Finish", C.fg, "Share of the force in the second half of the drive, against my usual at that level. \u22125% " +
-    "means 5% less there; within 5% is normal. A fading finish is the classic sign of tiring."],
-  ["Length", C.fg, "How far the handle travels each stroke, against the Easy rowing just before."],
-  ["Consistency", C.fg, "How much the curve changes from stroke to stroke, as a multiple of Easy rowing: " +
-    "1.0\u00d7 is as steady as Easy; from 1.4\u00d7 it is uneven."],
-  ["Stall after the peak", C.amber, "The force stops falling for a moment just after the peak, then falls again: " +
-    "a hitch where the legs hand over to the back. Shaded on the curve; flagged from 25% of strokes, " +
-    "a small stall from 10%."],
-  ["Late push", C.fg, "The peak force comes later in the drive than in Easy rowing: the legs push late."],
-  ["Colours", C.green, "Green: as it should be. Amber: worth a look. Red: clearly off."],
-];
+// The effort levels come from this session's bands (in watts), set from one number: the middle of
+// the Challenging zone (the FTP intervals.icu holds; "FTP" alone is loosely defined in rowing).
+function glossary(s) {
+  const band = (name) => (s.power_bands || []).find((b) => b[0] === name);
+  const w = (name) => { const b = band(name); return b ? `${b[1]}\u2013${b[2]} W` : null; };
+  const levels = [["Easy", w("Easy")], ["Moderate", w("Moderate")], ["Challenging", w("Challenging")]]
+    .filter(([, v]) => v).map(([n, v]) => `${n} ${v}`).join(", ");
+  return [
+    ["The drive", C.fg, "The pull: from the catch (knees up, arms out) to the finish (legs flat, handle at the body). " +
+      "Measured in cm of handle travel."],
+    ["Force curve", C.blue, "How hard the handle is pulled at each point of the drive, in newtons (100\u00a0N is about " +
+      "10\u00a0kg). One line per stroke; the dashed line is the average Easy stroke it is compared with."],
+    ["Easy \u00b7 Moderate \u00b7 Challenging", C.fg, (s.ftp
+      ? `Effort levels, all set from one number: ${s.ftp} W, the middle of my Challenging zone. ${levels}.`
+      : "Effort levels, set from my Easy pace.") + " I1, I2: each harder effort, found by the coach."],
+    ["Finish", C.fg, "Share of the force in the second half of the drive, against my usual at that level. \u22125% " +
+      "means 5% less there; within 5% is normal. A fading finish is the classic sign of tiring."],
+    ["Length", C.fg, "How far the handle travels each stroke, against the Easy rowing just before."],
+    ["Consistency", C.fg, "How much the curve changes from stroke to stroke, as a multiple of Easy rowing: " +
+      "1.0\u00d7 is as steady as Easy; from 1.4\u00d7 it is uneven."],
+    ["Stall after the peak", C.amber, "The force stops falling for a moment just after the peak, then falls again: " +
+      "a hitch at a handover, legs to back or back to arms. Shaded on the curve; flagged from 25% of strokes, " +
+      "small from 10%."],
+    ["Late push", C.fg, "The peak force comes later in the drive than in Easy rowing: the legs pushed late, or " +
+      "hardly at all and the back and arms did the work."],
+    ["Colours", C.green, "Green: as it should be. Amber: worth a look. Red: clearly off."],
+  ];
+}
+// Under the list: what the pulley can and can't tell.
+const GLOSSARY_NOTE = "All of this comes from the pulley alone: it measures how hard and how far the handle is " +
+  "pulled, not which muscles pull it. An early pull with the arms, say, shows only as a curve of a different shape.";
 
-function glossaryCard() {
+function glossaryCard(s) {
   const { cv, g, text } = cardCanvas();
   const P = CARD_P, width = CARD_W - 2 * P;
   text("HOW TO READ THESE CARDS", P, P + 26, 26, C.dim, true);
@@ -1213,12 +1226,15 @@ function glossaryCard() {
     return line ? [...lines, line] : lines;
   };
   let y = P + 178;
-  for (const [term, colour, def] of GLOSSARY) {
-    text(term, P, y, 28, colour, true);
-    y += 36;
-    for (const l of wrap(def, 24)) { text(l, P, y, 24, C.dim); y += 30; }
-    y += 16;
+  for (const [term, colour, def] of glossary(s)) {
+    text(term, P, y, 26, colour, true);
+    y += 33;
+    for (const l of wrap(def, 23)) { text(l, P, y, 23, C.dim); y += 29; }
+    y += 13;
   }
+  y += 6;
+  g.fillStyle = C.tile; g.fillRect(P, y - 26, width, 2);
+  for (const l of wrap(GLOSSARY_NOTE, 22)) { text(l, P, y + 8, 22, C.fg); y += 28; }
   text(CARD_CREDIT, CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
   return cv;
 }
@@ -1319,7 +1335,7 @@ async function openPhotos() {
   const easy = rows.length ? easyCard(s, rows) : null;
   const cards = [...(rows.length ? [["session", sessionCard(s, rows)]] : []), ...(easy ? [["easy", easy]] : []),
                  ...(s.intervals || []).map((i) => [`I${i.index}`, effortCard(s, i, rows, effortCardTop(s, rows))]),
-                 ["guide", glossaryCard()]];
+                 ["guide", glossaryCard(s)]];
   photoFiles = cards.map(([name, cv]) => ({ name: `rowing-${s.id}-${name}.png`, url: cv.toDataURL("image/png") }));
   $("phList").innerHTML = photoFiles.map((f) => `<img src="${f.url}" alt="${f.name}">`).join("");
   show("photos");
