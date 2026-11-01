@@ -517,7 +517,10 @@ the early stroke a late effort that held the shape you were rowing at the time r
 sample or two, then drops again. In efforts only, as the pulley's 16 N force steps are too coarse at Easy
 force (checked against each stroke's own smooth fit). It shows when 4 of the last 8 strokes have one (3 at `high`
 sensitivity: at a stall rate around 17 %, 3 of 8 happen by chance about one stroke in seven), and the summary counts it
-per effort against the Easy rowing before (flagged at 25 % of strokes and 15 points over Easy). Coaching
+per effort against the Easy rowing before (flagged at 25 % of strokes and 15 points over Easy). Between
+10 % and the flag it is reported as a *small stall* (in grey on the effort card, in the findings and the
+Strava effort lines), with how it moved through the effort by thirds; the card also shows your usual
+range, the middle half of your recent efforts' stall %. Coaching
 sources put dips like this at a handover, legs to back or back to arms; keeping the arms relaxed until the
 swing is nearly done tells which, and a video shows it. Spotted by Jaap van Ekris on a chart of one
 effort's strokes: in five sessions it sat at about 70 cm every day, on 3-6 % of Easy strokes and up to

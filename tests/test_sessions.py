@@ -337,3 +337,23 @@ class EasyStrokeProgressTest(unittest.TestCase):
         text = " ".join(sessions.progress_findings(pts, None, now=2 * 86400))
         self.assertIn("Your Easy stroke: strokes 112 to 123 cm and force in the back half of the drive 45.0% to 42.0%",
                       text)
+
+
+class UsualStallTest(unittest.TestCase):
+    def test_middle_half_of_recent_efforts(self):
+        import tempfile, time
+        with tempfile.TemporaryDirectory() as d:
+            now = time.time()
+            for k, pcts in enumerate(([10, 12, 14], [16, 18, 30], [5])):
+                sid = time.strftime("%Y-%m-%dT%H%M", time.localtime(now - (3 - k) * 3600))
+                (Path(d) / f"{sid}.json").write_text(json.dumps({
+                    "id": sid, "started_at": now - (3 - k) * 3600,
+                    "intervals": [{"strokes": 30, "stall_pct": p} for p in pcts] + [{"strokes": 8, "stall_pct": 90}]}))
+            lo, hi = sessions.usual_stall(d, now)
+        self.assertLess(lo, hi)
+        self.assertTrue(8 <= lo <= 12 and 16 <= hi <= 20, (lo, hi))  # short efforts (8 strokes) left out
+
+    def test_none_without_enough_efforts(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(sessions.usual_stall(d))

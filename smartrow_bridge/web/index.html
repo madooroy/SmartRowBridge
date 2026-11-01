@@ -976,6 +976,15 @@ function effortCardTop(s, rows) {
   return top;
 }
 
+// Under the stall %: how it moved through the effort (when it rose), and your usual range.
+function stallNote(s, i) {
+  if (i.stall_pct === undefined) return "";
+  const t = i.stall_thirds, parts = [];
+  if (t && Math.max(t[1], t[2]) - t[0] >= 8) parts.push(`${t[0]} \u2192 ${Math.max(t[1], t[2])}% over it`);
+  if (s.stall_usual) parts.push(`usual ${s.stall_usual[0]}\u2013${s.stall_usual[1]}%`);
+  return parts.length ? parts.join(" \u00b7 ") : "of strokes";
+}
+
 function effortCard(s, i, rows, sharedTop = null) {
   const { cv, g, text, tile } = cardCanvas();
   const t0 = i.started_at_s ?? 0, t1 = t0 + i.duration_s;
@@ -1067,8 +1076,8 @@ function effortCard(s, i, rows, sharedTop = null) {
      i.length_delta_cm <= -2 ? C.amber : C.fg],
     ["CONSISTENCY", i.variation_ratio !== undefined ? `${i.variation_ratio.toFixed(1)}\u00d7` : "\u2013",
      i.variation_ratio !== undefined ? "variation stroke to stroke, vs Easy" : "", i.uneven ? C.amber : C.fg],
-    ["STALL AFTER THE PEAK", i.stall_pct !== undefined ? `${i.stall_pct}%` : "\u2013",
-     i.stall_pct !== undefined ? `of strokes \u00b7 Easy ${i.steady_stall_pct}%` : "", i.transition ? C.amber : C.fg],
+    ["STALL AFTER THE PEAK", i.stall_pct !== undefined ? `${i.stall_pct}%` : "\u2013", stallNote(s, i),
+     i.transition ? C.amber : C.fg],
   ];
   const tw = (CARD_W - 2 * P - 24) / 2, th = 150;
   tiles.forEach(([l, v, sub, colour], k) => {
@@ -1080,8 +1089,12 @@ function effortCard(s, i, rows, sharedTop = null) {
   });
   const flags = [i.uneven ? "uneven strokes" : null, i.transition ? "stall after the peak" : null,
                  i.legs_late ? "late push" : null, i.rating === "short" ? "finish faded" : null].filter(Boolean);
-  text(flags.length ? `Coach: ${flags.join(" \u00b7 ")}` : "Coach: kept its shape", P, 1258, 30,
-       flags.length ? C.amber : C.green, true);
+  const verdict = flags.length ? `Coach: ${flags.join(" \u00b7 ")}` : "Coach: kept its shape";
+  text(verdict, P, 1258, 30, flags.length ? C.amber : C.green, true);
+  if (!flags.length && i.small_stall) {  // under the flag, but not nothing: said in grey
+    g.font = `700 30px system-ui, "DejaVu Sans", sans-serif`;
+    text(" \u00b7 small stall after the peak", P + g.measureText(verdict).width, 1258, 30, C.dim, true);
+  }
   text("SmartRow pulley + PiRowerCoach", CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
   return cv;
 }

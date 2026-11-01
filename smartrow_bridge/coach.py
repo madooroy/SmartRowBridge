@@ -143,6 +143,7 @@ SETTLE_STROKES = 3  # an effort's first strokes (the step up) are left out of it
 STALL_FLAT, STALL_STEEP = 0.25, 0.5
 SAMPLE_CM = 5.8  # handle travel between force samples (about; they are spaced by distance)
 STALL_FLAG_PCT, STALL_FLAG_OVER = 25.0, 15.0  # summary: stalls on this % of strokes, and this many points over Easy
+STALL_NOTE_PCT = 10.0  # below the flag but at least this: reported as a small stall, not as clean
 SPLIT_MIN_STROKES = 15  # an effort that steps up (or down) an intensity for this long is split in two
 
 CUE_WINDOW = 8  # strokes in the live cue
@@ -430,7 +431,13 @@ class IntervalSummary:
     stall_pct: float = 0.0  # strokes with a stall just after the peak (stall_at), %
     stall_cm: float = 0.0  # ... where, cm of handle travel
     steady_stall_pct: float = 0.0  # ... in the Easy rowing before
+    stall_thirds: tuple[float, float, float] = (0.0, 0.0, 0.0)  # stall % in the effort's first, middle and last third
     reference: str = "local"  # what it was judged against: local (the Easy rowing just before), fresh, steady
+
+    @property
+    def small_stall(self) -> bool:
+        """A stall on enough strokes to mention (STALL_NOTE_PCT), but under the flag."""
+        return not self.transition and self.stall_pct >= STALL_NOTE_PCT
 
     @property
     def transition(self) -> bool:
@@ -526,6 +533,8 @@ class IntervalSummary:
             "stall_cm": round(self.stall_cm),
             "steady_stall_pct": round(self.steady_stall_pct),
             "transition": self.transition,
+            "small_stall": self.small_stall,
+            "stall_thirds": [round(x) for x in self.stall_thirds],
             "reference": self.reference,  # only "local" ones teach sessions.learned_finish
             "fade_pct": round((self.last_third_back_share / self.first_third_back_share - 1) * 100)
             if self.first_third_back_share else 0,
@@ -625,6 +634,7 @@ class IntervalCoach:
                 log.exception("Could not read the last session's Easy stroke")
         self.baseline: dict | None = dict(self.saved_ref) if self.saved_ref else None
         self.expect = {**EXPECTED_FINISH, **((self.saved_ref or {}).get("expect") or {})}
+        self.stall_usual = (self.saved_ref or {}).get("stall_usual")  # sessions.usual_stall, for the cards
         self.fresh: list[StrokeCurve] = []
         self.fresh_done = False
         self.fresh_result: dict | None = None
@@ -923,6 +933,7 @@ class IntervalCoach:
             stall_pct=stall_pct,
             stall_cm=stall_cm,
             steady_stall_pct=stall_stats(local)[0],
+            stall_thirds=tuple(stall_stats(strokes[k * n // 3:(k + 1) * n // 3])[0] for k in range(3)),
         )
 
     # ------------------------------------------------------------ live cue
@@ -1009,6 +1020,7 @@ class IntervalCoach:
                          "ftp_floor_pct": self.settings.ftp_floor_pct if self.ftp else None,
                          "sensitivity": self.settings.sensitivity},
             "thresholds": self.thresholds(),
+            "stall_usual": self.stall_usual,
             "intervals": intervals,
             "heart_rate": hr,
             "easy_drift": self.easy_drift(),
@@ -1268,11 +1280,25 @@ def findings(intervals: list[dict]) -> list[str]:
     if stalled:
         pcts = ", ".join(f"{i['stall_pct']}%" for i in stalled)
         cm = round(statistics.median(i["stall_cm"] for i in stalled))
-        easy = max(i.get("steady_stall_pct", 0) for i in stalled)
         out.append(f"The force stalled just after the peak (about {cm} cm into the drive) in {_names(stalled)} "
-                   f"({pcts} of strokes, against {easy}% or less in Easy rowing): a break in the handover after the "
-                   f"peak. The curve can't say which one; keeping the arms relaxed until the swing is nearly done "
-                   f"tells legs-to-back from back-to-arms, and a video shows it.")
+                   f"({pcts} of strokes): a break in the handover after the peak. The curve can't say which one; "
+                   f"keeping the arms relaxed until the swing is nearly done tells legs-to-back from back-to-arms, "
+                   f"and a video shows it.")
+    small = [i for i in intervals if i.get("small_stall")]
+    if small:
+        def thirds(i):
+            return i.get("stall_thirds") or [0, 0, 0]
+        each = [f"{_names([i])} ({i['stall_pct']}%" + (" of strokes)" if k == 0 else ")") for k, i in enumerate(small)]
+        rising = [i for i in small if max(thirds(i)[1:]) - thirds(i)[0] >= 8]
+        trend = ""
+        if rising:
+            starts = sorted({thirds(i)[0] for i in rising})
+            peaks = sorted({max(thirds(i)[1:]) for i in rising})
+            span = lambda xs: f"{xs[0]}%" if len(xs) == 1 else f"{xs[0]}\u2013{xs[-1]}%"
+            where = "each effort" if len(rising) == len(small) and len(small) > 1 else _names(rising)
+            trend = f", rising through {where} (from {span(starts)} in the first third to {span(peaks)} later)"
+        out.append(f"A small stall just after the peak in {' and '.join(each)}{trend}; "
+                   f"flagged from {STALL_FLAG_PCT:.0f}%.")
 
     wander = [i for i in intervals if i.get("peak_wanders")]
     if wander:

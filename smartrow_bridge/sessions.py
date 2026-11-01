@@ -292,7 +292,8 @@ def latest_fresh_easy(directory: str, now: float | None = None, max_age_days: fl
             return None  # newest first: the rest are older still
         fresh = record.get("fresh_easy")
         if fresh and fresh.get("curve"):
-            return {**fresh, "session": record.get("id", path.stem), "expect": learned_finish(directory, now)}
+            return {**fresh, "session": record.get("id", path.stem), "expect": learned_finish(directory, now),
+                    "stall_usual": usual_stall(directory, now)}
     return None
 
 
@@ -318,6 +319,31 @@ def learned_finish(directory: str, now: float | None = None, days: float = 60, l
                 seen[k].append(r)
     lo, hi = EXPECT_RANGE
     return {k: round(min(hi, max(lo, statistics.median(v))), 3) for k, v in seen.items() if len(v) >= EXPECT_MIN}
+
+
+USUAL_STALL_MIN = 5  # efforts needed before "your usual" stall range is given
+
+
+def usual_stall(directory: str, now: float | None = None, days: float = 60, last: int = 30) -> list[int] | None:
+    """Your usual stall after the peak in efforts: the middle half (25th to 75th percentile) of the
+    stall % of your last `last` efforts of 20 strokes or more within `days`. None with too few."""
+    now = time.time() if now is None else now
+    pcts: list[float] = []
+    for path in sorted(Path(directory).glob("*.json"), reverse=True):
+        if not ID_PATTERN.match(path.stem):
+            continue
+        record = read_session(directory, path.stem)
+        if not record:
+            continue
+        if now - record.get("started_at", 0) > days * 86400:
+            break
+        for i in reversed(record.get("intervals") or []):
+            if i.get("strokes", 0) >= 20 and i.get("stall_pct") is not None and len(pcts) < last:
+                pcts.append(i["stall_pct"])
+    if len(pcts) < USUAL_STALL_MIN:
+        return None
+    q = statistics.quantiles(pcts, n=4)
+    return [max(0, round(q[0])), round(q[2])]
 
 
 def read_session(directory: str, session: str) -> dict | None:

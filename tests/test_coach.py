@@ -806,3 +806,32 @@ class SettingsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SmallStallTest(unittest.TestCase):
+    def test_reported_with_its_trend_but_not_flagged(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        for k in range(30):  # clean at first, then a stall on every third stroke
+            r.row(1, 150, curve=STALLED if k >= 10 and k % 3 == 0 else STEADY)
+        r.row(20, 105)
+        i = r.coach.intervals[-1]
+        d = i.as_dict()
+        self.assertFalse(d["transition"])
+        self.assertTrue(d["small_stall"])
+        self.assertEqual(d["stall_thirds"][0], 0)
+        self.assertGreater(d["stall_thirds"][2], 25)
+        text = " ".join(coach.findings([d]))
+        self.assertIn("A small stall just after the peak in I1 (", text)
+        self.assertIn("rising through I1 (from 0% in the first third", text)
+        from smartrow_bridge import intervals
+        self.assertIn("small stall on", intervals.effort_line(d))
+
+    def test_clean_effort_says_nothing(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(30, 150)
+        r.row(20, 105)
+        d = r.coach.intervals[-1].as_dict()
+        self.assertFalse(d["small_stall"])
+        self.assertNotIn("small stall", " ".join(coach.findings([d])))
