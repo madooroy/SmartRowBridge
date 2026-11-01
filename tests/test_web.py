@@ -132,14 +132,20 @@ class WebTest(unittest.TestCase):
             self.assertIn(f'"{text}"', page)
 
 
-def write_export(path: Path) -> None:
-    """A SmartRow-app-style CSV: 60 steady strokes, a 1-minute effort, 20 steady strokes."""
+def write_export(path: Path, pause_s: float = 0.0) -> None:
+    """A SmartRow-app-style CSV: 60 steady strokes, a 1-minute effort, 20 steady strokes (then, with
+    pause_s, the same again after a pause that long)."""
     fields = ["Stroke (#)", "Second (#)", "Timestamp (UTC)", "Distance (m)", "Work (J)", "Actual power (W)",
               "Stroke rate (SPM)", "Stroke length (cm)"] + [f"#{i} (N)" for i in range(25)]
     rows, t = [], 0.0
     plan = [(60, 110, STEADY, 115), (21, 152, FULL, 119), (20, 110, STEADY, 115)]
+    if pause_s:
+        plan = plan + [(0, 0, STEADY, 0)] + plan  # the marker: a pause
     start = datetime(2026, 10, 27, 11, 2, 0, tzinfo=timezone.utc)
     for n, watts, curve, length in plan:
+        if n == 0:
+            t += pause_s
+            continue
         for _ in range(n):
             t += 60 / 21
             stamp = (start + timedelta(seconds=round(t))).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -164,6 +170,21 @@ class ReplayToolTest(unittest.TestCase):
         self.assertIn("101 strokes, Easy about 110 W", text)
         self.assertIn("Interval 1: 1:00, 21 strokes, 152 W", text)
         self.assertIn("live cue: LOOKS GOOD", text)
+
+    def test_a_long_pause_splits_the_export_into_two_saved_sessions(self):
+        import json
+        import tools.coach_replay as replay_tool
+        with tempfile.TemporaryDirectory() as tmp:
+            export = Path(tmp) / "session.csv"
+            write_export(export, pause_s=400)
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(replay_tool.main([str(export), "--save", tmp]), 0)
+            records = [json.loads(p.read_text()) for p in sorted(Path(tmp).glob("*.json")) if ".strokes" not in p.name]
+        self.assertIn("a pause of more than 5 min: 2 sessions, each saved", out.getvalue())
+        self.assertEqual(len(records), 2)
+        for r in records:  # each part keeps its own effort (the first one was lost before)
+            self.assertEqual([i["strokes"] for i in r["intervals"]], [21])
 
     def test_unreadable_file(self):
         import tools.coach_replay as replay_tool

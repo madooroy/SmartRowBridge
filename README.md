@@ -196,7 +196,7 @@ Common problems:
 | `SRB_LOG_LEVEL` | `INFO` | `DEBUG` adds a line per second |
 | `SRB_STATUS_FILE` | `/run/smartrow-bridge/status.json` | Status the optional screen shows, rewritten every second in RAM; `off` disables |
 | `SRB_COACH` | `0` | `1` turns on the [interval coach](#optional-interval-coach-experimental) (experimental) |
-| `SRB_COACH_START_PCT`, `SRB_COACH_MAX_MIN`, `SRB_COACH_SENSITIVITY` | `20`, `5`, `normal` | Coach tuning: how much harder than steady an interval is (%), the longest effort to count (minutes), how readily the cues speak up (`low`, `normal`, `high`) |
+| `SRB_COACH_START_PCT`, `SRB_COACH_MAX_MIN`, `SRB_COACH_SENSITIVITY` | `20`, `5`, `normal` | Coach tuning: how much harder than steady an interval is (%), the longest effort to count (minutes), how readily the cues speak up (`low`, `normal`, `high`). The first two are not used once the coach has an FTP (`SRB_COACH_FTP` or intervals.icu): the FTP sets the threshold and there is no time limit |
 | `SRB_WEB_PORT` | `8080` | Port of the optional [web page](#optional-a-web-page-for-phones-and-tablets) |
 | `SRB_DISPLAY_LED`, `SRB_DISPLAY_HOLD_S`, `SRB_DISPLAY_SLEEP_S` | `1`, `2`, `300` | Screen only: `0` leaves its LED off; seconds to hold button A to switch the Pi off; seconds with nothing happening before the screen goes dark (`0` = never; rowing or any button wakes it) |
 

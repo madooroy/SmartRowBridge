@@ -205,7 +205,7 @@ SENSITIVITY = {
 
 @dataclass(frozen=True)
 class CoachSettings:
-    start_pct: float = 20.0  # an effort is at least this % above steady ...
+    start_pct: float = 20.0  # an effort is at least this % above steady (without an FTP; with one: ftp_floor_pct) ...
     start_min_w: float = 15.0  # ... and at least this many watts
     end_pct: float = 10.0  # it ends when power falls back below steady + this %
     min_effort_strokes: int = 8  # shorter is a burst, not an interval
@@ -822,8 +822,8 @@ class IntervalCoach:
         while strokes and stroke_power(strokes[-1]) < end_at:  # the easy strokes that ended it
             strokes.pop()
             eased += 1
-        # Recovery counts as if the effort had ended on the first stroke below its end: the strokes
-        # it took to confirm the end (END_CONFIRM) count towards the recovery.
+        # The strokes it took to confirm the end (up to END_CONFIRM - 1 of them, after the first low
+        # one) count towards the recovery; any further eased strokes trimmed from the end do not.
         self.recovery_left = RECOVERY_STROKES - min(max(0, eased - 1), END_CONFIRM - 1)
         if len(strokes) < self.settings.min_effort_strokes:
             return None
@@ -1001,7 +1001,7 @@ class IntervalCoach:
             # For shading the photo cards: the intensity bands in watts, and the heart-rate zones.
             "power_bands": [list(b) for b in intensity_bands(self.ftp, self.steady_power())],
             "hr_zones": self.hr_zones,
-            "settings": {"start_pct": self.settings.start_pct,
+            "settings": {"start_pct": None if self.ftp else self.settings.start_pct,
                          "max_effort_min": None if self.ftp else self.max_effort_s / 60,
                          "ftp_floor_pct": self.settings.ftp_floor_pct if self.ftp else None,
                          "sensitivity": self.settings.sensitivity},

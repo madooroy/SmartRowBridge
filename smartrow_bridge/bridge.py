@@ -6,6 +6,7 @@ import asyncio
 import importlib
 import logging
 import time
+import urllib.error
 from typing import IO, TYPE_CHECKING
 
 from . import adapters, addresses, coach, protocol, sessions, status
@@ -32,6 +33,7 @@ STATUS_INTERVAL_S = 1.0
 
 
 FTP_RETRY_S = 30  # until the first answer from intervals.icu (the network may come up after the bridge)
+FTP_REFUSED_RETRY_S = 3600  # ... but a key intervals.icu refuses (revoked) is retried only hourly
 
 
 def _fixed_ftp(setting: str) -> float | None:
@@ -191,6 +193,10 @@ class Bridge:
             return
         if request.get("action") == "discard":
             session, sent = self.recorder.discard() if self.recorder else (None, [])
+            if self.uploader and session:  # an upload in flight finishes anyway: say where that copy is
+                in_flight, dest = self.uploader.sending_session()
+                if in_flight == session and dest and dest not in sent:
+                    sent = [*sent, dest]
             if self.coach and self.coach.strokes_total:
                 self.coach.reset()  # rowing again is a new session
             if session:
@@ -263,11 +269,13 @@ class Bridge:
                 settings = await asyncio.to_thread(intervals.rowing_settings, key)
                 ftp = settings["ftp"] if read_ftp else None
             except Exception as exc:  # noqa: BLE001 - offline: the coach carries on without one for now
+                refused = isinstance(exc, urllib.error.HTTPError) and 400 <= exc.code < 500
+                wait = FTP_REFUSED_RETRY_S if refused else FTP_RETRY_S
                 if not warned:
                     log.warning("Could not read the rowing FTP from intervals.icu (trying again every %d s): %s",
-                                FTP_RETRY_S, intervals.describe_error(exc))
+                                wait, intervals.describe_error(exc))
                     warned = True
-                await asyncio.sleep(FTP_RETRY_S)
+                await asyncio.sleep(wait)
                 continue
             if settings.get("hr_zones"):
                 self.coach.hr_zones = {**settings["hr_zones"], "max_hr": settings.get("max_hr")}

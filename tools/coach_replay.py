@@ -32,7 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from smartrow_bridge import sessions  # noqa: E402
-from smartrow_bridge.coach import FRESH_MAX_AGE_DAYS, CoachSettings, IntervalCoach  # noqa: E402
+from smartrow_bridge.coach import FRESH_MAX_AGE_DAYS, GAP_S, NEW_SESSION_S, CoachSettings, IntervalCoach  # noqa: E402
 from smartrow_bridge.protocol import FORCE_SAMPLES, StrokeCurve  # noqa: E402
 
 CUE_NAMES = {"good": "LOOKS GOOD", "finish": "STRONGER FINISH", "legs": "EARLIER PUSH", "length": "LONGER STROKES", "transition": "BETTER TRANSITION",
@@ -80,7 +80,18 @@ def replay(path: Path, settings: CoachSettings, save_dir: Path | None = None, ft
     Returns its intervals, live-cue counts and today's fresh Easy stroke."""
     coach = IntervalCoach(settings, ftp=ftp, reference=(lambda: reference) if reference else None)
     cues: dict[int, Counter] = {}
+    saved: list[Path] = []
+    parts = 0  # a pause longer than NEW_SESSION_S inside one export: the coach starts over, as on the
+    # Pi, and the part before it is kept as its own session record rather than thrown away.
+    totals = export_totals(path) if save_dir is not None else None
+    last_time: float | None = None
     for stroke in strokes_from_csv(path):
+        if last_time is not None and stroke.time - last_time > NEW_SESSION_S and coach.strokes_total:
+            coach.state(last_time + GAP_S + 1)  # the Pi would have closed an open effort during the pause
+            if save_dir is not None:
+                saved.append(_save_part(coach, totals, save_dir, parts, last_time))
+            parts += 1
+        last_time = stroke.time
         coach.add(stroke)
         st = coach.state(stroke.time)
         live = st.get("live")
@@ -89,16 +100,26 @@ def replay(path: Path, settings: CoachSettings, save_dir: Path | None = None, ft
         elif st.get("intensity") == "Easy":  # Easy rowing: its own cue (index 0), None while learning
             cues.setdefault(0, Counter())[st.get("cue")] += 1
     coach.state(float("inf"))  # an effort still running at the end of the file
-    saved = None
     if save_dir is not None:
-        totals = export_totals(path)
-        record = sessions.build_record(coach, totals["started_at"], totals["started_at"] + totals["elapsed_s"],
-                                       True, totals["distance_m"], totals["elapsed_s"], source="replay")
-        saved = sessions.save(save_dir, record, sessions.stroke_rows(coach))
+        saved.append(_save_part(coach, totals, save_dir, parts, None))
     summary = coach.session_summary()
     return {"intervals": coach.intervals, "cues": cues, "steady_power_w": coach.steady_power(),
-            "strokes": coach.last_count, "saved": saved, "fresh_easy": summary.get("fresh_easy"),
-            "reference": reference, "length_note": coach.length_note}
+            "strokes": coach.last_count, "saved": saved[-1] if saved else None, "parts": parts + 1,
+            "fresh_easy": summary.get("fresh_easy"), "reference": reference, "length_note": coach.length_note}
+
+
+def _save_part(coach: IntervalCoach, totals: dict, save_dir: Path, part: int, ended: float | None) -> Path:
+    """Save what the coach has as a session record: the whole export, or one part of it (a pause
+    longer than NEW_SESSION_S splits an export, as it would a live session)."""
+    first = coach.first_time or 0.0
+    started_at = totals["started_at"] + (first if part else 0.0)
+    elapsed = int((ended if ended is not None else totals["elapsed_s"]) - (first if part else 0.0))
+    if ended is None:
+        distance = totals["distance_m"]
+    else:  # the export's total is the whole file's: this part's is its last stroke's metres
+        distance = int(next((d for _, d, *_ in reversed(coach.stroke_log) if d), 0) or 0)
+    record = sessions.build_record(coach, started_at, started_at + elapsed, True, distance, elapsed, source="replay")
+    return sessions.save(save_dir, record, sessions.stroke_rows(coach))
 
 
 def describe(path: Path, result: dict) -> str:
@@ -129,6 +150,9 @@ def describe(path: Path, result: dict) -> str:
             shares = ", ".join(f"{CUE_NAMES.get(cue, cue)} {n * 100 // total}%"
                                for cue, n in counts.most_common())
             lines.append(f"      live cue: {shares}")
+    if result.get("parts", 1) > 1:
+        lines.append(f"  a pause of more than {NEW_SESSION_S / 60:.0f} min: {result['parts']} sessions"
+                     + (", each saved" if result.get("saved") else ""))
     if result.get("saved"):
         lines.append(f"  summary saved: {result['saved']}")
     return "\n".join(lines)
@@ -138,7 +162,8 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("csv", nargs="+", type=Path, help="SmartRow app CSV export(s)")
     p.add_argument("--start-pct", type=float, default=20.0,
-                   help="an interval is at least this %% above steady power (default 20)")
+                   help="an interval is at least this %% above steady power (default 20; not used with --ftp, "
+                        "which sets the threshold from your FTP)")
     p.add_argument("--max-min", type=float, default=5.0,
                    help="longest effort, in minutes, to count as an interval (default 5)")
     p.add_argument("--sensitivity", choices=("low", "normal", "high"), default="normal",

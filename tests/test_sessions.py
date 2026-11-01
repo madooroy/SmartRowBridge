@@ -183,6 +183,23 @@ class RecorderTest(unittest.TestCase):
         self.assertNotEqual(path.stem, session)
         self.assertFalse((self.dir / f"{session}.json").exists())
 
+    def test_discard_while_its_upload_is_in_flight_says_where_the_copy_is(self):
+        from types import SimpleNamespace
+        from smartrow_bridge import status
+        from smartrow_bridge.bridge import Bridge
+        r = saturday()
+        rec = self.recorder(r)
+        rec.update(RowingMetrics(distance_m=6000), mono_now=r.t, wall_now=1_800_000_000.0)
+        session = rec._id
+        b = object.__new__(Bridge)
+        b.cfg = SimpleNamespace(status_file=str(Path(self.tmp.name) / "status.json"), session_dir=str(self.dir))
+        b.recorder, b.coach, b._finish_result = rec, r.coach, None
+        b.uploader = SimpleNamespace(sending_session=lambda: (session, "strava"), check_now=lambda t: None)
+        b.parser = SimpleNamespace(metrics=RowingMetrics(distance_m=6000))
+        status.send_request(b.cfg.status_file, "discard")
+        b._handle_request()
+        self.assertEqual(b._finish_result["uploaded"], ["strava"])  # the screen: "Already on Strava: delete it there"
+
     def test_clock_set_mid_session_keeps_the_file(self):
         r = saturday()
         rec = self.recorder(r)

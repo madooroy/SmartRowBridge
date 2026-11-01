@@ -217,6 +217,7 @@ class Uploader:
         self._failures: dict[tuple[str, str], int] = {}
         self._last_error: dict[str, str] = {}
         self._sending: str | None = None  # the destination being sent to now
+        self._sending_session: str | None = None  # ... and the session
         self._ack: str | None = None  # a "Done" request: echoed once the next look has been taken
         self._acked: str | None = None
         self._snapshot: dict = {"configured": [], "sending": None, "waiting": 0, "retrying": 0, "error": None,
@@ -308,7 +309,7 @@ class Uploader:
 
     async def _send(self, dest: str, record: dict) -> None:
         key = (dest, record["id"])
-        self._sending = dest
+        self._sending, self._sending_session = dest, record["id"]
         try:
             result = await asyncio.to_thread(self.dests.send, dest, record)
         except Exception as exc:  # noqa: BLE001 - offline, a service down, a revoked key, a bad file
@@ -335,7 +336,11 @@ class Uploader:
                      "" if noted else " (but its file is gone, so this isn't noted)")
             self._next_check = 0.0  # more waiting? next tick
         finally:
-            self._sending = None
+            self._sending = self._sending_session = None
+
+    def sending_session(self) -> tuple[str | None, str | None]:
+        """The session being sent right now and where to, if any (a discard can't undo that copy)."""
+        return self._sending_session, self._sending
 
 
 def _status(settings: Settings) -> int:

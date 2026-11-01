@@ -238,6 +238,31 @@ class FtpReadOnceTest(unittest.TestCase):
         self.assertEqual(b.coach.hr_zones, {**zones, "max_hr": 185})
         self.assertEqual(b.coach.session_summary()["hr_zones"]["tops"][-1], 185)
 
+    def test_a_refused_key_is_retried_only_hourly(self):
+        import asyncio
+        import types
+        import urllib.error
+        from unittest import mock
+        from smartrow_bridge import bridge, intervals
+        answers = [urllib.error.HTTPError("u", 401, "Unauthorized", {}, None), {"ftp": 185.0, "max_hr": None, "hr_zones": None}]
+        waits = []
+
+        async def sleep(s):
+            waits.append(s)
+
+        def fake(key):
+            a = answers.pop(0)
+            if isinstance(a, Exception):
+                raise a
+            return a
+
+        b = types.SimpleNamespace(cfg=types.SimpleNamespace(intervals_key_file="x"), coach=IntervalCoach())
+        with mock.patch.object(intervals, "rowing_settings", fake), \
+                mock.patch.object(intervals, "read_key", lambda f: "k"), mock.patch.object(bridge.asyncio, "sleep", sleep), \
+                self.assertLogs("smartrow_bridge.bridge"):
+            asyncio.run(bridge.Bridge._ftp_loop(b))
+        self.assertEqual(waits, [bridge.FTP_REFUSED_RETRY_S])
+
     def test_rowing_settings_from_intervals_icu(self):
         from unittest import mock
         from smartrow_bridge import intervals
@@ -269,16 +294,16 @@ class FtpReadOnceTest(unittest.TestCase):
 
 class IntensityTest(unittest.TestCase):
     def test_challenging_judged_against_its_usual_shape(self):
-        """A 10 % lighter finish is usual at Challenging: no cue; the same at Moderate is one."""
+        """A 10 % lighter finish is usual at Challenging, so it reads as on target (+3 %); the same
+        at Moderate is reported as lighter (-7 %: within "ok", so no cue yet, but not absorbed)."""
         lighter = [round(v * (0.88 if 11 <= i <= 19 else 1)) for i, v in enumerate(STEADY)]  # ~10 % less back half
-        for watts, cue in ((190, "good"), (145, None)):
+        for watts, expected, finish in ((190, 0.90, 3), (145, 1.0, -7)):
             r = Rower(ftp=185)
             r.row(80, 105)
             r.row(20, watts, lighter)
             live = r.state()["live"]
-            if cue:
-                self.assertEqual(live["cue"], cue, watts)
-            self.assertEqual(r.coach.expected(live["intensity"]), 0.90 if watts == 190 else 1.0)
+            self.assertEqual(live["cue"], "good", watts)
+            self.assertEqual((r.coach.expected(live["intensity"]), live["finish_pct"]), (expected, finish), watts)
 
     def test_usual_finish_learned_from_saved_rows(self):
         import tempfile
@@ -572,7 +597,7 @@ class TransitionTest(unittest.TestCase):
         i = r.coach.intervals[-1]
         self.assertTrue(i.transition)
         d = i.as_dict()
-        self.assertEqual((d["stall_pct"], d["steady_stall_pct"], d["transition"]), (round(i.stall_pct), 0, True))
+        self.assertEqual((d["stall_pct"], d["steady_stall_pct"], d["transition"]), (44, 0, True))  # 8 stalled of the 18 strokes
         text = " ".join(coach.findings([d]))
         self.assertIn("The force stalled just after the peak", text)
         self.assertIn("legs-to-back from back-to-arms", text)
@@ -586,11 +611,13 @@ class TransitionTest(unittest.TestCase):
         self.assertFalse(r.coach.intervals[-1].transition)
 
     def test_not_in_easy_rowing(self):
-        # Easy force is too low for the pulley's 16 N steps to tell a stall from rounding
+        # Easy force is too low for the pulley's 16 N steps to tell a stall from rounding, so the
+        # Easy cue never says transition, however stalled the strokes: the stalls are still counted.
         r = Rower(ftp=185)
         r.row(200, 105)
-        r.row(8, 105, curve=STALLED)
+        r.row(40, 105, curve=STALLED)
         self.assertNotEqual(r.coach.easy_cue, "transition")
+        self.assertGreater(coach.stall_stats(list(r.coach.steady)[-40:])[0], 90)  # % of strokes stalled
 
     def test_marker(self):
         r = Rower(ftp=185)

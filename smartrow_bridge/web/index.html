@@ -66,26 +66,10 @@
   /* Interval */
   .clockrow { display: flex; justify-content: space-between; align-items: baseline; gap: var(--pad); }
   .clockrow .value, .clockrow .watts { font-size: clamp(36px, 11vmin, 124px); }  /* time and power alike */
-  .meter .top { display: flex; justify-content: space-between; align-items: center; }
-  .meter .pct { font-size: var(--mid); }
-  .bar { position: relative; height: clamp(20px, 4.5vmin, 44px); margin: 14px 0 4px; }
-  .bar .zone { position: absolute; top: 0; bottom: 0; opacity: .3; }
-  .bar .fill { position: absolute; left: 0; top: 18%; bottom: 18%; border-radius: 3px; }
-  .bar .tick { position: absolute; top: -6px; bottom: -6px; width: 3px; background: var(--fg); margin-left: -1px; }
-  .bar .needle { position: absolute; top: -12px; width: 0; height: 0; margin-left: -8px;
-    border-left: 8px solid transparent; border-right: 8px solid transparent; border-top: 10px solid var(--fg); }
-  .meter .under { display: flex; justify-content: space-between; font-size: var(--label); color: var(--dim); }
-  /* Centre bars (as on the Pi's screen): your steady stroke in the middle, dashed markers where the cues start. */
-  .ends { display: flex; justify-content: space-between; align-items: baseline; font-size: var(--label); color: var(--dim); }
-  .ends b { color: var(--dim); letter-spacing: .04em; }
-  /* Three blocks (as on the Pi's screen): force slides against steady; length grows or shrinks from the middle. */
-  .trio { position: relative; height: clamp(66px, 16vmin, 170px); margin: 6px 0 4px; }
+  /* The summary's small force-against-steady blocks (as on the Pi's screen). */
+  .trio { position: relative; }
   .trio .row { position: absolute; left: 0; right: 0; }
   .trio .blk { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
-  .trio .steady { background: var(--faint); color: var(--fg); font-size: calc(var(--label) * .8);
-    display: flex; align-items: center; justify-content: center; }
-  .trio .guide { position: absolute; top: -4px; bottom: -4px; border-left: 1px dashed var(--dim); }
-  .ends.centre { justify-content: center; }
   .cue { border-radius: 12px; padding: var(--pad); text-align: center; font-weight: 700;
     font-size: clamp(24px, 7vmin, 72px); color: var(--bg); }
   .cue.none { background: var(--tile); color: var(--dim); }
@@ -104,8 +88,6 @@
   .tiles3 { display: grid; gap: var(--pad); grid-template-columns: repeat(3, 1fr); }
   .tiles3 .value { font-size: clamp(22px, 6vmin, 64px); text-align: center; margin-top: 6px; }
   .mini { height: 6px; background: var(--faint); position: relative; margin-top: 8px; border-radius: 3px; }
-  .mini .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; }
-  .mini .tick { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--fg); }
   .note { text-align: right; font-size: var(--label); color: var(--dim); }
   .note.warn { color: var(--amber); font-weight: 700; }
 
@@ -237,7 +219,7 @@
         <button id="phBack">‹ Session</button>
         <button id="phSave">Save all</button>
       </div>
-      <div class="hint" id="phHint">Press and hold a picture to save it to your photos, then add it to the activity in the Strava app (Strava doesn't let other apps add photos).</div>
+      <div class="hint" id="phHint">Press and hold a picture to save it to your photos (on an iPhone, "Save all" may save only one), then add it to the activity in the Strava app (Strava doesn't let other apps add photos).</div>
       <div class="photos" id="phList"></div>
     </section>
 
@@ -272,6 +254,13 @@ const C = { bg: "#000", fg: "#f0f0f0", dim: "#878787", faint: "#464646", tile: "
 const GOOD_PCT = -5, OK_PCT = -12, METER_MIN = -30, METER_MAX = 15, FORCE_HALF = 12;
 const STALE_S = 5, RECALL_S = 20, POLL_MS = 1000;
 // Two words: what to do, and the part of the stroke; never a muscle (see coach.py).
+if (!CanvasRenderingContext2D.prototype.roundRect) {  // Safari before 16.4, older WebViews
+  CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    this.moveTo(x + r, y); this.arcTo(x + w, y, x + w, y + h, r); this.arcTo(x + w, y + h, x, y + h, r);
+    this.arcTo(x, y + h, x, y, r); this.arcTo(x, y, x + w, y, r); this.closePath();
+  };
+}
 const CUES = { finish: ["STRONGER FINISH", C.amber], legs: ["EARLIER PUSH", C.amber],
                length: ["LONGER STROKES", C.amber], transition: ["BETTER TRANSITION", C.amber], good: ["LOOKS GOOD", C.green] };
 const RATING = { good: C.green, ok: C.amber, short: C.red };
@@ -445,8 +434,6 @@ function renderRowing(st) {
   set("rDist", String(m.distance_m ?? 0));
   const coach = st.coach;
   const curve = coach && coach.stroke_curve && coach.stroke_curve.length;
-  $("rowing").classList.toggle("coached", !!curve);
-  $("rCurveTile").hidden = !curve;
   const recovery = coach && coach.intensity === "Recovery";  // no coaching while you recover: the numbers
   $("rowing").classList.toggle("coached", !!curve && !recovery);
   $("rCurveTile").hidden = !curve || recovery;
@@ -1182,11 +1169,13 @@ async function openPhotos() {
   show("photos");
 }
 function savePhotos() {
-  for (const f of photoFiles) {
+  // One download at a time, a moment apart: browsers block a burst of downloads from one click,
+  // and iPhone Safari saves only the first. Press and hold a picture there (the hint below).
+  photoFiles.forEach((f, k) => setTimeout(() => {
     const a = document.createElement("a");
     a.href = f.url; a.download = f.name;
     document.body.appendChild(a); a.click(); a.remove();
-  }
+  }, k * 600));
 }
 $("toPhotos").addEventListener("click", openPhotos);
 $("phSave").addEventListener("click", savePhotos);
