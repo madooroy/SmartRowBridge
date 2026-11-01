@@ -539,7 +539,8 @@ async function poll() {
   } catch (e) {
     if (++failures >= 3) {
       $("where").textContent = "Can't reach the Pi";
-      message("Can't reach the Pi", "Check that this device is on the same Wi-Fi as the Pi", "bad");
+      $("dot").className = "dot bad";
+      if (!reviewing) message("Can't reach the Pi", "Check that this device is on the same Wi-Fi as the Pi", "bad");
     }
   }
   drawPip();
@@ -984,7 +985,7 @@ function effortCard(s, i, rows) {
   // Every stroke of the effort over the Easy rowing just before it (dashed).
   const box = [P, 240, CARD_W - 2 * P, 620];
   tile(...box);
-  const top = Math.max(1, ...strokes.flatMap((r) => r.force_n), ...(i.steady_curve || []));
+  const top = Math.max(1, ...strokes.flatMap((r) => r.force_n), ...(i.steady_curve || []), ...(strokes.length ? [] : i.curve || []));
   const yStep = niceStep(top, 4), yMax = Math.ceil(top / yStep) * yStep;
   const ax = cardAxes(g, text, box, { title: "FORCE (N) ALONG THE DRIVE", xMax: 140, yMax, yStep, xStep: 20,
                                       xFmt: (v) => v === 140 ? "140 cm" : `${v}` });
@@ -992,7 +993,8 @@ function effortCard(s, i, rows) {
     g.beginPath(); g.moveTo(ax.X(0), ax.Y(0));
     driveOnly(curve).forEach((v, k) => g.lineTo(ax.X((k + 1) * CM_PER_SAMPLE), ax.Y(v)));
   };
-  const shortAt = (i.steady_length_cm || i.length_cm) * 0.85, cut = strokes.filter((r) => r.length_cm < shortAt);
+  const easyLen = i.length_cm - (i.length_delta_cm || 0);  // the Easy length the coach judged against
+  const shortAt = easyLen * 0.85, cut = strokes.filter((r) => r.length_cm < shortAt);
   // Where the coach saw something, marked on the curve: a shaded stretch of the drive (behind the
   // strokes) with a label along the bottom, where the curves leave room.
   const marks = [];  // [from cm, to cm, label]
@@ -1022,6 +1024,9 @@ function effortCard(s, i, rows) {
     path(r.force_n); g.strokeStyle = C.blue; g.globalAlpha = 0.45; g.lineWidth = 2.5; g.stroke(); g.globalAlpha = 1;
   }
   for (const r of cut) { path(r.force_n); g.strokeStyle = C.amber; g.lineWidth = 4; g.stroke(); }  // cut short, on top
+  if (!strokes.length && i.curve && i.curve.length) {  // no strokes saved: the effort's mean curve
+    path(i.curve); g.strokeStyle = C.blue; g.lineWidth = 4; g.stroke();
+  }
   for (const [r, [a, b]] of stalls) {  // each stroke's stall, drawn over in amber
     g.beginPath();
     for (let k = a; k <= b; k++) (k === a ? g.moveTo : g.lineTo).call(g, ax.X(sampleCm(k)), ax.Y(r.force_n[k]));
@@ -1030,8 +1035,10 @@ function effortCard(s, i, rows) {
   if (i.steady_curve && i.steady_curve.length) {
     path(i.steady_curve); g.strokeStyle = C.fg; g.lineWidth = 4; g.setLineDash([14, 10]); g.stroke(); g.setLineDash([]);
   }
-  text(`${strokes.length} strokes, one line each`, box[0] + box[2] - 24, box[1] + 44, 22, C.dim, false, "right");
-  text("\u2014 \u2014  Easy rowing just before", ax.x1, ax.y0 + 30, 22, C.fg, false, "right");
+  text(strokes.length ? `${strokes.length} strokes, one line each` : `average of ${i.strokes} strokes`,
+       box[0] + box[2] - 24, box[1] + 44, 22, C.dim, false, "right");
+  if (i.steady_curve && i.steady_curve.length)
+    text("\u2014 \u2014  Easy rowing just before", ax.x1, ax.y0 + 30, 22, C.fg, false, "right");
   if (cut.length) text(`${cut.length} cut short`, ax.x1, ax.y0 + 60, 22, C.amber, true, "right");
   // The labels, one row each from the bottom, under the shaded stretch (kept inside the chart).
   marks.forEach(([a, b, label], k) => {
@@ -1103,7 +1110,8 @@ function sessionCard(s, rows) {
                                                bands = [] } = {}) => {
     tile(...box);
     const vs = values.map((v) => v[1]), hi = Math.max(...vs), lo = fromZero ? 0 : Math.min(...vs);
-    const yStep = Math.max(minStep, niceStep(hi - lo || 1, 3)), yMin = Math.floor(lo / yStep) * yStep, yMax = Math.ceil(hi / yStep) * yStep;
+    const yStep = Math.max(minStep, niceStep(hi - lo || 1, 3)), yMin = Math.floor(lo / yStep) * yStep;
+    const yMax = Math.max(Math.ceil(hi / yStep) * yStep, yMin + yStep);  // every reading the same: still a span
     const ax = cardAxes(g, text, box, { title, xMax: minutes, yMin, yMax, yStep, xStep, xFmt, showX, gutter: GUTTER,
                                         ...(yFmt ? { yFmt } : {}) });
     for (const z of bands) {  // zones: faint horizontal bands, named in the margin on the right where there's room
@@ -1165,7 +1173,10 @@ async function openPhotos() {
     const r = await fetch(`/strokes/${s.id}.json`, { cache: "no-store" });
     if (r.ok) rows = (await r.json()) || [];  // one object per stroke (sessions.STROKE_COLUMNS)
   } catch (e) { /* no strokes saved: the cards draw what the summary has */ }
-  const cards = [["session", sessionCard(s, rows)], ...(s.intervals || []).map((i) => [`I${i.index}`, effortCard(s, i, rows)])];
+  // The session card needs the strokes (older sessions have none saved); the effort cards fall back
+  // to the summary's mean curve.
+  const cards = [...(rows.length ? [["session", sessionCard(s, rows)]] : []),
+                 ...(s.intervals || []).map((i) => [`I${i.index}`, effortCard(s, i, rows)])];
   photoFiles = cards.map(([name, cv]) => ({ name: `rowing-${s.id}-${name}.png`, url: cv.toDataURL("image/png") }));
   $("phList").innerHTML = photoFiles.map((f) => `<img src="${f.url}" alt="${f.name}">`).join("");
   show("photos");
