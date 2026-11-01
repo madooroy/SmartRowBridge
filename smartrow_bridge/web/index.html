@@ -1012,11 +1012,12 @@ function effortCard(s, i, rows, sharedTop = null) {
   // strokes) with a label along the bottom, where the curves leave room.
   const marks = [];  // [from cm, to cm, label]
   const easyEnd = i.steady_curve && i.steady_curve.length ? driveEnd(i.steady_curve) : driveEnd(i.curve || []);
-  const stalls = i.transition ? strokes.map((r) => [r, stallSpan(r.force_n)]).filter(([, sp]) => sp) : [];
+  // The stall, flagged or small: shaded where it happens, each stalled stroke's flat spot in amber.
+  const stalls = i.transition || i.small_stall ? strokes.map((r) => [r, stallSpan(r.force_n)]).filter(([, sp]) => sp) : [];
   if (stalls.length) {
     const med = (xs) => xs.slice().sort((x, y) => x - y)[Math.floor(xs.length / 2)];
     marks.push([sampleCm(med(stalls.map(([, sp]) => sp[0]))) - 1, sampleCm(med(stalls.map(([, sp]) => sp[1]))) + 1,
-                `stall after the peak (${i.stall_pct}% of strokes)`]);
+                `${i.transition ? "" : "small "}stall after the peak (${i.stall_pct}% of strokes)`]);
   }
   if (i.rating === "short")
     marks.push([sampleCm(easyEnd / 2), sampleCm(easyEnd), `finish ${signed(i.finish_pct, "%")}: less force here than usual`]);
