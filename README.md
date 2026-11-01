@@ -412,9 +412,9 @@ at 70 W or 250 W.
     strokes: the pull fades before the end.
   - **EARLIER PUSH** (amber): the force builds later in the drive than in your steady strokes (where the
     curve's centre of force sits, at least 3 % of the drive later).
-  - **LONGER STROKES** (amber): strokes clearly shorter than your steady ones (by 2.6 %, about 3 cm on a
-    115 cm stroke).
-  - **BETTER TRANSITION** (amber): the force stalls just after the peak (falls, holds, falls again) on 3 of
+  - **LONGER STROKES** (amber): strokes clearly shorter than your steady ones (by 4 %, about 5 cm on a
+    120 cm stroke; 2.6 % at `high` sensitivity).
+  - **BETTER TRANSITION** (amber): the force stalls just after the peak (falls, holds, falls again) on 4 of
     your last 8 strokes: a break in the handover after the peak. Let the phases overlap. The screens ring
     the stall on the curve (white on this stroke; grey where the recent ones stalled when this one didn't).
     Efforts only: at Easy force the pulley's 16 N steps can't tell a stall from rounding.
@@ -515,7 +515,8 @@ the early stroke a late effort that held the shape you were rowing at the time r
 
 **BETTER TRANSITION.** A fourth live cue, for a stall just after the peak: the force stops falling for a
 sample or two, then drops again. In efforts only, as the pulley's 16 N force steps are too coarse at Easy
-force (checked against each stroke's own smooth fit). It shows when 3 of the last 8 strokes have one, and the summary counts it
+force (checked against each stroke's own smooth fit). It shows when 4 of the last 8 strokes have one (3 at `high`
+sensitivity: at a stall rate around 17 %, 3 of 8 happen by chance about one stroke in seven), and the summary counts it
 per effort against the Easy rowing before (flagged at 25 % of strokes and 15 points over Easy). Coaching
 sources put dips like this at a handover, legs to back or back to arms; keeping the arms relaxed until the
 swing is nearly done tells which, and a video shows it. Spotted by Jaap van Ekris on a chart of one

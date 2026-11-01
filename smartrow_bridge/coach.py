@@ -197,9 +197,12 @@ class CueThresholds:
 
 
 SENSITIVITY = {
-    "low": CueThresholds(0.84, 0.88, 4.0, 3.0, 3.5, 2.5, 4, 2),
-    "normal": CueThresholds(0.88, 0.92, 3.0, 2.3, 2.6, 1.7, 3, 1),  # calibrated
-    "high": CueThresholds(0.91, 0.94, 2.3, 1.8, 2.0, 1.3, 2, 0),
+    "low": CueThresholds(0.84, 0.88, 4.0, 3.0, 5.0, 4.0, 5, 3),
+    # normal, retuned 1 Nov on 11 rows: LONGER STROKES at 4 % (2.6 % fired on an 8-stroke dip
+    # of the normal scatter against a reference 1-2 cm off), BETTER TRANSITION on 4 of 8 strokes
+    # (at a 17 % stall rate 3 of 8 turn up by chance one stroke in seven). Their old values are now "high".
+    "normal": CueThresholds(0.88, 0.92, 3.0, 2.3, 4.0, 3.0, 4, 2),
+    "high": CueThresholds(0.91, 0.94, 2.3, 1.8, 2.6, 1.7, 3, 1),
 }
 
 
