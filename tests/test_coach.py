@@ -214,24 +214,31 @@ class FtpTest(unittest.TestCase):
 
 
 class LiveDriftTest(unittest.TestCase):
-    def test_a_slow_fade_over_easy_rowing_is_noted(self):
+    def test_a_fade_against_the_fresh_stroke_is_noted(self):
         r = Rower(ftp=185)
-        r.row(150, 105)  # 7 minutes: the fresh stroke, no drift yet
+        r.row(220, 105)  # past the fresh stroke (2 to 8 min) and 60 strokes beyond it
         self.assertIsNone(r.state()["drift"])
-        r.row(60, 105, length=111)  # 3 minutes at 4 cm shorter
-        self.assertEqual(r.state()["drift"], "Easy stroke 4 cm shorter than 3 min ago")
-        r.row(60, 105, length=111)  # settled at the new length: nothing to say
-        self.assertIsNone(r.state()["drift"])
+        r.row(60, 105, length=111)  # 4 cm shorter than the fresh stroke
+        self.assertEqual(r.state()["drift"], "Easy: strokes 4 cm shorter than at the start")
+        r.row(60, 105, curve=FADED)  # length back, finish lighter
+        self.assertRegex(r.state()["drift"], r"^Easy: finish \d+% lighter than at the start$")
 
-    def test_not_during_an_effort_and_cleared_by_a_small_change(self):
+    def test_quiet_for_small_changes_longer_strokes_and_during_efforts(self):
         r = Rower(ftp=185)
-        r.row(120, 105)
-        r.row(60, 105, length=114)  # 1 cm: within the noise
+        r.row(220, 105)
+        r.row(60, 105, length=113)  # 2 cm: within the scatter
+        self.assertIsNone(r.state()["drift"])
+        r.row(60, 105, length=121)  # longer: nothing to fix
         self.assertIsNone(r.state()["drift"])
         r.row(60, 105, length=110)
         self.assertIsNotNone(r.state()["drift"])
         r.row(10, 150)
         self.assertIsNone(r.state()["drift"])  # an effort: the interval screen, not this
+
+    def test_not_before_the_fresh_stroke_is_done(self):
+        r = Rower(ftp=185)
+        r.row(100, 105, length=105)
+        self.assertIsNone(r.state()["drift"])
 
 
 class ThresholdsTest(unittest.TestCase):

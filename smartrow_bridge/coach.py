@@ -1063,30 +1063,29 @@ class IntervalCoach:
                      "finish": [c.finish_cue, c.finish_clear], "legs": [c.legs_cue, c.legs_clear],
                      "length_pct": [c.length_cue_pct, c.length_clear_pct],
                      "transition": [c.transition_cue, c.transition_clear]},
-            "easy_drift_n": EASY_DRIFT_N,
+            "easy_drift_n": EASY_DRIFT_N, "drift_note": [DRIFT_NOTE_CM, DRIFT_NOTE_PCT],
         }
 
     def live_drift(self) -> str | None:
-        """While rowing Easy: the last EASY_DRIFT_N Easy strokes against the EASY_DRIFT_N before them,
-        in the words of the end-of-row finding (easy_findings), when they differ by as much. The
-        Easy cue judges against the fresh stroke; this catches a slow fade over a long Easy stretch
-        whatever the fresh stroke was."""
+        """While rowing Easy: the last EASY_DRIFT_N Easy strokes against the fresh Easy stroke from
+        the start of this row (medians), when they have faded by DRIFT_NOTE_CM or DRIFT_NOTE_PCT. Only
+        fading: a longer stroke or a firmer finish isn't something to fix. The Easy cue judges a few
+        strokes at a time; this is the slow version of it, for a long Easy stretch. (Comparing the last
+        3 minutes with the 3 before was tried first: stroke-to-stroke scatter crossed 2 cm half the time.)"""
         n = EASY_DRIFT_N
-        if len(self.easy_log) < 2 * n:
-            return None
-        earlier, last = self.easy_log[-2 * n:-n], self.easy_log[-n:]
-        f0, f1 = statistics.median(x[0] for x in earlier), statistics.median(x[0] for x in last)
-        l0, l1 = statistics.median(x[1] for x in earlier), statistics.median(x[1] for x in last)
-        finish_pct, length = round((f1 / f0 - 1) * 100) if f0 else 0, round(l1 - l0)
+        if len(self.fresh) < n or len(self.easy_log) < n or self.easy_log[-n][2] <= self.fresh[-1].time:
+            return None  # the fresh stroke isn't done, or the last strokes still overlap it
+        last = self.easy_log[-n:]
+        f0 = statistics.median(back_share(s.force_n) for s in self.fresh)
+        l0 = statistics.median(s.stroke_length_cm for s in self.fresh)
+        f1, l1 = statistics.median(x[0] for x in last), statistics.median(x[1] for x in last)
+        shorter, finish_pct = l0 - l1, (f1 / f0 - 1) * 100 if f0 else 0.0
         parts = []
-        if abs(length) >= 2:
-            parts.append(f"{abs(length)} cm {'longer' if length > 0 else 'shorter'}")
-        if abs(finish_pct) >= 5:
-            parts.append(f"finish {_pct(finish_pct)}")
-        if not parts:
-            return None
-        minutes = (last[0][2] - earlier[0][2]) / 60 if len(last[0]) > 2 else 0
-        return f"Easy stroke {' and '.join(parts)} than {minutes:.0f} min ago" if minutes >= 1 else None
+        if shorter >= DRIFT_NOTE_CM:
+            parts.append(f"strokes {round(shorter)} cm shorter")
+        if finish_pct <= -DRIFT_NOTE_PCT:
+            parts.append(f"finish {round(-finish_pct)}% lighter")
+        return f"Easy: {' and '.join(parts)} than at the start" if parts else None
 
     # ------------------------------------------------------------ status
 
@@ -1300,6 +1299,7 @@ DRIFT_SKIP_S = 600.0  # heart rate is still climbing during the warm-up: left ou
 
 
 EASY_DRIFT_N = 60  # strokes at each end of the session's Easy rowing, for easy_drift()
+DRIFT_NOTE_CM, DRIFT_NOTE_PCT = 3.0, 8.0  # live_drift: Easy strokes this much shorter, or finish this much lighter
 
 
 def fresh_stats(strokes: list[StrokeCurve]) -> dict:
