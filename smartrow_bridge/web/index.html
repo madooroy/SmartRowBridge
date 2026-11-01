@@ -1214,9 +1214,12 @@ function glossary(s) {
     ["Colours", C.green, "Green: as it should be. Amber: worth a look. Red: clearly off."],
   ];
 }
-// Under the list: what the pulley can and can't tell.
-const GLOSSARY_NOTE = "All of this comes from the pulley alone: it measures how hard and how far the handle is " +
-  "pulled, not which muscles pull it. An early pull with the arms, say, shows only as a curve of a different shape.";
+// Under the list: what the pulley can and can't tell, and what tells the rest.
+const glossaryNote = (s) => "All of this comes from the pulley alone: it measures how hard and how far the handle is " +
+  "pulled, not which muscles pull it. An early pull with the arms, say, shows only as a curve of a different shape. " +
+  (s.rower ? "Filming a row side-on is what ties the curves to the body."
+           : "Filming my rows side-on is what ties the curves to the body: it\u2019s how my stall was traced to the " +
+             "legs-to-back handover.");
 
 function glossaryCard(s) {
   const { cv, g, text } = cardCanvas();
@@ -1232,16 +1235,16 @@ function glossaryCard(s) {
     }
     return line ? [...lines, line] : lines;
   };
-  let y = P + 178;
+  let y = P + 168;
   for (const [term, colour, def] of glossary(s)) {
     text(term, P, y, 26, colour, true);
-    y += 33;
-    for (const l of wrap(def, 23)) { text(l, P, y, 23, C.dim); y += 29; }
-    y += 13;
+    y += 32;
+    for (const l of wrap(def, 23)) { text(l, P, y, 23, C.dim); y += 28; }
+    y += 10;
   }
   y += 6;
   g.fillStyle = C.tile; g.fillRect(P, y - 26, width, 2);
-  for (const l of wrap(GLOSSARY_NOTE, 22)) { text(l, P, y + 8, 22, C.fg); y += 28; }
+  for (const l of wrap(glossaryNote(s), 22)) { text(l, P, y + 8, 22, C.fg); y += 28; }
   text(CARD_CREDIT, CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
   return cv;
 }
