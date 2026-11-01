@@ -628,7 +628,7 @@ class IntervalCoach:
         self.length_note: dict | None = None
         self.easy_window: deque[StrokeCurve] = deque(maxlen=CUE_WINDOW)
         self.easy_cue: str | None = None
-        self.easy_log: list[tuple[float, float]] = []  # (back-half share, length cm) per Easy stroke
+        self.easy_log: list[tuple[float, float, float]] = []  # (back-half share, length cm, time) per Easy stroke
         self.intervals: list[IntervalSummary] = []
         self.last_time: float | None = None
         self.last_count = 0
@@ -763,7 +763,7 @@ class IntervalCoach:
                 self.baseline = fresh_stats(self.fresh)
                 log.debug("Provisional Easy reference from %d fresh strokes", len(self.fresh))
         self.easy_window.append(s)
-        self.easy_log.append((back_share(s.force_n), s.stroke_length_cm))
+        self.easy_log.append((back_share(s.force_n), s.stroke_length_cm, s.time))
         self._update_easy_cue()
 
     def _fresh_outcome(self) -> tuple[dict | None, dict | None, dict | None]:
@@ -1005,6 +1005,7 @@ class IntervalCoach:
                          "max_effort_min": None if self.ftp else self.max_effort_s / 60,
                          "ftp_floor_pct": self.settings.ftp_floor_pct if self.ftp else None,
                          "sensitivity": self.settings.sensitivity},
+            "thresholds": self.thresholds(),
             "intervals": intervals,
             "heart_rate": hr,
             "easy_drift": self.easy_drift(),
@@ -1040,6 +1041,53 @@ class IntervalCoach:
         l0, l1 = statistics.median(x[1] for x in first), statistics.median(x[1] for x in last)
         return {"finish_pct": round((f1 / f0 - 1) * 100) if f0 else 0, "length_delta_cm": round(l1 - l0)}
 
+    def thresholds(self) -> dict:
+        """Every number the judgements turn on, saved with each session: when one is tuned later, an
+        old session still says what it was judged by (and a replay can be compared with the live row)."""
+        c = self.settings.cues
+        return {
+            "ftp_bounds_pct": list(FTP_BOUNDS_PCT), "easy_bounds": list(EASY_BOUNDS),
+            "ftp_floor_pct": self.settings.ftp_floor_pct, "end_pct": self.settings.end_pct,
+            "min_effort_strokes": self.settings.min_effort_strokes, "end_confirm": END_CONFIRM,
+            "split_min_strokes": SPLIT_MIN_STROKES, "settle_strokes": SETTLE_STROKES,
+            "local_easy": LOCAL_EASY, "shape_min": SHAPE_MIN, "recovery_strokes": RECOVERY_STROKES,
+            "fresh_window_s": [FRESH_FROM_S, FRESH_TO_S, FRESH_LATEST_S], "fresh_min": FRESH_MIN,
+            "expected_finish": dict(EXPECTED_FINISH), "expect_range": list(EXPECT_RANGE), "expect_min": EXPECT_MIN,
+            "good_finish": GOOD_FINISH, "ok_finish": OK_FINISH, "shorter_cm": SHORTER_CM,
+            "uneven_variation": UNEVEN_VARIATION, "uneven_length_sd": [UNEVEN_LENGTH_SD_RATIO, UNEVEN_LENGTH_SD_MIN],
+            "variation_floor": VARIATION_FLOOR, "short_stroke_pct": SHORT_STROKE_PCT,
+            "stall": {"flat": STALL_FLAT, "steep": STALL_STEEP, "flag_pct": STALL_FLAG_PCT, "flag_over": STALL_FLAG_OVER},
+            "peak_spread": [PEAK_SPREAD_RATIO, PEAK_SPREAD_MIN], "drive_end_fraction": DRIVE_END_FRACTION,
+            "sample_cm": SAMPLE_CM,
+            "cues": {"window": CUE_WINDOW, "min": CUE_MIN, "sensitivity": self.settings.sensitivity,
+                     "finish": [c.finish_cue, c.finish_clear], "legs": [c.legs_cue, c.legs_clear],
+                     "length_pct": [c.length_cue_pct, c.length_clear_pct],
+                     "transition": [c.transition_cue, c.transition_clear]},
+            "easy_drift_n": EASY_DRIFT_N,
+        }
+
+    def live_drift(self) -> str | None:
+        """While rowing Easy: the last EASY_DRIFT_N Easy strokes against the EASY_DRIFT_N before them,
+        in the words of the end-of-row finding (easy_findings), when they differ by as much. The
+        Easy cue judges against the fresh stroke; this catches a slow fade over a long Easy stretch
+        whatever the fresh stroke was."""
+        n = EASY_DRIFT_N
+        if len(self.easy_log) < 2 * n:
+            return None
+        earlier, last = self.easy_log[-2 * n:-n], self.easy_log[-n:]
+        f0, f1 = statistics.median(x[0] for x in earlier), statistics.median(x[0] for x in last)
+        l0, l1 = statistics.median(x[1] for x in earlier), statistics.median(x[1] for x in last)
+        finish_pct, length = round((f1 / f0 - 1) * 100) if f0 else 0, round(l1 - l0)
+        parts = []
+        if abs(length) >= 2:
+            parts.append(f"{abs(length)} cm {'longer' if length > 0 else 'shorter'}")
+        if abs(finish_pct) >= 5:
+            parts.append(f"finish {_pct(finish_pct)}")
+        if not parts:
+            return None
+        minutes = (last[0][2] - earlier[0][2]) / 60 if len(last[0]) > 2 else 0
+        return f"Easy stroke {' and '.join(parts)} than {minutes:.0f} min ago" if minutes >= 1 else None
+
     # ------------------------------------------------------------ status
 
     def state(self, now: float) -> dict:
@@ -1063,6 +1111,7 @@ class IntervalCoach:
             "intensity": self.intensity(statistics.median(stroke_power(r) for r in self.recent))
             if self.recent and self.effort is None else None,
             "cue": self.easy_cue if self.effort is None else None,
+            "drift": self.live_drift() if self.effort is None else None,  # shown where there is no cue
             "warming_up": self.warming_up(),
             # What the Easy screen says while there is no cue: learning only when there is no Easy
             # stroke to judge against yet; otherwise it is waiting for Easy strokes after an effort.

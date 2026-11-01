@@ -504,7 +504,11 @@ from the first stroke or fades as you tire shows up. The first 2 minutes are the
 cues). With nothing saved, today's is learned instead. Stroke length is calibrated at 8 minutes: today's
 becomes the reference, unless it is more than 3 cm shorter than last time's; then last time's stays, so
 LONGER STROKES speaks up, and the summary says so. Recovery gets the numbers only. The
-summary adds how the last minutes of Easy rowing compared with the fresh ones. (Efforts are not judged
+summary adds how the last minutes of Easy rowing compared with the fresh ones. During a long Easy
+stretch, when the last 60 Easy strokes are 2 cm or more shorter (or 5 % weaker in the finish) than the
+60 before them, the banner says so in place of LOOKS GOOD (*Easy stroke 3 cm shorter than 10 min ago*);
+it is a note, never in place of a cue. Each session file also saves every threshold the judgements
+used (`thresholds`), so a tuning change later doesn't make old sessions unreadable. (Efforts are not judged
 against the fresh stroke: your Easy stroke changes over a row, by up to 15 % in the finish, and against
 the early stroke a late effort that held the shape you were rowing at the time read as going short.)
 

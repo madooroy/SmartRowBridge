@@ -213,6 +213,37 @@ class FtpTest(unittest.TestCase):
             self.assertIsNone(_fixed_ftp(unset))
 
 
+class LiveDriftTest(unittest.TestCase):
+    def test_a_slow_fade_over_easy_rowing_is_noted(self):
+        r = Rower(ftp=185)
+        r.row(150, 105)  # 7 minutes: the fresh stroke, no drift yet
+        self.assertIsNone(r.state()["drift"])
+        r.row(60, 105, length=111)  # 3 minutes at 4 cm shorter
+        self.assertEqual(r.state()["drift"], "Easy stroke 4 cm shorter than 3 min ago")
+        r.row(60, 105, length=111)  # settled at the new length: nothing to say
+        self.assertIsNone(r.state()["drift"])
+
+    def test_not_during_an_effort_and_cleared_by_a_small_change(self):
+        r = Rower(ftp=185)
+        r.row(120, 105)
+        r.row(60, 105, length=114)  # 1 cm: within the noise
+        self.assertIsNone(r.state()["drift"])
+        r.row(60, 105, length=110)
+        self.assertIsNotNone(r.state()["drift"])
+        r.row(10, 150)
+        self.assertIsNone(r.state()["drift"])  # an effort: the interval screen, not this
+
+
+class ThresholdsTest(unittest.TestCase):
+    def test_saved_with_the_session_and_follow_the_settings(self):
+        import json
+        t = IntervalCoach(ftp=185).session_summary()["thresholds"]
+        json.dumps(t)  # it goes into the session file
+        self.assertEqual((t["stall"]["flat"], t["local_easy"], t["cues"]["sensitivity"]), (coach.STALL_FLAT, 40, "normal"))
+        high = IntervalCoach(coach.CoachSettings(sensitivity="high")).session_summary()["thresholds"]
+        self.assertEqual(high["cues"]["finish"], [coach.SENSITIVITY["high"].finish_cue, coach.SENSITIVITY["high"].finish_clear])
+
+
 class FtpReadOnceTest(unittest.TestCase):
     def test_read_once_retrying_until_online(self):
         import asyncio

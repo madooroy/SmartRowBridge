@@ -273,6 +273,9 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
                       fill=FG if value != "\u2013" else FAINT, anchor="mm")
         steady = coach.get("steady_curve") or []
         cue = coach.get("cue")
+        drift = coach.get("drift")  # a slow change over the Easy rowing: a note in place of LOOKS GOOD
+        if cue == "good" and drift:
+            cue = None
         text, colour = CUES.get(cue, ("", BLUE)) if cue else ("", BLUE)
         _plot_curves(draw, (4, 80, WIDTH - 4, 179), coach["stroke_curve"], steady, colour, "both")
         head = f"EASY  \u00b7  {format_time(m.get('elapsed_s', 0))}"
@@ -286,7 +289,10 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
         else:
             draw.rounded_rectangle(banner, radius=8, fill=TILE)
             waiting = coach.get("waiting") or ("warming up" if coach.get("warming_up") else "learning your Easy stroke")
-            draw.text((WIDTH // 2, 199), waiting, font=font(16), fill=DIM, anchor="mm")
+            if drift and coach.get("cue"):  # judged (not learning), and nothing more pressing
+                draw.text((WIDTH // 2, 199), drift, font=_fit(draw, drift, 15, WIDTH - 24, False), fill=AMBER, anchor="mm")
+            else:
+                draw.text((WIDTH // 2, 199), waiting, font=font(16), fill=DIM, anchor="mm")
         return image
 
     tiles = [

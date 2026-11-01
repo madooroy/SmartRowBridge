@@ -252,6 +252,8 @@ def preview(directory: str) -> None:
                                                                               "steady_curve": [], "cue": None}}, now, up),
         "07l-rowing-easy-finish-cue": screens.rowing_screen({**coached(), "coach": {**coached()["coach"], "cue": "finish",
                                                                                  "stroke_curve": short}}, now, up),
+        "07o-rowing-easy-drift": screens.rowing_screen({**coached(), "coach": {**coached()["coach"], "cue": "good",
+                                                                             "drift": "Easy stroke 4 cm shorter than 10 min ago"}}, now, up),
         "07m-rowing-recovery": screens.rowing_screen({**coached(), "coach": {**coached()["coach"],
                                                                           "intensity": "Recovery"}}, now, up),
         "09-hold-to-switch-off": screens.hold_screen(0.6),

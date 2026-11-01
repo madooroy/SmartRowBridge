@@ -88,6 +88,7 @@
   .tiles3 { display: grid; gap: var(--pad); grid-template-columns: repeat(3, 1fr); }
   .tiles3 .value { font-size: clamp(22px, 6vmin, 64px); text-align: center; margin-top: 6px; }
   .mini { height: 6px; background: var(--faint); position: relative; margin-top: 8px; border-radius: 3px; }
+  .cue.drift { color: var(--amber); font-size: clamp(18px, 4.5vmin, 44px); font-weight: 600; }
   .note { text-align: right; font-size: var(--label); color: var(--dim); }
   .note.warn { color: var(--amber); font-weight: 700; }
 
@@ -439,12 +440,15 @@ function renderRowing(st) {
   $("rCurveTile").hidden = !curve || recovery;
   $("rCue").hidden = !curve || recovery;
   if (curve && !recovery) {  // Easy: each stroke over your early Easy strokes, and the cue
-    const [text, cueColour] = CUES[coach.cue] || [coach.waiting || (coach.warming_up ? "warming up" : "learning your Easy stroke"), null];
+    // A slow change over the Easy rowing (coach.drift) is a note in place of LOOKS GOOD, never of a cue.
+    const drift = coach.cue === "good" && coach.drift;
+    const [text, cueColour] = drift ? [coach.drift, null]
+      : CUES[coach.cue] || [coach.waiting || (coach.warming_up ? "warming up" : "learning your Easy stroke"), null];
     drawCurve($("rCurve"), coach.stroke_curve, coach.steady_curve, cueColour || C.blue, "both");
     $("rNote").textContent = "EASY" + (coach.length_delta_cm !== null && coach.length_delta_cm !== undefined
       ? ` · length ${signed(coach.length_delta_cm, " cm")}` : "");
     $("rCue").textContent = text;
-    $("rCue").className = cueColour ? "cue" : "cue none";
+    $("rCue").className = cueColour ? "cue" : drift ? "cue none drift" : "cue none";
     $("rCue").style.background = cueColour || "";
   }
   let footer = `${fmtTime(m.elapsed_s)} · ` + (curve ? `${m.distance_m ?? 0} m` : `${m.stroke_count ?? 0} strokes`);
