@@ -384,6 +384,9 @@ hardware: `python3 -m smartrow_bridge.display --preview /tmp/screens` (needs Pil
 
 ## Optional: interval coach (experimental)
 
+The coach is called **PiRowingCoach**: the Pi (PiRower to your apps) with a rowing coach on it. Its name is
+on the Strava description's first line and on every picture it makes.
+
 <img src="docs/images/screen-interval.png" alt="Interval screen: time, watts, a stroke's force curve over the steady shape and a STRONGER FINISH cue" width="320"> <img src="docs/images/screen-interval-summary.png" alt="Interval summary: average force curve against steady, finish, length and peak" width="320">
 
 The pulley sends a force curve for every stroke (the SmartRow app draws it). The coach watches those curves

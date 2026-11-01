@@ -169,7 +169,7 @@ class UploadsTest(unittest.TestCase):
         self.assertTrue(body["name"].endswith(" Row"))
         self.assertEqual(body["description"], "Rowed using SmartRow")  # the report goes to Strava
         report = intervals.full_text(record)
-        self.assertEqual(report.splitlines()[0], "Rowed using SmartRow \u00b7 coached by PiRowerCoach")
+        self.assertEqual(report.splitlines()[0], "Rowed using SmartRow \u00b7 coached by PiRowingCoach")
         self.assertNotIn("SmartRowBridge", report)
         self.assertNotIn("FTP", body["description"])
 

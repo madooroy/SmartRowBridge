@@ -861,8 +861,8 @@ function shareImage(s) {
     });
     y += rows * (cardH + 24) - 24;
   }
-  text("Grey line: Easy stroke shape · light grey: force missing · SmartRow pulley + PiRowerCoach",
-       W / 2, H - 40, 22, C.dim, false, "center");
+  text("Grey line: Easy stroke shape · light grey: force missing", W / 2, H - 72, 22, C.dim, false, "center");
+  text(CARD_CREDIT, W / 2, H - 40, 22, C.dim, false, "center");
   return cv;
 }
 
@@ -896,6 +896,9 @@ $("share").addEventListener("click", shareSession);
 
 const CARD_W = 1080, CARD_H = 1350, CARD_P = 56;
 const CM_PER_SAMPLE = 5.8;  // the pulley's force samples, about this far apart along the stroke
+
+// The credit on every picture: as the first line of the Strava description (intervals.STRAVA_FIRST_LINE).
+const CARD_CREDIT = "Rowed using SmartRow \u00b7 coached by PiRowingCoach";
 
 function cardCanvas() {
   const cv = document.createElement("canvas");
@@ -1096,7 +1099,7 @@ function effortCard(s, i, rows, sharedTop = null) {
     g.font = `700 30px system-ui, "DejaVu Sans", sans-serif`;
     text(" \u00b7 small stall after the peak", P + g.measureText(verdict).width, 1258, 30, C.dim, true);
   }
-  text("SmartRow pulley + PiRowerCoach", CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
+  text(CARD_CREDIT, CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
   return cv;
 }
 
@@ -1171,7 +1174,7 @@ function easyCard(s, rows) {
   const held = finishOk && lengthOk;
   text(!d ? "Coach: not enough Easy rowing to compare" : held ? "Coach: Easy rowing held its shape" : "Coach: Easy rowing faded over the row",
        P, 1258, 30, !d ? C.dim : held ? C.green : C.amber, true);
-  text("SmartRow pulley + PiRowerCoach", CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
+  text(CARD_CREDIT, CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
   return cv;
 }
 
@@ -1253,7 +1256,7 @@ function sessionCard(s, rows) {
                                    ["amber", C.amber, true], [" see its effort card", C.dim, false]]) {
     text(t, x, y + 26, 22, colour, bold); x += g.measureText(t).width;
   }
-  text("SmartRow pulley + PiRowerCoach", CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
+  text(CARD_CREDIT, CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
   return cv;
 }
 

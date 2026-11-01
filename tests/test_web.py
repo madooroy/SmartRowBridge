@@ -217,3 +217,10 @@ class StallCheckInPageTest(unittest.TestCase):
         out = subprocess.run(["node", "-e", js + f"\nconsole.log(JSON.stringify({json.dumps(curves)}.map(stallSpan)));"],
                              capture_output=True, text=True, timeout=20, check=True).stdout
         self.assertEqual(json.loads(out), [list(stall_span(c)) if stall_span(c) else None for c in curves])
+
+
+class CardCreditTest(unittest.TestCase):
+    def test_cards_credit_matches_the_strava_first_line(self):
+        from smartrow_bridge import intervals
+        page = PAGE.read_text()
+        self.assertIn(f'const CARD_CREDIT = "{intervals.STRAVA_FIRST_LINE.replace(chr(0xb7), chr(92) + "u00b7")}"', page)

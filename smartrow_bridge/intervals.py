@@ -142,7 +142,7 @@ def effort_line(i: dict) -> str:
 
 
 # The Strava description's first line (what the feed shows): where the row came from, and who coached it.
-STRAVA_FIRST_LINE = "Rowed using SmartRow \u00b7 coached by PiRowerCoach"
+STRAVA_FIRST_LINE = "Rowed using SmartRow \u00b7 coached by PiRowingCoach"
 
 
 def note_for(record: dict) -> dict:
