@@ -92,7 +92,7 @@ def run() -> None:
     path = _env("SRB_STATUS_FILE", status_file.DEFAULT_PATH)
     use_led = _env("SRB_DISPLAY_LED", "1") not in ("0", "false", "no")
     hold_s = float(_env("SRB_DISPLAY_HOLD_S", "2"))
-    sleep_s = float(_env("SRB_DISPLAY_SLEEP_S", "300"))
+    sleep_s = float(_env("SRB_DISPLAY_SLEEP_S", "3600"))
 
     hat = DisplayHat(led=use_led)
     controller = Controller(hold_s=hold_s, sleep_s=sleep_s)

@@ -19,9 +19,10 @@
   to switch the Pi off on every boot. With a session still to upload, the Pi finishes
   it, uploads and then switches off by itself (A again: off now; B: cancel); a service
   that can't be reached gets it the next time the Pi is on.
-- The screen goes dark after SRB_DISPLAY_SLEEP_S seconds (300; 0 = never) with no
-  rowing, no button pressed and nothing still to upload; the LED stays on. Rowing or
-  any button wakes it, and the press that wakes it does nothing else.
+- The screen goes dark after SRB_DISPLAY_SLEEP_S seconds (3600; 0 = never) with nothing
+  connected (pulley, SmartRow app, fitness app, heart-rate strap), no rowing, no button
+  pressed and nothing still to upload; the LED stays on. Rowing, any button or a
+  connection wakes it, and the press that wakes it does nothing else.
 
 The screen asks the bridge to finish a session through a request file beside the status
 file (status.send_request); Frame.request carries it to the caller, which writes it.
@@ -49,7 +50,7 @@ FINISH_SHOW_S = 20.0  # the "Session finished" screen stays this long once its u
 FINISH_MAX_S = 120.0
 OFF_WAIT_MAX_S = 120.0  # A with uploads to go: switch off after this at the latest
 OFF_CLOSING_S = 3.0  # show how the uploads ended, then switch off
-SLEEP_S = 300.0  # the screen goes dark after this long with nothing happening (0: never)
+SLEEP_S = 3600.0  # the screen goes dark after this long with nothing happening (0: never)
 
 
 @dataclass
@@ -59,6 +60,13 @@ class Frame:
     switch_off: bool = False  # the hold finished: shut the Pi down now
     screen_on: bool = True  # False: dark (backlight off) until rowing or a button
     request: dict | None = None  # for the bridge: {"action": "finish", "token": ...} (status.request_path)
+
+
+def _connected(status: dict | None) -> bool:
+    """Something is connected: the pulley, the SmartRow app, a fitness app or the heart-rate strap."""
+    st = status or {}
+    return bool(st.get("stage") == "connected" or st.get("smartrow_app") or st.get("fitness_app")
+                or (st.get("heart_rate") or {}).get("connected"))
 
 
 def _session_open(status: dict | None) -> bool:
@@ -218,15 +226,17 @@ class Controller:
             buttons = dict.fromkeys(buttons, False)
         else:
             self._swallow = False
-        rowing = screens.bridge_state(status, now, uptime) == "ok" and bool(status.get("rowing"))
+        fresh = screens.bridge_state(status, now, uptime) == "ok"
+        rowing = fresh and bool(status.get("rowing"))
+        connected = fresh and _connected(status)
         if self.asleep:
-            if not (pressed or rowing or _outstanding(status)):
+            if not (pressed or rowing or connected or _outstanding(status)):
                 return Frame(screens.blank(), led_for(status, now, uptime), screen_on=False)
             self.asleep, self._quiet_since = False, uptime
             if pressed:
                 self._swallow, buttons = True, dict.fromkeys(buttons, False)
         frame = self._step(status, now, uptime, buttons, address)
-        busy = (pressed or rowing or self._rowing_recently(now) or _outstanding(status) or self.switching_off
+        busy = (pressed or rowing or connected or self._rowing_recently(now) or _outstanding(status) or self.switching_off
                 or self._off is not None or self._finish is not None or self._discard is not None
                 or frame.switch_off or frame.request is not None)
         if busy or self._quiet_since is None:

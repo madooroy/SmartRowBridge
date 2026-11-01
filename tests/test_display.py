@@ -365,7 +365,10 @@ class SleepTest(unittest.TestCase):
         return c.step(st, NOW + t, UPTIME + t, {**NO_BUTTONS, **buttons})
 
     def fresh(self, t, **kw):
-        return status(age=-t, **kw)
+        """Nothing connected (the pulley asleep, no apps, no strap) unless asked."""
+        st = status(age=-t, stage=kw.pop("stage", "searching"), **kw)
+        st["smartrow_app"] = False
+        return st
 
     def test_goes_dark_when_nothing_happens_and_rowing_wakes_it(self):
         c = app.Controller(sleep_s=300)
@@ -373,7 +376,7 @@ class SleepTest(unittest.TestCase):
         self.assertTrue(self.step(c, self.fresh(299), 299).screen_on)
         f = self.step(c, self.fresh(300), 300)
         self.assertFalse(f.screen_on)
-        self.assertEqual(f.led, "green")  # the LED stays on: asleep, not off
+        self.assertEqual(f.led, "red")  # the LED stays on (red: no pulley): asleep, not off
         self.assertFalse(self.step(c, self.fresh(900), 900).screen_on)
         self.assertTrue(self.step(c, self.fresh(901, rowing=True), 901).screen_on)
         self.assertEqual(c.view, "rowing")
@@ -406,12 +409,36 @@ class SleepTest(unittest.TestCase):
     def test_a_clock_jump_after_boot_does_not_darken_it(self):
         # The Pi has no clock battery: the time jumps forward by hours once it syncs.
         c = app.Controller(sleep_s=300)
-        self.assertTrue(c.step(status(), 1000.0, 20.0, NO_BUTTONS).screen_on)
-        st = status()
+        idle = status(stage="searching")
+        idle["smartrow_app"] = False
+        self.assertTrue(c.step(idle, 1000.0, 20.0, NO_BUTTONS).screen_on)
+        st = dict(idle)
         st["time"] = 101030.0
         self.assertTrue(c.step(st, 101030.0, 50.0, NO_BUTTONS).screen_on)
         st["time"] = 101030.0 + 300
         self.assertFalse(c.step(st, 101030.0 + 300, 350.0, NO_BUTTONS).screen_on)  # uptime, not the clock
+
+    def test_never_while_anything_is_connected(self):
+        def connected(t, what):
+            st = self.fresh(t)
+            if what == "pulley":
+                st["stage"] = "connected"
+            elif what == "strap":
+                st["heart_rate"] = {"name": "COROS", "connected": True}
+            else:
+                st[what] = True
+            return st
+        for what in ("pulley", "smartrow_app", "fitness_app", "strap"):
+            c = app.Controller(sleep_s=3600)
+            for t in range(0, 4 * 3600, 600):
+                self.assertTrue(self.step(c, connected(t, what), t).screen_on, (what, t))
+            # disconnected: the hour starts then
+            self.assertTrue(self.step(c, self.fresh(4 * 3600), 4 * 3600).screen_on)
+            self.assertFalse(self.step(c, self.fresh(5 * 3600), 5 * 3600).screen_on, what)
+            self.assertTrue(self.step(c, connected(5 * 3600 + 1, what), 5 * 3600 + 1).screen_on)  # and wakes it
+
+    def test_an_hour_by_default(self):
+        self.assertEqual(app.SLEEP_S, 3600)
 
     def test_zero_means_never(self):
         c = app.Controller(sleep_s=0)
