@@ -1220,7 +1220,7 @@ def findings(intervals: list[dict]) -> list[str]:
 
     if len(good) == n:
         out.append("The effort kept its shape and length: finish within 5% of your usual at that intensity." if n == 1
-                   else f"All {n} efforts kept their shape and length: finish within 5% of your usual at that intensity.")
+                   else f"{'Both' if n == 2 else f'All {n}'} efforts kept their shape and length: finish within 5% of your usual at that intensity.")
     elif good:
         out.append(f"{len(good)} of {n} efforts kept their shape and length ({_names(good)}).")
     if faded:

@@ -964,7 +964,19 @@ function stallSpan(f) {  // [first sample, sample where the fall resumes] or nul
 }
 const sampleCm = (k) => (k + 1) * CM_PER_SAMPLE;  // force sample k, cm of handle travel from the catch
 
-function effortCard(s, i, rows) {
+// The highest force on any effort card of a session: the cards share one scale, so they compare.
+function effortCardTop(s, rows) {
+  let top = 1;
+  for (const i of s.intervals || []) {
+    const t0 = i.started_at_s ?? 0, t1 = t0 + i.duration_s;
+    const strokes = rows.filter((r) => r.t >= t0 - 0.5 && r.t <= t1 && r.force_n && r.force_n.length);
+    top = Math.max(top, ...strokes.flatMap((r) => r.force_n), ...(i.steady_curve || []),
+                   ...(strokes.length ? [] : i.curve || []));
+  }
+  return top;
+}
+
+function effortCard(s, i, rows, sharedTop = null) {
   const { cv, g, text, tile } = cardCanvas();
   const t0 = i.started_at_s ?? 0, t1 = t0 + i.duration_s;
   const strokes = rows.filter((r) => r.t >= t0 - 0.5 && r.t <= t1 && r.force_n && r.force_n.length);
@@ -976,8 +988,9 @@ function effortCard(s, i, rows) {
   // Every stroke of the effort over the Easy rowing just before it (dashed).
   const box = [P, 240, CARD_W - 2 * P, 620];
   tile(...box);
-  const top = Math.max(1, ...strokes.flatMap((r) => r.force_n), ...(i.steady_curve || []), ...(strokes.length ? [] : i.curve || []));
-  const yStep = niceStep(top, 4), yMax = Math.ceil(top / yStep) * yStep;
+  const top = sharedTop ?? Math.max(1, ...strokes.flatMap((r) => r.force_n), ...(i.steady_curve || []),
+                                    ...(strokes.length ? [] : i.curve || []));
+  const yStep = niceStep(top, 7), yMax = Math.ceil(top / yStep) * yStep;  // gridlines every 100 N or so
   const ax = cardAxes(g, text, box, { title: "FORCE (N) ALONG THE DRIVE", xMax: 140, yMax, yStep, xStep: 20,
                                       xFmt: (v) => v === 140 ? "140 cm" : `${v}` });
   const path = (curve) => {  // from the catch (0 force) out along the stroke
@@ -1069,6 +1082,81 @@ function effortCard(s, i, rows) {
                  i.legs_late ? "late push" : null, i.rating === "short" ? "finish faded" : null].filter(Boolean);
   text(flags.length ? `Coach: ${flags.join(" \u00b7 ")}` : "Coach: kept its shape", P, 1258, 30,
        flags.length ? C.amber : C.green, true);
+  text("SmartRow pulley + PiRowerCoach", CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
+  return cv;
+}
+
+// The Easy rowing of a session: every Easy stroke after the warm-up (efforts and the half minute
+// after each left out), coloured from early (blue) to late (violet), over the fresh Easy stroke.
+const EASY_FROM_S = 120, AFTER_EFFORT_S = 35;
+function easyStrokes(s, rows) {
+  const easy = (s.power_bands || []).find((b) => b[0] === "Easy");
+  const busy = (s.intervals || []).map((i) => [(i.started_at_s ?? 0) - 1, (i.started_at_s ?? 0) + i.duration_s + AFTER_EFFORT_S]);
+  return rows.filter((r) => r.t >= EASY_FROM_S && r.force_n && r.force_n.length && r.power_w
+                     && (!easy || ((easy[1] ?? 0) <= r.power_w && r.power_w < (easy[2] ?? Infinity)))
+                     && !busy.some(([a, b]) => a <= r.t && r.t <= b));
+}
+
+function easyCard(s, rows) {
+  const strokes = easyStrokes(s, rows);
+  if (strokes.length < 20) return null;
+  const { cv, g, text, tile } = cardCanvas();
+  const P = CARD_P, med = (xs) => xs.slice().sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+  const watts = Math.round(med(strokes.map((r) => r.power_w))), minutes = (strokes[strokes.length - 1].t - strokes[0].t) / 60;
+  text(`${fmtWhen(s.started_at)} \u00b7 ROWING`, P, P + 26, 26, C.dim, true);
+  text("Easy rowing", P, P + 104, 72, C.fg, true);
+  text([`${strokes.length} strokes`, `${watts} W`, `${Math.round(med(strokes.map((r) => r.spm)))} spm`].join("  \u00b7  "),
+       P, P + 158, 34, C.dim);
+  const box = [P, 240, CARD_W - 2 * P, 620];
+  tile(...box);
+  const fresh = (s.fresh_easy || {}).curve || [];
+  const top = Math.max(1, ...strokes.flatMap((r) => r.force_n), ...fresh);
+  const yStep = niceStep(top, 7), yMax = Math.ceil(top / yStep) * yStep;
+  const ax = cardAxes(g, text, box, { title: "FORCE (N) ALONG THE DRIVE", xMax: 140, yMax, yStep, xStep: 20,
+                                      xFmt: (v) => v === 140 ? "140 cm" : `${v}` });
+  const path = (curve) => {
+    g.beginPath(); g.moveTo(ax.X(0), ax.Y(0));
+    driveOnly(curve).forEach((v, k) => g.lineTo(ax.X((k + 1) * CM_PER_SAMPLE), ax.Y(v)));
+  };
+  const early = [91, 170, 245], late = [181, 140, 255];  // blue to violet
+  const t0 = strokes[0].t, span = Math.max(1, strokes[strokes.length - 1].t - t0);
+  g.lineWidth = 2; g.globalAlpha = 0.28;
+  for (const r of strokes) {
+    const f = (r.t - t0) / span, c = early.map((e, k) => Math.round(e + (late[k] - e) * f));
+    path(r.force_n); g.strokeStyle = `rgb(${c.join(",")})`; g.stroke();
+  }
+  g.globalAlpha = 1;
+  if (fresh.length) {
+    path(fresh); g.strokeStyle = C.fg; g.lineWidth = 4; g.setLineDash([14, 10]); g.stroke(); g.setLineDash([]);
+    text("\u2014 \u2014  fresh Easy stroke (2\u20138 min)", ax.x1, ax.y0 + 30, 22, C.fg, false, "right");
+  }
+  // early -> late key
+  const kx = ax.x1 - 260, ky = ax.y0 + 62, grad = g.createLinearGradient(kx + 60, 0, kx + 200, 0);
+  grad.addColorStop(0, `rgb(${early})`); grad.addColorStop(1, `rgb(${late})`);
+  text("early", kx + 50, ky + 8, 22, C.dim, false, "right");
+  g.fillStyle = grad; g.fillRect(kx + 60, ky - 4, 140, 10);
+  text("late", kx + 210, ky + 8, 22, C.dim);
+  text(`over ${Math.round(minutes)} min`, box[0] + box[2] - 24, box[1] + 44, 22, C.dim, false, "right");
+  // How it held over the row (the coach's easy_drift: the last 60 Easy strokes against the first).
+  const d = s.easy_drift, lens = strokes.map((r) => r.length_cm);
+  const finishOk = !d || d.finish_pct > -5, lengthOk = !d || d.length_delta_cm > -2;
+  const tiles = [
+    ["POWER", `${watts} W`, "median Easy stroke", C.fg],
+    ["LENGTH", `${Math.round(med(lens))} cm`, fresh.length ? `fresh stroke ${Math.round(s.fresh_easy.length_cm)} cm` : "median", C.fg],
+    ["FINISH OVER THE ROW", d ? signed(d.finish_pct, "%") : "\u2013", "last minutes against the first", finishOk ? C.green : C.amber],
+    ["LENGTH OVER THE ROW", d ? signed(d.length_delta_cm, " cm") : "\u2013", "last minutes against the first", lengthOk ? C.green : C.amber],
+  ];
+  const tw = (CARD_W - 2 * P - 24) / 2, th = 150;
+  tiles.forEach(([l, v, sub, colour], k) => {
+    const x = P + (k % 2) * (tw + 24), y = 884 + Math.floor(k / 2) * (th + 20);
+    tile(x, y, tw, th);
+    text(l, x + 24, y + 38, 22, C.dim, true);
+    text(v, x + 24, y + 98, 52, colour, true);
+    text(sub, x + 24, y + 134, 22, C.dim);
+  });
+  const held = finishOk && lengthOk;
+  text(!d ? "Coach: not enough Easy rowing to compare" : held ? "Coach: Easy rowing held its shape" : "Coach: Easy rowing faded over the row",
+       P, 1258, 30, !d ? C.dim : held ? C.green : C.amber, true);
   text("SmartRow pulley + PiRowerCoach", CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
   return cv;
 }
@@ -1166,8 +1254,9 @@ async function openPhotos() {
   } catch (e) { /* no strokes saved: the cards draw what the summary has */ }
   // The session card needs the strokes (older sessions have none saved); the effort cards fall back
   // to the summary's mean curve.
-  const cards = [...(rows.length ? [["session", sessionCard(s, rows)]] : []),
-                 ...(s.intervals || []).map((i) => [`I${i.index}`, effortCard(s, i, rows)])];
+  const easy = rows.length ? easyCard(s, rows) : null;
+  const cards = [...(rows.length ? [["session", sessionCard(s, rows)]] : []), ...(easy ? [["easy", easy]] : []),
+                 ...(s.intervals || []).map((i) => [`I${i.index}`, effortCard(s, i, rows, effortCardTop(s, rows))])];
   photoFiles = cards.map(([name, cv]) => ({ name: `rowing-${s.id}-${name}.png`, url: cv.toDataURL("image/png") }));
   $("phList").innerHTML = photoFiles.map((f) => `<img src="${f.url}" alt="${f.name}">`).join("");
   show("photos");
