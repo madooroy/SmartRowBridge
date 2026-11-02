@@ -224,3 +224,18 @@ class CardCreditTest(unittest.TestCase):
         from smartrow_bridge import intervals
         page = PAGE.read_text()
         self.assertIn(f'const CARD_CREDIT = "{intervals.STRAVA_FIRST_LINE.replace(chr(0xb7), chr(92) + "u00b7")}"', page)
+
+
+class ExportWithoutLengthTest(unittest.TestCase):
+    def test_replay_reads_an_export_without_stroke_length(self):
+        import tools.coach_replay as replay_tool
+        with tempfile.TemporaryDirectory() as tmp:
+            export = Path(tmp) / "session.csv"
+            write_export(export)
+            lines = export.read_text().splitlines()
+            head = lines[0].split(",")
+            k = head.index("Stroke length (cm)")
+            export.write_text("\n".join(",".join(c for j, c in enumerate(l.split(",")) if j != k) for l in lines) + "\n")
+            strokes = list(replay_tool.strokes_from_csv(export))
+        self.assertEqual({s.stroke_length_cm for s in strokes}, {0})
+        self.assertEqual(len(strokes), 101)

@@ -120,9 +120,11 @@ def effort_line(i: dict) -> str:
     notes = []
     if i.get("rating") in ("short", "ok"):
         notes.append(f"finish {_signed(i['finish_pct'])}%")
+    elif i.get("rating") == "unknown":
+        notes.append("finish not read (curve cut off)")
     if i.get("length_delta_cm", 0) <= SHORTER_CM:
         notes.append(f"strokes {abs(round(i['length_delta_cm']))} cm shorter")
-    if i.get("fade_pct", 0) <= -10:
+    if i.get("fade_pct", 0) <= -10 and i.get("rating") != "unknown":
         notes.append(f"faded {abs(i['fade_pct'])}% over the effort")
     if i.get("legs_late"):
         notes.append("late push")
@@ -134,6 +136,8 @@ def effort_line(i: dict) -> str:
         notes.append(f"stall after the peak on {i['stall_pct']}%")
     elif i.get("small_stall"):
         notes.append(f"small stall on {i['stall_pct']}%")
+    elif i.get("habitual_stall"):
+        notes.append(f"stall on {i['stall_pct']}%, as in Easy")
     parts = [f"I{i['index']}" + (f" {i['intensity']}" if i.get("intensity") else ""),
              f"{_clock(i['duration_s'])} at {i['power_w']} W", ", ".join(notes) or "good"]
     if i.get("hr_peak"):
@@ -205,9 +209,11 @@ def coach_line(record: dict) -> str:
     listed = kinds[0] if len(kinds) == 1 else ", ".join(kinds[:-1]) + " and " + kinds[-1]
     head = f"Coach: {listed} effort{'s' if len(efforts) > 1 else ''} ({span})"
     eased = [i for i in efforts if i.get("rating") in ("ok", "short")]
+    unread = [i for i in efforts if i.get("rating") == "unknown"]
     shorter = [i for i in efforts if i.get("length_delta_cm", 0) <= SHORTER_CM]
     notes = []
-    for label, these in (("the finish eased", eased), ("strokes were shorter", shorter)):
+    for label, these in (("the finish eased", eased), ("strokes were shorter", shorter),
+                         ("the finish wasn't read (curves cut off)", unread)):
         if these:
             where = (_count(len(these)) if len(these) == len(efforts) else
                      ", ".join(f"I{i['index']}" for i in these))

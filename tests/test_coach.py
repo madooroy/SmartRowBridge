@@ -835,3 +835,58 @@ class SmallStallTest(unittest.TestCase):
         d = r.coach.intervals[-1].as_dict()
         self.assertFalse(d["small_stall"])
         self.assertNotIn("small stall", " ".join(coach.findings([d])))
+
+
+class SecondRowerTest(unittest.TestCase):
+    """What a second rower's export (a newer SmartRow device, a longer stroke) showed up."""
+
+    def test_cut_off_curves_leave_the_finish_unread(self):
+        long_stroke = [v if i < 18 else max(v, 300) for i, v in enumerate(STEADY)]  # still pulling at the last sample
+        self.assertTrue(coach.cut_off(long_stroke))
+        self.assertFalse(coach.cut_off(STEADY))
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(30, 150, curve=long_stroke)
+        r.row(20, 105)
+        d = r.coach.intervals[-1].as_dict()
+        self.assertEqual((d["rating"], d["finish_known"]), ("unknown", False))
+        text = " ".join(coach.findings([d]))
+        self.assertIn("cut off before the end of the drive", text)
+        self.assertNotIn("kept its shape", text)  # nothing judged, nothing claimed
+        from smartrow_bridge import intervals
+        self.assertIn("finish not read", intervals.effort_line(d))
+
+    def test_no_stroke_length_in_the_export(self):
+        r = Rower(ftp=185)
+        r.row(200, 105, length=0)
+        r.row(30, 150, length=0)
+        r.row(20, 105, length=0)
+        d = r.coach.intervals[-1].as_dict()
+        self.assertFalse(d["length_known"])
+        self.assertIn("The effort kept its shape:", " ".join(coach.findings([d])))  # not "shape and length"
+
+    def test_a_stall_also_in_easy_rowing_is_habitual_not_small(self):
+        base = {"index": 1, "rating": "good", "finish_pct": 0, "duration_s": 60, "power_w": 150, "intensity": "Moderate",
+                "length_delta_cm": 0, "stall_cm": 90, "steady_power_w": 100}
+        efforts = [{**base, "index": k + 1, "stall_pct": p, "steady_stall_pct": 95, "transition": False,
+                    "small_stall": False, "habitual_stall": True} for k, p in enumerate((92, 45, 38, 46, 29))]
+        text = " ".join(coach.findings(efforts))
+        self.assertIn("A stall just after the peak on many strokes in all 5 efforts (29–92%), as in the Easy "
+                      "rowing between them (95%)", text)
+        self.assertNotIn("small stall", text)
+
+    def test_small_means_under_the_flag(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(30, 150, curve=STALLED)
+        r.row(20, 105)
+        i = r.coach.intervals[-1]
+        self.assertTrue(i.transition)
+        self.assertFalse(i.small_stall or i.habitual_stall)
+
+    def test_many_efforts_are_summarised(self):
+        base = {"rating": "ok", "finish_pct": -7, "duration_s": 60, "power_w": 150, "intensity": "Moderate",
+                "length_delta_cm": 0, "steady_power_w": 100}
+        text = " ".join(coach.findings([{**base, "index": k + 1} for k in range(9)]))
+        self.assertIn("The finish eased a little in all 9 efforts (−7%)", text)
+        self.assertNotIn("I1, I2", text)

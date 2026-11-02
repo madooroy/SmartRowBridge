@@ -369,7 +369,12 @@ function plotCurve(g, bx, by, w, h, curve, steady, colour, gapHalf = "back", lab
 
 // An interval's colour (older saved sessions: by their finish rating): green, or amber when its
 // shape or length passed a cue's threshold (coach.balance(), length_balance()).
+// Exports from newer SmartRow devices have no stroke length; curves cut off at the end leave the finish unread.
+const lengthKnown = (i) => i.length_known !== false && (i.length_cm ?? 0) > 0;
+const finishText = (i) => i.rating === "unknown" ? "\u2013" : signed(i.finish_pct, "%");
+
 function shapeColour(i) {
+  if (i.rating === "unknown") return C.dim;
   if (i.balance === null || i.balance === undefined) return i.legs_late ? C.amber : (RATING[i.rating] || C.fg);
   return Math.abs(i.balance) >= 1 || (i.length_balance ?? 0) <= -1 ? C.amber : C.green;
 }
@@ -852,10 +857,10 @@ function shareImage(s) {
       const x = P + (k % cols) * (cardW + 24), top = y + Math.floor(k / cols) * (cardH + 24);
       tile(x, top, cardW, cardH);
       text(`I${i.index} · ${fmtTime(i.duration_s)} · ${i.power_w} W`, x + 22, top + 46, 30, C.fg, true);
-      text(signed(i.finish_pct, "%"), x + cardW - 22, top + 48, 40, ratingColour(i), true, "right");
+      text(finishText(i), x + cardW - 22, top + 48, 40, ratingColour(i), true, "right");
       plotCurve(g, x + 6, top + 62, cardW - 12, 130, i.curve, i.steady_curve, ratingColour(i),
                 "both", false, 2);
-      const note = i.legs_late ? "late push" : `${Math.round(i.length_cm)} cm (${signed(Math.round(i.length_delta_cm), "")}) · ${i.stroke_rate_spm} spm` +
+      const note = i.legs_late ? "late push" : (lengthKnown(i) ? `${Math.round(i.length_cm)} cm (${signed(Math.round(i.length_delta_cm), "")}) · ` : "") + `${i.stroke_rate_spm} spm` +
                    (i.hr_peak ? ` · ♥ ${i.hr_peak}` : "");
       text(note, x + 22, top + cardH - 22, 24, i.legs_late ? C.amber : C.dim, !!i.legs_late);
     });
@@ -984,7 +989,8 @@ function stallNote(s, i) {
   if (i.stall_pct === undefined) return "";
   const t = i.stall_thirds, parts = [];
   if (t && Math.max(t[1], t[2]) - t[0] >= 8) parts.push(`${t[0]} \u2192 ${Math.max(t[1], t[2])}% over it`);
-  if (s.stall_usual) parts.push(`usual ${s.stall_usual[0]}\u2013${s.stall_usual[1]}%`);
+  if (i.habitual_stall) parts.push(`Easy ${i.steady_stall_pct}%`);
+  else if (s.stall_usual) parts.push(`usual ${s.stall_usual[0]}\u2013${s.stall_usual[1]}%`);
   return parts.length ? parts.join(" \u00b7 ") : "of strokes";
 }
 
@@ -1016,11 +1022,11 @@ function effortCard(s, i, rows, sharedTop = null) {
   const marks = [];  // [from cm, to cm, label]
   const easyEnd = i.steady_curve && i.steady_curve.length ? driveEnd(i.steady_curve) : driveEnd(i.curve || []);
   // The stall, flagged or small: shaded where it happens, each stalled stroke's flat spot in amber.
-  const stalls = i.transition || i.small_stall ? strokes.map((r) => [r, stallSpan(r.force_n)]).filter(([, sp]) => sp) : [];
+  const stalls = i.transition || i.small_stall || i.habitual_stall ? strokes.map((r) => [r, stallSpan(r.force_n)]).filter(([, sp]) => sp) : [];
   if (stalls.length) {
     const med = (xs) => xs.slice().sort((x, y) => x - y)[Math.floor(xs.length / 2)];
     marks.push([sampleCm(med(stalls.map(([, sp]) => sp[0]))) - 1, sampleCm(med(stalls.map(([, sp]) => sp[1]))) + 1,
-                `${i.transition ? "" : "small "}stall after the peak (${i.stall_pct}% of strokes)`]);
+                `${i.small_stall ? "small " : ""}stall after the peak (${i.stall_pct}% of strokes${i.habitual_stall ? ", as in Easy" : ""})`]);
   }
   if (i.rating === "short")
     marks.push([sampleCm(easyEnd / 2), sampleCm(easyEnd), `finish ${signed(i.finish_pct, "%")}: less force here than usual`]);
@@ -1052,6 +1058,12 @@ function effortCard(s, i, rows, sharedTop = null) {
   if (i.steady_curve && i.steady_curve.length) {
     path(i.steady_curve); g.strokeStyle = C.fg; g.lineWidth = 4; g.setLineDash([14, 10]); g.stroke(); g.setLineDash([]);
   }
+  if (i.rating === "unknown") {  // the sensor's last sample: the drive went on past it
+    const x = ax.X(sampleCm(23));
+    g.strokeStyle = C.amber; g.lineWidth = 3; g.setLineDash([10, 8]);
+    g.beginPath(); g.moveTo(x, ax.y0 + 70); g.lineTo(x, ax.Y(0)); g.stroke(); g.setLineDash([]);
+    text("sensor stops here; the drive goes on", x - 10, ax.y0 + 92, 21, C.amber, true, "right");
+  }
   text(strokes.length ? `${strokes.length} strokes, one line each` : `average of ${i.strokes} strokes`,
        box[0] + box[2] - 24, box[1] + 44, 22, C.dim, false, "right");
   if (i.steady_curve && i.steady_curve.length)
@@ -1075,9 +1087,13 @@ function effortCard(s, i, rows, sharedTop = null) {
   }
   // The numbers the coach judged it by.
   const tiles = [
-    ["FINISH", signed(i.finish_pct, "%"), `vs your usual ${i.intensity || "effort"}`, ratingColour(i)],
-    ["LENGTH", `${Math.round(i.length_cm)} cm`, `${signed(Math.round(i.length_delta_cm), " cm")} vs Easy`,
-     i.length_delta_cm <= -2 ? C.amber : C.fg],
+    i.rating === "unknown"
+      ? ["FINISH", "\u2013", `not read: ${i.cut_off_pct}% of curves cut off`, C.dim]
+      : ["FINISH", signed(i.finish_pct, "%"), `vs ${s.rower ? "the" : "your"} usual ${i.intensity || "effort"}`, ratingColour(i)],
+    lengthKnown(i)
+      ? ["LENGTH", `${Math.round(i.length_cm)} cm`, `${signed(Math.round(i.length_delta_cm), " cm")} vs Easy`,
+         i.length_delta_cm <= -2 ? C.amber : C.fg]
+      : ["LENGTH", "\u2013", "not in this export", C.dim],
     ["CONSISTENCY", i.variation_ratio !== undefined ? `${i.variation_ratio.toFixed(1)}\u00d7` : "\u2013",
      i.variation_ratio !== undefined ? "variation stroke to stroke, vs Easy" : "", i.uneven ? C.amber : C.fg],
     ["STALL AFTER THE PEAK", i.stall_pct !== undefined ? `${i.stall_pct}%` : "\u2013", stallNote(s, i),
@@ -1093,11 +1109,15 @@ function effortCard(s, i, rows, sharedTop = null) {
   });
   const flags = [i.uneven ? "uneven strokes" : null, i.transition ? "stall after the peak" : null,
                  i.legs_late ? "late push" : null, i.rating === "short" ? "finish faded" : null].filter(Boolean);
-  const verdict = flags.length ? `Coach: ${flags.join(" \u00b7 ")}` : "Coach: kept its shape";
+  const verdict = flags.length ? `Coach: ${flags.join(" \u00b7 ")}`
+    : i.rating === "unknown" ? "Coach: nothing flagged" : "Coach: kept its shape";
   text(verdict, P, 1258, 30, flags.length ? C.amber : C.green, true);
-  if (!flags.length && i.small_stall) {  // under the flag, but not nothing: said in grey
+  const asides = [i.small_stall ? "small stall after the peak" : null,  // under the flag, but not nothing: in grey
+                  i.habitual_stall ? "stall as in Easy rowing" : null,
+                  i.rating === "unknown" ? "finish not read" : null].filter(Boolean);
+  if (!flags.length && asides.length) {
     g.font = `700 30px system-ui, "DejaVu Sans", sans-serif`;
-    text(" \u00b7 small stall after the peak", P + g.measureText(verdict).width, 1258, 30, C.dim, true);
+    text(` \u00b7 ${asides.join(" \u00b7 ")}`, P + g.measureText(verdict).width, 1258, 30, C.dim, true);
   }
   text(CARD_CREDIT, CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
   return cv;
@@ -1155,13 +1175,18 @@ function easyCard(s, rows) {
   text("late", kx + 210, ky + 8, 22, C.dim);
   text(`over ${Math.round(minutes)} min`, box[0] + box[2] - 24, box[1] + 44, 22, C.dim, false, "right");
   // How it held over the row (the coach's easy_drift: the last 60 Easy strokes against the first).
-  const d = s.easy_drift, lens = strokes.map((r) => r.length_cm);
-  const finishOk = !d || d.finish_pct > -5, lengthOk = !d || d.length_delta_cm > -2;
+  const d = s.easy_drift, lens = strokes.map((r) => r.length_cm), hasLen = med(lens) > 0;
+  const cutPct = Math.round(100 * strokes.filter((r) => r.force_n[r.force_n.length - 1] >= 0.25 * Math.max(...r.force_n)).length
+                            / strokes.length), hasFinish = cutPct < 50;
+  const finishOk = !d || !hasFinish || d.finish_pct > -5, lengthOk = !d || !hasLen || d.length_delta_cm > -2;
   const tiles = [
     ["POWER", `${watts} W`, "median Easy stroke", C.fg],
-    ["LENGTH", `${Math.round(med(lens))} cm`, fresh.length ? `fresh stroke ${Math.round(s.fresh_easy.length_cm)} cm` : "median", C.fg],
-    ["FINISH OVER THE ROW", d ? signed(d.finish_pct, "%") : "\u2013", "last minutes against the first", finishOk ? C.green : C.amber],
-    ["LENGTH OVER THE ROW", d ? signed(d.length_delta_cm, " cm") : "\u2013", "last minutes against the first", lengthOk ? C.green : C.amber],
+    hasLen ? ["LENGTH", `${Math.round(med(lens))} cm`, fresh.length ? `fresh stroke ${Math.round(s.fresh_easy.length_cm)} cm` : "median", C.fg]
+           : ["LENGTH", "\u2013", "not in this export", C.dim],
+    hasFinish ? ["FINISH OVER THE ROW", d ? signed(d.finish_pct, "%") : "\u2013", "last minutes against the first", finishOk ? C.green : C.amber]
+              : ["FINISH OVER THE ROW", "\u2013", `not read: ${cutPct}% of curves cut off`, C.dim],
+    hasLen ? ["LENGTH OVER THE ROW", d ? signed(d.length_delta_cm, " cm") : "\u2013", "last minutes against the first", lengthOk ? C.green : C.amber]
+           : ["LENGTH OVER THE ROW", "\u2013", "not in this export", C.dim],
   ];
   const tw = (CARD_W - 2 * P - 24) / 2, th = 150;
   tiles.forEach(([l, v, sub, colour], k) => {
@@ -1203,7 +1228,8 @@ function glossary(s) {
       : `Set from ${my} Easy pace.`) + " I1, I2: each harder effort, found by the coach."],
     ["Finish", C.fg, `Share of the force in the second half of the drive, against ${my} usual at that level. ` +
       "\u22125% means 5% less there; within 5% is normal. A fading finish is the classic sign of tiring."],
-    ["Length", C.fg, "How far the handle travels each stroke, against the Easy rowing just before."],
+    ["Length", C.fg, (s.avg_length_cm ?? 1) > 0 ? "How far the handle travels each stroke, against the Easy rowing just before."
+      : "How far the handle travels each stroke. Not in this export, so not shown."],
     ["Consistency", C.fg, "How much the curve changes from stroke to stroke, as a multiple of Easy rowing: " +
       "1.0\u00d7 is as steady as Easy; from 1.4\u00d7 the coach calls it uneven."],
     ["Stall after the peak", C.amber, "The force stops falling for a moment just after the peak, then falls again: " +
@@ -1215,7 +1241,9 @@ function glossary(s) {
   ];
 }
 // Under the list: what the pulley can and can't tell, and what tells the rest.
-const glossaryNote = (s) => "All of this comes from the pulley alone: it measures how hard and how far the handle is " +
+const glossaryNote = (s) => ((s.intervals || []).some((i) => i.rating === "unknown")
+  ? "Here the sensor stops at about 140 cm of handle travel, before the end of this drive, so the finish isn't read. " : "") +
+  `All of this comes from the ${s.rower ? "SmartRow sensor" : "pulley"} alone: it measures how hard and how far the handle is ` +
   "pulled, not which muscles pull it. An early pull with the arms, say, shows only as a curve of a different shape. " +
   (s.rower ? "Filming a row side-on is what ties the curves to the body."
            : "Filming my rows side-on is what ties the curves to the body: it\u2019s how my stall was traced to the " +

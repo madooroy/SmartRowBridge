@@ -48,7 +48,9 @@ def _number(text: str | None) -> int:
 
 
 def strokes_from_csv(path: Path):
-    """StrokeCurve per row of a SmartRow app export. Force column #0 is always 0 and skipped."""
+    """StrokeCurve per row of a SmartRow app export. Force column #0 is always 0 and skipped. Some
+    exports (newer SmartRow devices) have no stroke length: it is then 0, which the coach reads as
+    not measured."""
     with open(path, newline="", encoding="utf-8-sig") as f:
         for row in csv.DictReader(f):
             yield StrokeCurve(
@@ -56,7 +58,7 @@ def strokes_from_csv(path: Path):
                 force_n=[_number(row.get(f"#{i} (N)")) for i in range(1, FORCE_SAMPLES + 1)],  # a blank cell: no force
                 power_w=int(float(row["Actual power (W)"])),
                 stroke_rate_spm=float(row["Stroke rate (SPM)"]),
-                stroke_length_cm=int(float(row["Stroke length (cm)"])),
+                stroke_length_cm=_number(row.get("Stroke length (cm)")),  # not in every export: 0 = not measured
                 work_j=float(row["Work (J)"]),
                 stroke_count=int(float(row["Stroke (#)"])),
                 heart_rate_bpm=_number(row.get("Heart rate (bpm)")),

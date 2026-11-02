@@ -256,6 +256,22 @@ def drive_end(force: list[int] | list[float]) -> int:
     return max(i for i, f in enumerate(force) if f > DRIVE_END_FRACTION * top)
 
 
+CUT_OFF_END = 0.25  # a stroke whose last force sample is still this share of its peak: the curve was cut off
+CUT_OFF_PCT = 50.0  # an effort with this % of such strokes: its finish can't be judged
+
+
+def cut_off(force: list[int] | list[float]) -> bool:
+    """The drive ran past the last force sample: a stroke longer than the samples cover (about
+    24 x SAMPLE_CM = 140 cm). The end of the drive, where the finish is, is then missing."""
+    top = max(force) if force else 0
+    return top > 0 and force[-1] >= CUT_OFF_END * top
+
+
+def cut_off_pct(strokes) -> float:
+    strokes = [s for s in strokes if s.force_n]
+    return 100 * sum(cut_off(s.force_n) for s in strokes) / len(strokes) if strokes else 0.0
+
+
 def back_share(force: list[int] | list[float]) -> float:
     """Fraction of the stroke's force in the back half of its own drive."""
     end = drive_end(force)
@@ -432,12 +448,29 @@ class IntervalSummary:
     stall_cm: float = 0.0  # ... where, cm of handle travel
     steady_stall_pct: float = 0.0  # ... in the Easy rowing before
     stall_thirds: tuple[float, float, float] = (0.0, 0.0, 0.0)  # stall % in the effort's first, middle and last third
+    cut_off_pct: float = 0.0  # strokes whose curve was cut off before the end of the drive (cut_off), %
     reference: str = "local"  # what it was judged against: local (the Easy rowing just before), fresh, steady
 
     @property
+    def finish_known(self) -> bool:
+        """False when most strokes' curves were cut off before the end of the drive (cut_off)."""
+        return self.cut_off_pct < CUT_OFF_PCT
+
+    @property
+    def length_known(self) -> bool:
+        """False for exports without stroke length (newer SmartRow devices): every length is 0."""
+        return self.length_cm > 0
+
+    @property
     def small_stall(self) -> bool:
-        """A stall on enough strokes to mention (STALL_NOTE_PCT), but under the flag."""
-        return not self.transition and self.stall_pct >= STALL_NOTE_PCT
+        """A stall on enough strokes to mention (STALL_NOTE_PCT), but under the flag (STALL_FLAG_PCT)."""
+        return not self.transition and STALL_NOTE_PCT <= self.stall_pct < STALL_FLAG_PCT
+
+    @property
+    def habitual_stall(self) -> bool:
+        """A stall on many strokes (the flag's share or more) that isn't flagged because the Easy
+        rowing before has it as much: part of this rower's stroke, not something the effort brought on."""
+        return not self.transition and self.stall_pct >= STALL_FLAG_PCT
 
     @property
     def transition(self) -> bool:
@@ -494,6 +527,8 @@ class IntervalSummary:
 
     @property
     def rating(self) -> str:
+        if not self.finish_known:
+            return "unknown"
         r = self.finish_ratio
         return "good" if r >= GOOD_FINISH else "ok" if r >= OK_FINISH else "short"
 
@@ -534,6 +569,10 @@ class IntervalSummary:
             "steady_stall_pct": round(self.steady_stall_pct),
             "transition": self.transition,
             "small_stall": self.small_stall,
+            "habitual_stall": self.habitual_stall,
+            "length_known": self.length_known,
+            "finish_known": self.finish_known,
+            "cut_off_pct": round(self.cut_off_pct),
             "stall_thirds": [round(x) for x in self.stall_thirds],
             "reference": self.reference,  # only "local" ones teach sessions.learned_finish
             "fade_pct": round((self.last_third_back_share / self.first_third_back_share - 1) * 100)
@@ -934,6 +973,7 @@ class IntervalCoach:
             stall_cm=stall_cm,
             steady_stall_pct=stall_stats(local)[0],
             stall_thirds=tuple(stall_stats(strokes[k * n // 3:(k + 1) * n // 3])[0] for k in range(3)),
+            cut_off_pct=cut_off_pct(strokes),
         )
 
     # ------------------------------------------------------------ live cue
@@ -948,6 +988,8 @@ class IntervalCoach:
         ref = self.effort_ref()
         expect = self.expected(self.intensity(statistics.fmean(stroke_power(s) for s in window)))
         ratio = back_share(curve) / ((ref["back_share"] * expect) or 1)
+        if cut_off_pct(window) >= CUT_OFF_PCT:
+            ratio = 1.0  # the end of the drive is missing: no finish cue on a cut-off curve
         ref_len = ref["length_cm"] or 1
         short_by_pct = (ref_len - statistics.fmean(s.stroke_length_cm for s in window)) / ref_len * 100
         return ratio, drive_lateness(curve, ref["curve"]), short_by_pct
@@ -977,6 +1019,8 @@ class IntervalCoach:
         b = self.baseline
         curve = mean_curve(self.easy_window)
         ratio = back_share(curve) / (b["back_share"] or 1)
+        if cut_off_pct(self.easy_window) >= CUT_OFF_PCT:
+            ratio = 1.0  # as in _window_measures
         short_by_pct = (b["length_cm"] - statistics.fmean(s.stroke_length_cm for s in self.easy_window)) \
             / (b["length_cm"] or 1) * 100
         return ratio, drive_lateness(curve, b["curve"]), short_by_pct
@@ -1205,6 +1249,18 @@ def _names(items: list[dict]) -> str:
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
+def _which(items: list[dict], n: int) -> str:
+    """The efforts by name when there are a few, else how many of how many."""
+    if len(items) <= 4:
+        return _names(items)
+    return f"all {n} efforts" if len(items) == n else f"{len(items)} of {n} efforts"
+
+
+def _span(values, unit: str = "%") -> str:
+    lo, hi = round(min(values)), round(max(values))
+    return f"{lo}{unit}" if lo == hi else f"{lo}\u2013{hi}{unit}"
+
+
 def findings(intervals: list[dict]) -> list[str]:
     """A few plain sentences about the session's intervals (summary dicts, as in as_dict()).
 
@@ -1217,7 +1273,10 @@ def findings(intervals: list[dict]) -> list[str]:
     good = [i for i in intervals if i["rating"] == "good" and not i.get("legs_late") and i not in shorter]
     faded = [i for i in intervals if i["rating"] == "short"]  # "short": the finish faded (an old name)
     ok = [i for i in intervals if i["rating"] == "ok"]
+    unknown = [i for i in intervals if i["rating"] == "unknown"]  # curves cut off: finish not judged
     n = len(intervals)
+    judged = n - len(unknown)
+    kept = "shape and length" if all(i.get("length_known", True) for i in intervals) else "shape"
 
     kinds = [k for k in INTENSITIES if any(i.get("intensity") == k for i in intervals)]
     if kinds:
@@ -1230,18 +1289,31 @@ def findings(intervals: list[dict]) -> list[str]:
             parts.append(f"{len(these)} {k}{span}")
         out.append("Efforts: " + ", ".join(parts) + ".")
 
-    if len(good) == n:
-        out.append("The effort kept its shape and length: finish within 5% of your usual at that intensity." if n == 1
-                   else f"{'Both' if n == 2 else f'All {n}'} efforts kept their shape and length: finish within 5% of your usual at that intensity.")
+    if unknown:
+        out.append(f"The force curves were cut off before the end of the drive in {_which(unknown, n)} "
+                   f"({_span([i.get('cut_off_pct', 0) for i in unknown])} of strokes): the stroke runs past the "
+                   f"about 140 cm the sensor records, so the finish isn't judged there.")
+    if judged and len(good) == judged:
+        if judged == n:
+            out.append(f"The effort kept its {kept}: finish within 5% of your usual at that intensity." if n == 1
+                       else f"{'Both' if n == 2 else f'All {n}'} efforts kept their {kept}: finish within 5% of "
+                            f"your usual at that intensity.")
+        else:
+            out.append(f"Every effort whose finish could be read kept its {kept} ({_which(good, n)}).")
     elif good:
-        out.append(f"{len(good)} of {n} efforts kept their shape and length ({_names(good)}).")
+        out.append(f"{len(good)} of {judged} efforts kept their {kept}"
+                   + (f" ({_names(good)})." if len(good) <= 4 else "."))
     if faded:
         lo, hi = min(i["finish_pct"] for i in faded), max(i["finish_pct"] for i in faded)
         span = _pct(lo) if lo == hi else f"{_pct(hi)} to {_pct(lo)}"
-        out.append(f"The finish faded in {_names(faded)}: {span} against your usual at that intensity.")
+        out.append(f"The finish faded in {_which(faded, n)}: {span} against your usual at that intensity.")
     if ok:
-        pcts = ", ".join(_pct(i["finish_pct"]) for i in ok)
-        out.append(f"The finish eased a little in {_names(ok)} ({pcts}).")
+        if len(ok) <= 4:
+            pcts = ", ".join(_pct(i["finish_pct"]) for i in ok)
+        else:
+            lo, hi = min(i["finish_pct"] for i in ok), max(i["finish_pct"] for i in ok)
+            pcts = _pct(lo) if lo == hi else f"{_pct(hi)} to {_pct(lo)}"
+        out.append(f"The finish eased a little in {_which(ok, n)} ({pcts}).")
     if shorter:
         cm = sum(i["length_delta_cm"] for i in shorter) / len(shorter)
         out.append(f"Strokes were shorter than Easy in {_names(shorter)} (about {abs(cm):.0f} cm).")
@@ -1255,7 +1327,8 @@ def findings(intervals: list[dict]) -> list[str]:
             out.append(f"The ones that slipped were the longer efforts (about {_clock(d_slip)} against "
                        f"{_clock(d_good)}).")
 
-    long_fades = [i for i in intervals if i["duration_s"] >= 90 and i.get("fade_pct", 0) <= -5]
+    long_fades = [i for i in intervals if i["duration_s"] >= 90 and i.get("fade_pct", 0) <= -5
+                  and i["rating"] != "unknown"]  # a cut-off curve can't say how the finish moved either
     if long_fades:
         worst = min(long_fades, key=lambda i: i["fade_pct"])
         out.append(f"I{worst['index']} faded within itself: finish {_pct(worst['fade_pct'])} from its first third "
@@ -1263,10 +1336,14 @@ def findings(intervals: list[dict]) -> list[str]:
 
     legs = [i for i in intervals if i.get("legs_late")]
     if legs:
-        out.append(f"The push came later in the drive than in Easy rowing in {_names(legs)}. The curve can't say "
+        out.append(f"The push came later in the drive than in Easy rowing in {_which(legs, n)}. The curve can't say "
                    f"why (an early arm pull and a slow push off the catch look alike); a video of an effort can.")
 
     uneven = [i for i in intervals if i.get("uneven")]
+    if len(uneven) > 3:
+        out.append(f"{_which(uneven, n)[0].upper()}{_which(uneven, n)[1:]} were uneven: strokes varied "
+                   f"{_span([i['variation_ratio'] for i in uneven], '')}\u00d7 as much as in the Easy rowing before.")
+        uneven = []
     for i in uneven:
         detail = [f"strokes varied {i['variation_ratio']:.1f}\u00d7 as much as in the Easy rowing before it"]
         if i.get("length_sd_cm", 0) >= max(2 * i.get("steady_length_sd_cm", 0), UNEVEN_LENGTH_SD_MIN):
@@ -1278,27 +1355,37 @@ def findings(intervals: list[dict]) -> list[str]:
 
     stalled = [i for i in intervals if i.get("transition")]
     if stalled:
-        pcts = ", ".join(f"{i['stall_pct']}%" for i in stalled)
+        pcts = ", ".join(f"{i['stall_pct']}%" for i in stalled) if len(stalled) <= 4 \
+            else _span([i["stall_pct"] for i in stalled])
         cm = round(statistics.median(i["stall_cm"] for i in stalled))
-        out.append(f"The force stalled just after the peak (about {cm} cm into the drive) in {_names(stalled)} "
+        out.append(f"The force stalled just after the peak (about {cm} cm into the drive) in {_which(stalled, n)} "
                    f"({pcts} of strokes): a break in the handover after the peak. The curve can't say which one; "
                    f"keeping the arms relaxed until the swing is nearly done tells legs-to-back from back-to-arms, "
                    f"and a video shows it.")
+    habitual = [i for i in intervals if i.get("habitual_stall")]
+    if habitual:
+        out.append(f"A stall just after the peak on many strokes in {_which(habitual, n)} "
+                   f"({_span([i['stall_pct'] for i in habitual])}), as in the Easy rowing between them "
+                   f"({_span([i.get('steady_stall_pct', 0) for i in habitual])}): part of the stroke itself, not "
+                   f"something the efforts brought on. Let legs, back and arms flow into each other; a video "
+                   f"shows where the handover hesitates.")
     small = [i for i in intervals if i.get("small_stall")]
     if small:
         def thirds(i):
             return i.get("stall_thirds") or [0, 0, 0]
-        each = [f"{_names([i])} ({i['stall_pct']}%" + (" of strokes)" if k == 0 else ")") for k, i in enumerate(small)]
+        if len(small) <= 4:
+            each = " and ".join(f"{_names([i])} ({i['stall_pct']}%" + (" of strokes)" if k == 0 else ")")
+                                for k, i in enumerate(small))
+        else:
+            each = f"{_which(small, n)} ({_span([i['stall_pct'] for i in small])} of strokes)"
         rising = [i for i in small if max(thirds(i)[1:]) - thirds(i)[0] >= 8]
         trend = ""
         if rising:
-            starts = sorted({thirds(i)[0] for i in rising})
-            peaks = sorted({max(thirds(i)[1:]) for i in rising})
-            span = lambda xs: f"{xs[0]}%" if len(xs) == 1 else f"{xs[0]}\u2013{xs[-1]}%"
-            where = "each effort" if len(rising) == len(small) and len(small) > 1 else _names(rising)
-            trend = f", rising through {where} (from {span(starts)} in the first third to {span(peaks)} later)"
-        out.append(f"A small stall just after the peak in {' and '.join(each)}{trend}; "
-                   f"flagged from {STALL_FLAG_PCT:.0f}%.")
+            starts = [thirds(i)[0] for i in rising]
+            peaks = [max(thirds(i)[1:]) for i in rising]
+            where = "each effort" if len(rising) == len(small) and len(small) > 1 else _which(rising, n)
+            trend = f", rising through {where} (from {_span(starts)} in the first third to {_span(peaks)} later)"
+        out.append(f"A small stall just after the peak in {each}{trend}; flagged from {STALL_FLAG_PCT:.0f}%.")
 
     wander = [i for i in intervals if i.get("peak_wanders")]
     if wander:
