@@ -199,7 +199,7 @@ def stroke_rows(coach: IntervalCoach) -> list[list]:
         return []
     t0 = coach.stroke_log[0][0]
     return [[round(t - t0, 2), d, round(p, 1), round(spm, 1), hr, length, list(force)]
-            for t, d, p, spm, hr, length, force in coach.stroke_log]
+            for t, d, p, spm, hr, length, force, *_ in coach.stroke_log]
 
 
 def _write(path: Path, data: dict) -> None:

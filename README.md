@@ -553,6 +553,7 @@ sport settings), read once each time the bridge starts (so after changing it the
 | `SRB_COACH_START_PCT` | `20` | An interval is at least this % above your steady power (and 15 W) |
 | `SRB_COACH_MAX_MIN` | `5` | Longest effort, in minutes, to count as an interval; longer is a new Easy pace (only without an FTP: with one there is no limit) |
 | `SRB_COACH_FTP` | empty: from intervals.icu | Your rowing FTP in watts (the middle of Challenging). With it, intensities are labelled by % of FTP, and an effort is Moderate or harder (67 % and up) with no time limit. Empty: read from intervals.icu (Settings, Rowing, indoor FTP if set) each time the bridge starts, once [uploads](#optional-uploads-to-intervalsicu-and-strava) are set up; `off`: none |
+| `SRB_COACH_W_PRIME` | empty: from intervals.icu | Your rowing W′ (J, or kJ under 1000): the work you can do above your FTP, taken as CP. With it the session card draws W′bal (Skiba’s model) and the summary says how low it went. Empty: read from intervals.icu (Settings, Rowing, W′) with the FTP; `off`: none |
 | `SRB_COACH_SENSITIVITY` | `normal` | How readily the cues speak up: `low`, `normal` or `high` |
 | `SRB_SESSION_DIR` | `/var/lib/smartrow-bridge/sessions` | Where session summaries are saved; `off` disables |
 | `SRB_HEART_RATE`, `SRB_HEART_RATE_TO_FITNESS` | `off`, `0` | [Heart rate strap](#optional-heart-rate-strap) read by the bridge, and whether it also goes to the fitness app (off: Peloton ignored the rowing data with it) |

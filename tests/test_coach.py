@@ -305,17 +305,18 @@ class FtpReadOnceTest(unittest.TestCase):
         from unittest import mock
         from smartrow_bridge import intervals
         me = {"sportSettings": [{"types": ["Ride"], "ftp": 250, "hr_zones": [1, 2]},
-                                {"types": ["Rowing", "VirtualRow"], "ftp": 180, "indoor_ftp": 185, "max_hr": 182,
+                                {"types": ["Rowing", "VirtualRow"], "ftp": 180, "indoor_ftp": 185, "max_hr": 182, "w_prime": 19300,
                                  "hr_zones": [128, 146, 155, 164, 170, 175, 182],
                                  "hr_zone_names": ["Recovery", "Aerobic", "Tempo", "SubThreshold",
                                                    "SuperThreshold", "Aerobic Capacity", "Anaerobic"]}]}
         with mock.patch.object(intervals, "_request", lambda *a, **k: me):
             got = intervals.rowing_settings("k")
             self.assertEqual(intervals.rowing_ftp("k"), 185.0)
-        self.assertEqual((got["ftp"], got["max_hr"], got["hr_zones"]["tops"][0], got["hr_zones"]["names"][-1]),
-                         (185.0, 182, 128, "Anaerobic"))
+        self.assertEqual((got["ftp"], got["max_hr"], got["hr_zones"]["tops"][0], got["hr_zones"]["names"][-1],
+                          got["w_prime"]), (185.0, 182, 128, "Anaerobic", 19300.0))
         with mock.patch.object(intervals, "_request", lambda *a, **k: {"sportSettings": []}):
-            self.assertEqual(intervals.rowing_settings("k"), {"ftp": None, "max_hr": None, "hr_zones": None})
+            self.assertEqual(intervals.rowing_settings("k"), {"ftp": None, "w_prime": None, "max_hr": None,
+                                                                 "hr_zones": None})
 
     def test_fixed_ftp_still_reads_the_heart_rate_zones(self):
         import asyncio
@@ -979,3 +980,56 @@ class OverEffortTest(unittest.TestCase):
         self.assertIn("I1 built from its first third to its last", " ".join(coach.findings([i])))
         from smartrow_bridge import intervals
         self.assertIn("built over it (power +", intervals.effort_line(i))
+
+
+class StepsTest(unittest.TestCase):
+    """Ladders found by their steady steps, and W'bal (steps.py)."""
+
+    @staticmethod
+    def log(plan, drive=0.9):  # [(seconds, watts)]: one stroke every 2.5 s
+        out, t = [], 0.0
+        for secs, watts in plan:
+            for _ in range(int(secs / 2.5)):
+                rate = 18 + watts / 20
+                out.append((t, 0, float(watts), rate, 100 + watts // 3, 0, tuple(STEADY), drive))
+                t += 2.5
+        return out
+
+    def test_a_ladder(self):
+        from smartrow_bridge import steps
+        plan = [(120, w) for w in (120, 140, 160, 180, 200)] + [(180, 80)]
+        ladders = steps.find_ladders(self.log(plan))
+        self.assertEqual(len(ladders), 1)
+        lad = ladders[0]
+        self.assertEqual([round(s["power_w"]) for s in lad["steps"]], [120, 140, 160, 180, 200])
+        self.assertTrue(lad["up"])
+        self.assertEqual(lad["change"]["by"], "rate")  # the same force curve: power from rate alone
+        self.assertIn("A ladder of 5 steps, 120\u2192200 W", steps.ladder_findings(ladders)[0])
+
+    def test_intervals_are_not_a_ladder(self):
+        from smartrow_bridge import steps
+        plan = [(300, 100), (240, 145), (180, 100), (240, 145), (180, 100)]
+        self.assertEqual(steps.find_ladders(self.log(plan)), [])
+
+    def test_an_uneven_warm_up_is_not_a_ladder(self):
+        from smartrow_bridge import steps
+        plan = [(60, 60), (60, 100), (300, 110), (60, 150), (120, 100)]
+        self.assertEqual(steps.find_ladders(self.log(plan)), [])
+
+    def test_wbal(self):
+        from smartrow_bridge import steps
+        log = self.log([(120, 160), (120, 210), (300, 100)])
+        self.assertIsNone(steps.wbal(log, 160, None))
+        w = steps.wbal(log, 160, 20000)
+        self.assertAlmostEqual(w["min_pct"], 70, delta=2)  # 50 W over CP for 120 s: 6 kJ of 20
+        self.assertAlmostEqual(w["min_at_s"], 240, delta=5)
+        self.assertGreater(w["end_pct"], w["min_pct"])  # refilling below CP
+        self.assertIn("fell to", steps.wbal_findings(w)[0])
+        self.assertIn("stayed full", steps.wbal_findings(steps.wbal(self.log([(300, 100)]), 160, 20000))[0])
+
+    def test_the_bridge_setting(self):
+        from smartrow_bridge import bridge
+        self.assertEqual(bridge.w_prime_joules("19.3"), 19300)
+        self.assertEqual(bridge.w_prime_joules("19300"), 19300)
+        self.assertIsNone(bridge.w_prime_joules("off"))
+        self.assertIsNone(bridge.w_prime_joules(""))

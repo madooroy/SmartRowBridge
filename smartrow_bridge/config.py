@@ -33,6 +33,7 @@ class Config:
     coach_max_min: float
     coach_sensitivity: str
     coach_ftp: str
+    coach_w_prime: str
     session_dir: str
     heart_rate: str
     heart_rate_to_fitness: bool
@@ -104,6 +105,9 @@ def parse(argv: list[str] | None = None) -> Config:
     p.add_argument("--coach-ftp", default=_env("SRB_COACH_FTP", ""),
                    help="coach: your rowing FTP in watts; empty = read it from intervals.icu (when set up), "
                         "off = none. With it, an effort is Moderate or harder (67%% of FTP and up), with no time limit")
+    p.add_argument("--coach-w-prime", default=_env("SRB_COACH_W_PRIME", ""),
+                   help="coach: your rowing W' (J, or kJ under 1000) for W'bal, with the FTP as CP; empty = "
+                        "read it from intervals.icu (when set up), off = no W'bal")
     p.add_argument("--session-dir", default=_env("SRB_SESSION_DIR", sessions.DEFAULT_DIR),
                    help="coach: where each session's summary is saved, for the web page ('off' to disable)")
     p.add_argument("--heart-rate", default=_env("SRB_HEART_RATE", "off"),

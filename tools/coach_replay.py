@@ -85,10 +85,11 @@ def export_totals(path: Path) -> dict:
 
 
 def replay(path: Path, settings: CoachSettings, save_dir: Path | None = None, ftp: float | None = None,
-           reference: dict | None = None, rower: str | None = None) -> dict:
+           reference: dict | None = None, rower: str | None = None, w_prime: float | None = None) -> dict:
     """Run one export through a fresh coach (reference: the last session's fresh Easy stroke).
     Returns its intervals, live-cue counts and today's fresh Easy stroke."""
     coach = IntervalCoach(settings, ftp=ftp, reference=(lambda: reference) if reference else None)
+    coach.w_prime = w_prime
     cues: dict[int, Counter] = {}
     saved: list[Path] = []
     parts = 0  # a pause longer than NEW_SESSION_S inside one export: the coach starts over, as on the
@@ -183,6 +184,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="how readily the technique cues speak up (default normal)")
     p.add_argument("--ftp", type=float, help="your rowing FTP in watts (as SRB_COACH_FTP): efforts must reach "
                    "67%% of it (Moderate), with no time limit")
+    p.add_argument("--w-prime", type=float, metavar="J",
+                   help="W' in J (or kJ under 1000), with --ftp as CP: adds W'bal (as SRB_COACH_W_PRIME)")
     p.add_argument("--rower", metavar="NAME",
                    help="someone else's rows: saved with their name, and the pictures speak of \"the rower\", not \"my\"")
     p.add_argument("--save", type=Path, metavar="DIR",
@@ -203,7 +206,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             t0 = started(path)
             ref = previous[1] if previous and t0 - previous[0] <= FRESH_MAX_AGE_DAYS * 86400 else None
-            result = replay(path, settings, args.save, args.ftp, ref, args.rower)
+            w_prime = args.w_prime * 1000 if args.w_prime and args.w_prime < 1000 else args.w_prime
+            result = replay(path, settings, args.save, args.ftp, ref, args.rower, w_prime)
             if result.get("fresh_easy"):
                 previous = (t0, result["fresh_easy"])
             print(describe(path, result))

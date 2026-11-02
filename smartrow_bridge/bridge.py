@@ -36,6 +36,15 @@ FTP_RETRY_S = 30  # until the first answer from intervals.icu (the network may c
 FTP_REFUSED_RETRY_S = 3600  # ... but a key intervals.icu refuses (revoked) is retried only hourly
 
 
+def w_prime_joules(text: str) -> float | None:
+    """SRB_COACH_W_PRIME: W' in J (or kJ, under 1000); empty or off: none set here."""
+    try:
+        value = float(text)
+    except (TypeError, ValueError):
+        return None
+    return value * 1000 if 0 < value < 1000 else value if value > 0 else None
+
+
 def _fixed_ftp(setting: str) -> float | None:
     """SRB_COACH_FTP: watts, or empty / "auto" (from intervals.icu, later) / "off": none for now."""
     try:
@@ -57,6 +66,7 @@ class Bridge:
                 sensitivity=cfg.coach_sensitivity), ftp=_fixed_ftp(cfg.coach_ftp),
                 reference=(lambda: sessions.latest_fresh_easy(cfg.session_dir, max_age_days=coach.FRESH_MAX_AGE_DAYS))
                 if saved else None)
+            self.coach.w_prime = w_prime_joules(cfg.coach_w_prime)
             self.parser.on_stroke = self.coach.add
         self.hr_link = None  # heartrate.HeartRateLink, created once the pulley's adapter is known
         self.recorder: sessions.SessionRecorder | None = None
@@ -277,6 +287,9 @@ class Bridge:
                     warned = True
                 await asyncio.sleep(wait)
                 continue
+            if settings.get("w_prime") and self.cfg.coach_w_prime.strip() == "":
+                self.coach.w_prime = settings["w_prime"]
+                log.info("Rowing W' from intervals.icu: %.1f kJ", settings["w_prime"] / 1000)
             if settings.get("hr_zones"):
                 self.coach.hr_zones = {**settings["hr_zones"], "max_hr": settings.get("max_hr")}
                 log.info("Heart-rate zones from intervals.icu: %s bpm", "/".join(map(str, settings["hr_zones"]["tops"])))

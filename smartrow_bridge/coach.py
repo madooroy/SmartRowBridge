@@ -679,6 +679,7 @@ class IntervalCoach:
         latest_fresh_easy), called whenever a new session starts; None: always learn it today."""
         self.settings = settings
         self.ftp = ftp  # rowing FTP, W (SRB_COACH_FTP, or from intervals.icu); None: efforts by steady alone
+        self.w_prime: float | None = None  # W', J (from intervals.icu, or SRB_COACH_W_PRIME): for W'bal, with the FTP as CP
         self.reference = reference
         # Heart-rate zones from intervals.icu ({"tops": [bpm...], "names": [...], "max_hr": bpm}), for the
         # photo cards' shading; None without them.
@@ -757,8 +758,8 @@ class IntervalCoach:
         self.length_total = 0.0
         self.trace: list[tuple[float, int, float]] = []  # (time, heart rate, power) per stroke
         # Every stroke, for the session's activity file and later analysis:
-        # (time, distance m, power W, strokes/min, heart rate, stroke length cm, force curve N)
-        self.stroke_log: list[tuple[float, int, float, float, int, int, tuple[int, ...]]] = []
+        # (time, distance m, power W, strokes/min, heart rate, stroke length cm, force curve N, drive s)
+        self.stroke_log: list[tuple[float, int, float, float, int, int, tuple[int, ...], float]] = []
 
     # ------------------------------------------------------------ reference
 
@@ -823,7 +824,7 @@ class IntervalCoach:
         self.length_total += s.stroke_length_cm
         self.trace.append((s.time, s.heart_rate_bpm, stroke_power(s)))
         self.stroke_log.append((s.time, s.distance_m, stroke_power(s), s.stroke_rate_spm, s.heart_rate_bpm,
-                                s.stroke_length_cm, tuple(s.force_n)))
+                                s.stroke_length_cm, tuple(s.force_n), s.drive_s))
         self.recent.append(s)
         smoothed = statistics.median(stroke_power(r) for r in self.recent)
         if not self.fresh_done and s.time - self.first_time >= FRESH_TO_S and (
@@ -1122,6 +1123,9 @@ class IntervalCoach:
             d["started_at_s"] = round(i.started_at - (self.first_time or i.started_at), 1)
         n = self.strokes_total
         hr = heart_rate_summary(self.trace, self.intervals, self.steady_power())
+        from . import steps  # (it imports this module)
+        ladders = steps.find_ladders(self.stroke_log)
+        w_bal = steps.wbal(self.stroke_log, self.ftp, self.w_prime)
         if hr:
             for d, h in zip(intervals, hr.pop("intervals")):
                 d.update(h)
@@ -1147,8 +1151,11 @@ class IntervalCoach:
             "heart_rate": hr,
             "easy_drift": self.easy_drift(),
             "fresh_easy": self._fresh_record(),
-            "findings": findings(intervals) + easy_findings(self.easy_drift()) + length_findings(self._length_note())
-            + heart_rate_findings(hr, intervals),
+            "w_prime": round(self.w_prime) if self.w_prime else None,
+            "wbal": w_bal,
+            "ladders": ladders,
+            "findings": findings(intervals) + steps.ladder_findings(ladders) + easy_findings(self.easy_drift())
+            + length_findings(self._length_note()) + heart_rate_findings(hr, intervals) + steps.wbal_findings(w_bal),
         }
 
     def _fresh_record(self) -> dict | None:

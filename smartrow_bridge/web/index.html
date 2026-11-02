@@ -1298,6 +1298,62 @@ function overCard(s) {
   return cv;
 }
 
+// A ladder: steady steps, each a set power above the one before (steps.find_ladders). Each step's
+// average stroke, coloured from the first (blue) to the last (pink); a row per step; how the extra power came.
+function ladderCard(s, lad, k, n) {
+  const { cv, g, text, tile } = cardCanvas();
+  const P = CARD_P, st = lad.steps, c = lad.change;
+  const mix = (f) => { const a = [90, 165, 240], b = [255, 111, 174];
+    return `rgb(${a.map((v, j) => Math.round(v + (b[j] - v) * f)).join(",")})`; };
+  const colour = (j) => mix(st.length > 1 ? j / (st.length - 1) : 0);
+  text(`${fmtWhen(s.started_at)} \u00b7 ROWING`, P, P + 26, 26, C.dim, true);
+  text(n > 1 ? `Ladder ${k + 1} of ${n}` : "Ladder", P, P + 104, 72, C.fg, true);
+  text(`${st.length} steps, ${Math.round(st[0].power_w)} \u2192 ${Math.round(st[st.length - 1].power_w)} W \u00b7 ` +
+       `${fmtTime(lad.start_s)}\u2013${fmtTime(lad.end_s)}`, P, P + 158, 34, C.dim);
+  const rowH = Math.min(58, (1210 - 640 - 84) / st.length), th = 84 + st.length * rowH, ty = 1210 - th;
+  const box = [P, 240, CARD_W - 2 * P, ty - 24 - 240];
+  tile(...box);
+  const top = Math.max(1, ...st.flatMap((x) => x.curve)) * 1.3;  // room for the key
+  const yStep = niceStep(top, 6), yMax = Math.ceil(top / yStep) * yStep;
+  const ax = cardAxes(g, text, box, { title: "FORCE (N), EACH STEP\u2019S AVERAGE STROKE", xMax: 140, yMax, yStep, xStep: 20,
+                                      xFmt: (v) => v === 140 ? "140 cm" : `${v}` });
+  st.forEach((x, j) => x.curve.length && smoothLine(g, ax, x.curve, colour(j)));
+  // the key: one coloured label per step, in a row along the top
+  g.font = `700 22px system-ui, "DejaVu Sans", sans-serif`;
+  const labels = st.map((x) => `${Math.round(x.power_w)} W`), gap = 22;
+  let kx = ax.x1 - labels.reduce((w, l) => w + g.measureText(l).width + gap, -gap);
+  labels.forEach((l, j) => { text(l, kx, box[1] + 92, 22, colour(j), true); kx += g.measureText(l).width + gap; });
+  // the table
+  const wb = s.wbal && s.wbal.series ? s.wbal : null;
+  const wbAt = (t) => { if (!wb) return null; const p = wb.series.reduce((a, b) => Math.abs(b[0] - t) < Math.abs(a[0] - t) ? b : a);
+    return p ? Math.round(p[1]) : null; };
+  const dash = "\u2013";
+  const cols = [["POWER", (x) => `${Math.round(x.power_w)} W`], ["HR", (x) => x.hr_end ?? dash],
+                ["RATE", (x) => x.spm.toFixed(1)],
+                ...(st.some((x) => x.drive_s != null) ? [["DRIVE", (x) => x.drive_s != null ? `${x.drive_s.toFixed(2)} s` : dash]] : []),
+                ["PEAK", (x) => x.peak_n != null ? `${x.peak_n} N` : dash], ["STALL", (x) => x.stall_pct != null ? `${x.stall_pct}%` : dash],
+                ...(wb ? [["W\u2032BAL", (x) => `${wbAt(x.end_s)}%`]] : [])];
+  tile(P, ty, CARD_W - 2 * P, th);
+  const LABEL_W = 150, x0 = P + 24, colW = (CARD_W - 2 * P - 48 - LABEL_W) / cols.length;
+  const cx = (j) => x0 + LABEL_W + (j + 0.6) * colW;
+  text("STEP", x0, ty + 40, 20, C.dim, true);
+  cols.forEach(([l], j) => text(l, cx(j), ty + 40, 20, C.dim, true, "center"));
+  const size = Math.min(28, Math.round(rowH * 0.5));
+  st.forEach((x, r) => {
+    const y = ty + 64 + (r + 0.65) * rowH;
+    text(fmtTime(x.start_s), x0, y, size, colour(r), true);
+    cols.forEach(([, f], j) => text(String(f(x)), cx(j), y, size, C.fg, false, "center"));
+  });
+  const verdict = !lad.up ? `Coach: stepping down, power ${signed(c.power_pct, "%")}`
+    : c.peak_pct == null ? `Coach: power ${signed(c.power_pct, "%")}, rate ${signed(c.spm_pct, "%")}`
+    : c.by === "rate" ? `Coach: mostly stroke rate (${signed(c.spm_pct, "%")}), peak force ${signed(c.peak_pct, "%")}`
+    : c.by === "force" ? `Coach: mostly force (peak ${signed(c.peak_pct, "%")}), stroke rate ${signed(c.spm_pct, "%")}`
+    : `Coach: power from rate (${signed(c.spm_pct, "%")}) and force (${signed(c.peak_pct, "%")}) alike`;
+  text(verdict, P, 1258, 30, C.fg, true);
+  text(CARD_CREDIT, CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
+  return cv;
+}
+
 // The last picture: what the words and numbers on the others mean, for someone who doesn't row.
 // The effort levels come from this session's bands (in watts), set from one number: the middle of
 // the Challenging zone (the FTP intervals.icu holds; "FTP" alone is loosely defined in rowing).
@@ -1333,6 +1389,10 @@ function glossary(s) {
       "small from 10%."],
     ["Over the effort", C.fg, "An effort of 2\u00a0min or more against its own first third: did power, finish, length " +
       "or the stall slip by the end? Needs no Easy rowing, so a race or a hard start is judged too."],
+    ...((s.ladders || []).length ? [["Ladder", C.fg, "Steady steps, each a set power above the one before. Per step: " +
+      "where the extra power came from (stroke rate, force, drive time) and how heart rate followed."]] : []),
+    ...(s.wbal ? [["W\u2032bal", AVG_COLOUR, `What is left of W\u2032 (${(s.wbal.w_prime / 1000).toFixed(1)}\u00a0kJ, the work ` +
+      `that can be done above CP, ${s.wbal.cp}\u00a0W): drains above CP, refills below it, slower as it fills (Skiba).`]] : []),
     ["Late push", C.fg, "The peak force comes later in the drive than in Easy rowing: the legs pushed late, or " +
       "hardly at all and the back and arms did the work."],
     ["Colours", C.green, "Green: as it should be. Amber: worth a look. Red: clearly off."],
@@ -1406,11 +1466,12 @@ function sessionCard(s, rows) {
   const flagged = (i) => i.uneven || i.transition || i.legs_late || i.rating === "short";
   const xStep = niceStep(minutes, 5), xFmt = (v) => v + xStep > minutes ? `${Math.round(v)} min` : `${Math.round(v)}`;
   const chart = (box, values, colour, title, { fromZero = false, names = false, minStep = 0, yFmt, showX = false,
-                                               bands = [] } = {}) => {
+                                               bands = [], range = null } = {}) => {
     tile(...box);
     const vs = values.map((v) => v[1]), hi = Math.max(...vs), lo = fromZero ? 0 : Math.min(...vs);
-    const yStep = Math.max(minStep, niceStep(hi - lo || 1, 3)), yMin = Math.floor(lo / yStep) * yStep;
-    const yMax = Math.max(Math.ceil(hi / yStep) * yStep, yMin + yStep);  // every reading the same: still a span
+    const yStep = range ? range[2] : Math.max(minStep, niceStep(hi - lo || 1, 3));
+    const yMin = range ? range[0] : Math.floor(lo / yStep) * yStep;
+    const yMax = range ? range[1] : Math.max(Math.ceil(hi / yStep) * yStep, yMin + yStep);  // every reading the same: still a span
     const ax = cardAxes(g, text, box, { title, xMax: minutes, yMin, yMax, yStep, xStep, xFmt, showX, gutter: GUTTER,
                                         ...(yFmt ? { yFmt } : {}) });
     for (const z of bands) {  // zones: faint horizontal bands, named in the margin on the right where there's room
@@ -1442,13 +1503,19 @@ function sessionCard(s, rows) {
   const hz = s.heart_rate && s.hr_zones && s.hr_zones.tops ? s.hr_zones.tops : [], hzColours = zoneColours(hz.length);
   const hrBands = hz.map((top, k) => ({ name: `Z${k + 1}`, lo: k ? hz[k - 1] : null, hi: k === hz.length - 1 ? null : top,
                                         colour: hzColours[k] }));
+  const wb = s.wbal && s.wbal.series && s.wbal.series.length ? s.wbal : null;  // W'bal, when there's a W'
   const heights = withHr ? [270, 190, 170, 220] : [320, 240, 260];
   // A margin on the right for the zone names, the same on every chart so the time axes line up.
   const GUTTER = powerBands.length || hrBands.length ? 136 : 44;
   let y = 316;
   chart([P, y, W, heights[0]], power, C.fg, "POWER (W) \u00b7 efforts shaded", { fromZero: true, names: true, bands: powerBands });
   y += heights[0] + 16;
-  chart([P, y, W, heights[1]], pace, C.fg, "PACE (/500 m)", { minStep: 30, yFmt: paceFmt, bands: paceBands });
+  if (wb) {  // W'bal in place of pace (pace is the power chart again, in other units)
+    chart([P, y, W, heights[1]], wb.series, AVG_COLOUR, `W\u2032BAL (%) \u00b7 W\u2032 ${(wb.w_prime / 1000).toFixed(1)} kJ above CP ${wb.cp} W`,
+          { range: [0, 100, 50] });
+    const ly = y + 70 + (heights[1] - 70 - 22) * (1 - wb.min_pct / 100);
+    text(`lowest ${wb.min_pct}%`, P + W - GUTTER + 10, Math.min(ly + 6, y + heights[1] - 16), 17, AVG_COLOUR, true);
+  } else chart([P, y, W, heights[1]], pace, C.fg, "PACE (/500 m)", { minStep: 30, yFmt: paceFmt, bands: paceBands });
   y += heights[1] + 16;
   chart([P, y, W, heights[2]], smooth("spm"), C.fg, "STROKE RATE (spm)", { minStep: 5, showX: !withHr });
   y += heights[2] + 16;
@@ -1478,6 +1545,7 @@ async function openPhotos() {
   const cards = [...(rows.length ? [["session", sessionCard(s, rows)]] : []), ...(easy ? [["easy", easy]] : []),
                  ...(s.intervals || []).map((i) => [`I${i.index}`, effortCard(s, i, rows, effortCardTop(s, rows))]),
                  ...(overCard(s) ? [["over", overCard(s)]] : []),
+                 ...(s.ladders || []).map((lad, k, all) => [`ladder${all.length > 1 ? k + 1 : ""}`, ladderCard(s, lad, k, all.length)]),
                  ["guide", glossaryCard(s)]];
   photoFiles = cards.map(([name, cv]) => ({ name: `rowing-${s.id}-${name}.png`, url: cv.toDataURL("image/png") }));
   $("phList").innerHTML = photoFiles.map((f) => `<img src="${f.url}" alt="${f.name}">`).join("");
