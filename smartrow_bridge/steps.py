@@ -194,6 +194,6 @@ def wbal_findings(w: dict | None) -> list[str]:
         return []
     kj = w["w_prime"] / 1000
     if w["min_pct"] >= 95:
-        return [f"W′bal stayed full (above CP {w['cp']} W hardly at all; W′ {kj:.1f} kJ)."]
-    return [f"W′bal (CP {w['cp']} W, W′ {kj:.1f} kJ) fell to {w['min_pct']}% at {_clock(w['min_at_s'])} "
+        return [f"W′bal stayed full (W′ {kj:.1f} kJ): hardly any rowing above threshold."]
+    return [f"W′bal (W′ {kj:.1f} kJ) fell to {w['min_pct']}% at {_clock(w['min_at_s'])} "
             f"and ended at {w['end_pct']}%."]

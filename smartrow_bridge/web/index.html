@@ -1377,7 +1377,7 @@ function glossary(s) {
       "10\u00a0kg). A thin line per stroke; pink: their average, smoothed for reading; dashed: the average Easy " +
       "stroke it is compared with."],
     ["Effort levels", C.fg, (s.ftp
-      ? `All set from one number: ${s.ftp}\u00a0W, the middle of ${my} Challenging zone. ${levels}.`
+      ? `${levels}. The names follow Peloton\u2019s; the watts are what count.`
       : `Set from ${my} Easy pace.`) + " I1, I2: each harder effort, found by the coach."],
     ["Finish", C.fg, `Share of the force in the second half of the drive, against ${my} usual at that level. ` +
       "\u22125% means 5% less there; within 5% is normal. A fading finish is the classic sign of tiring."],
@@ -1392,8 +1392,9 @@ function glossary(s) {
       "or the stall slip by the end? Needs no Easy rowing, so a race or a hard start is judged too."],
     ...((s.ladders || []).length ? [["Ladder", C.fg, "Steady steps, each a set power above the one before. Per step: " +
       "where the extra power came from (stroke rate, force, drive time) and how heart rate followed."]] : []),
-    ...(s.wbal && s.wbal.min_pct < WBAL_SHOW_PCT ? [["W\u2032bal", AVG_COLOUR, `What is left of W\u2032 (${(s.wbal.w_prime / 1000).toFixed(1)}\u00a0kJ, the work ` +
-      `that can be done above CP, ${s.wbal.cp}\u00a0W): drains above CP, refills below it, slower as it fills (Skiba).`]] : []),
+    ...(s.wbal && s.wbal.min_pct < WBAL_SHOW_PCT ? [["W\u2032bal", AVG_COLOUR, `What is left of W\u2032 (${(s.wbal.w_prime / 1000).toFixed(1)}\u00a0kJ), the work ` +
+      "that can be done above threshold power. It drains above threshold, and refills below it, slower as it " +
+      "fills (Skiba)."]] : []),
     ["Late push", C.fg, "The peak force comes later in the drive than in Easy rowing: the legs pushed late, or " +
       "hardly at all and the back and arms did the work."],
     ["Colours", C.green, "Green: as it should be. Amber: worth a look. Red: clearly off."],
@@ -1513,7 +1514,7 @@ function sessionCard(s, rows) {
   chart([P, y, W, heights[0]], power, C.fg, "POWER (W) \u00b7 efforts shaded", { fromZero: true, names: true, bands: powerBands });
   y += heights[0] + 16;
   if (wb) {  // W'bal in place of pace (pace is the power chart again, in other units)
-    chart([P, y, W, heights[1]], wb.series, AVG_COLOUR, `W\u2032BAL (%) \u00b7 W\u2032 ${(wb.w_prime / 1000).toFixed(1)} kJ above CP ${wb.cp} W`,
+    chart([P, y, W, heights[1]], wb.series, AVG_COLOUR, `W\u2032BAL (%) \u00b7 W\u2032 ${(wb.w_prime / 1000).toFixed(1)} kJ`,
           { range: [0, 100, 50] });
     const ly = y + 70 + (heights[1] - 70 - 22) * (1 - wb.min_pct / 100);
     text(`lowest ${wb.min_pct}%`, P + W - GUTTER + 10, Math.min(ly + 6, y + heights[1] - 16), 17, AVG_COLOUR, true);

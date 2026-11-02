@@ -182,9 +182,8 @@ def note_for(record: dict) -> dict:
         lines[-1] += f" Heart rate {hr['avg']} average, {hr['max']} max."
     bands = bands_text(record.get("ftp"), record.get("steady_power_w"))
     if bands and intervals:
-        source = (f"set from Challenging at {round(record['ftp'])} W" if record.get("ftp")
-                  else f"set from Easy rowing at {record.get('steady_power_w')} W")
-        lines += ["", f"Intensities, {source}: {bands}."]
+        source = None if record.get("ftp") else f"set from Easy rowing at {record.get('steady_power_w')} W"
+        lines += ["", f"Intensities{', ' + source if source else ''}: {bands}."]
     lines += ["", "What the coach saw:"] + [f"- {f}" for f in record.get("findings", [])]
     if intervals:
         lines += ["", "Efforts (finish against your usual stroke at that intensity):"] + [effort_line(i) for i in intervals]
