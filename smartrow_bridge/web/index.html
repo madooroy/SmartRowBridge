@@ -941,6 +941,25 @@ const driveOnly = (curve) => {  // up to the end of the drive (the samples after
   return curve.slice(0, Math.min(curve.length, end + 2));
 };
 
+// The average of a set of strokes, sample by sample, drawn as a smooth line over the raw ones.
+// Display only: the coach works on the raw samples.
+const AVG_COLOUR = "#ff6fae";
+function meanCurve(curves) {
+  const n = Math.max(0, ...curves.map((c) => c.length));
+  if (!curves.length || !n) return [];
+  return Array.from({ length: n }, (_, k) => curves.reduce((t, c) => t + (c[k] || 0), 0) / curves.length);
+}
+function smoothLine(g, ax, curve) {  // through the midpoints, each sample a control point
+  const pts = [[ax.X(0), ax.Y(0)], ...driveOnly(curve).map((v, k) => [ax.X((k + 1) * CM_PER_SAMPLE), ax.Y(v)])];
+  if (pts.length < 2) return;
+  g.beginPath(); g.moveTo(...pts[0]);
+  for (let k = 1; k < pts.length - 1; k++)
+    g.quadraticCurveTo(...pts[k], (pts[k][0] + pts[k + 1][0]) / 2, (pts[k][1] + pts[k + 1][1]) / 2);
+  g.lineTo(...pts[pts.length - 1]);
+  g.strokeStyle = C.tile; g.lineWidth = 10; g.lineJoin = g.lineCap = "round"; g.stroke();  // a dark edge to lift it
+  g.strokeStyle = AVG_COLOUR; g.lineWidth = 5; g.stroke(); g.lineCap = "butt";
+}
+
 // The coach's stall check, for marking it stroke by stroke on the effort cards. Keep in step with
 // smartrow_bridge/coach.py (drive_end, stall_span: DRIVE_END_FRACTION, STALL_FLAT, STALL_STEEP).
 const STALL_FLAT = 0.25, STALL_STEEP = 0.5;
@@ -1058,6 +1077,8 @@ function effortCard(s, i, rows, sharedTop = null) {
   if (i.steady_curve && i.steady_curve.some((v) => v > 0)) {
     path(i.steady_curve); g.strokeStyle = C.fg; g.lineWidth = 4; g.setLineDash([14, 10]); g.stroke(); g.setLineDash([]);
   }
+  const full = strokes.filter((r) => r.length_cm >= shortAt);
+  if (full.length >= 3) smoothLine(g, ax, meanCurve(full.map((r) => r.force_n)));  // the average, on top
   if (i.rating === "unknown" && !i.no_reference) {  // the sensor's last sample: the drive went on past it
     const x = ax.X(sampleCm(23));
     g.strokeStyle = C.amber; g.lineWidth = 3; g.setLineDash([10, 8]);
@@ -1066,9 +1087,12 @@ function effortCard(s, i, rows, sharedTop = null) {
   }
   text(strokes.length ? `${strokes.length} strokes, one line each` : `average of ${i.strokes} strokes`,
        box[0] + box[2] - 24, box[1] + 44, 22, C.dim, false, "right");
-  if (i.steady_curve && i.steady_curve.some((v) => v > 0))
-    text("\u2014 \u2014  Easy rowing just before", ax.x1, ax.y0 + 30, 22, C.fg, false, "right");
-  if (cut.length) text(`${cut.length} cut short`, ax.x1, ax.y0 + 60, 22, C.amber, true, "right");
+  let ky = ax.y0 + 30;
+  if (full.length >= 3) { text("\u2014\u2014  average of these strokes", ax.x1, ky, 22, AVG_COLOUR, true, "right"); ky += 30; }
+  if (i.steady_curve && i.steady_curve.some((v) => v > 0)) {
+    text("\u2014 \u2014  Easy rowing just before", ax.x1, ky, 22, C.fg, false, "right"); ky += 30;
+  }
+  if (cut.length) text(`${cut.length} cut short`, ax.x1, ky, 22, C.amber, true, "right");
   // The labels, one row each from the bottom, under the shaded stretch (kept inside the chart).
   marks.forEach(([a, b, label], k) => {
     g.font = `700 21px system-ui, "DejaVu Sans", sans-serif`;
@@ -1168,10 +1192,12 @@ function easyCard(s, rows) {
   g.globalAlpha = 1;
   if (fresh.length) {
     path(fresh); g.strokeStyle = C.fg; g.lineWidth = 4; g.setLineDash([14, 10]); g.stroke(); g.setLineDash([]);
-    text("\u2014 \u2014  fresh Easy stroke (2\u20138 min)", ax.x1, ax.y0 + 30, 22, C.fg, false, "right");
   }
+  smoothLine(g, ax, meanCurve(strokes.map((r) => r.force_n)));  // the average, on top
+  text("\u2014\u2014  average of these strokes", ax.x1, ax.y0 + 30, 22, AVG_COLOUR, true, "right");
+  if (fresh.length) text("\u2014 \u2014  fresh Easy stroke (2\u20138 min)", ax.x1, ax.y0 + 60, 22, C.fg, false, "right");
   // early -> late key
-  const kx = ax.x1 - 260, ky = ax.y0 + 62, grad = g.createLinearGradient(kx + 60, 0, kx + 200, 0);
+  const kx = ax.x1 - 260, ky = ax.y0 + (fresh.length ? 92 : 62), grad = g.createLinearGradient(kx + 60, 0, kx + 200, 0);
   grad.addColorStop(0, `rgb(${early})`); grad.addColorStop(1, `rgb(${late})`);
   text("early", kx + 50, ky + 8, 22, C.dim, false, "right");
   g.fillStyle = grad; g.fillRect(kx + 60, ky - 4, 140, 10);
@@ -1228,7 +1254,8 @@ function glossary(s) {
     ["The drive", C.fg, "The pull: from the catch (knees up, arms out) to the finish (legs flat, handle at the body). " +
       "Measured in cm of handle travel."],
     ["Force curve", C.blue, "How hard the handle is pulled at each point of the drive, in newtons (100\u00a0N is about " +
-      "10\u00a0kg). One line per stroke; the dashed line is the average Easy stroke it is compared with."],
+      "10\u00a0kg). One thin line per stroke; the pink line is their average, smoothed for reading (the coach uses the raw readings); " +
+      "the dashed line is the average Easy stroke it is compared with."],
     ["Effort levels", C.fg, (s.ftp
       ? `All set from one number: ${s.ftp}\u00a0W, the middle of ${my} Challenging zone. ${levels}.`
       : `Set from ${my} Easy pace.`) + " I1, I2: each harder effort, found by the coach."],
