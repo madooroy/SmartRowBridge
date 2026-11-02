@@ -1033,3 +1033,14 @@ class StepsTest(unittest.TestCase):
         self.assertEqual(bridge.w_prime_joules("19300"), 19300)
         self.assertIsNone(bridge.w_prime_joules("off"))
         self.assertIsNone(bridge.w_prime_joules(""))
+
+
+class StallBumpTest(unittest.TestCase):
+    def test_up_mid_effort_and_down_again_is_not_rising(self):
+        base = {"duration_s": 200, "rating": "good", "finish_pct": 0, "power_w": 145, "intensity": "Moderate",
+                "small_stall": True}
+        bump = {**base, "index": 3, "stall_pct": 23, "stall_thirds": [23, 32, 14]}
+        rise = {**base, "index": 1, "stall_pct": 17, "stall_thirds": [8, 19, 23]}
+        text = " ".join(coach.findings([rise, bump]))
+        self.assertIn("rising through I1 (from 8% in the first third to 23% in the last)", text)
+        self.assertIn("up mid-effort and down again by the end in I3 (I3 23\u219232\u219214% by thirds)", text)

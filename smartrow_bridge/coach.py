@@ -1527,13 +1527,18 @@ def findings(intervals: list[dict]) -> list[str]:
                                 for k, i in enumerate(small))
         else:
             each = f"{_which(small, n)} ({_span([i['stall_pct'] for i in small])} of strokes)"
-        rising = [i for i in small if max(thirds(i)[1:]) - thirds(i)[0] >= 8]
+        # rising: higher in the last third than the first; a bump: up in the middle third, down again by the end
+        rising = [i for i in small if thirds(i)[2] - thirds(i)[0] >= 8]
+        bump = [i for i in small if i not in rising and thirds(i)[1] - thirds(i)[0] >= 8]
         trend = ""
         if rising:
             starts = [thirds(i)[0] for i in rising]
-            peaks = [max(thirds(i)[1:]) for i in rising]
+            ends = [thirds(i)[2] for i in rising]
             where = "each effort" if len(rising) == len(small) and len(small) > 1 else _which(rising, n)
-            trend = f", rising through {where} (from {_span(starts)} in the first third to {_span(peaks)} later)"
+            trend = f", rising through {where} (from {_span(starts)} in the first third to {_span(ends)} in the last)"
+        if bump:
+            by = "; ".join(f"{_names([i])} {thirds(i)[0]}\u2192{thirds(i)[1]}\u2192{thirds(i)[2]}%" for i in bump[:4])
+            trend += f", {'and ' if rising else ''}up mid-effort and down again by the end in {_which(bump, n)} ({by} by thirds)"
         out.append(f"A small stall just after the peak in {each}{trend}; flagged from {STALL_FLAG_PCT:.0f}%.")
 
     wander = [i for i in intervals if i.get("peak_wanders")]

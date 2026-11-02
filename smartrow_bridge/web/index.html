@@ -944,6 +944,7 @@ const driveOnly = (curve) => {  // up to the end of the drive (the samples after
 // The average of a set of strokes, sample by sample, drawn as a smooth line over the raw ones.
 // Display only: the coach works on the raw samples.
 const AVG_COLOUR = "#ff6fae";
+const WBAL_SHOW_PCT = 95;  // the session card draws W'bal (in place of pace) only when it fell below this
 function meanCurve(curves) {
   const n = Math.max(0, ...curves.map((c) => c.length));
   if (!curves.length || !n) return [];
@@ -1324,7 +1325,7 @@ function ladderCard(s, lad, k, n) {
   let kx = ax.x1 - labels.reduce((w, l) => w + g.measureText(l).width + gap, -gap);
   labels.forEach((l, j) => { text(l, kx, box[1] + 92, 22, colour(j), true); kx += g.measureText(l).width + gap; });
   // the table
-  const wb = s.wbal && s.wbal.series ? s.wbal : null;
+  const wb = s.wbal && s.wbal.series && s.wbal.min_pct < WBAL_SHOW_PCT ? s.wbal : null;
   const wbAt = (t) => { if (!wb) return null; const p = wb.series.reduce((a, b) => Math.abs(b[0] - t) < Math.abs(a[0] - t) ? b : a);
     return p ? Math.round(p[1]) : null; };
   const dash = "\u2013";
@@ -1391,7 +1392,7 @@ function glossary(s) {
       "or the stall slip by the end? Needs no Easy rowing, so a race or a hard start is judged too."],
     ...((s.ladders || []).length ? [["Ladder", C.fg, "Steady steps, each a set power above the one before. Per step: " +
       "where the extra power came from (stroke rate, force, drive time) and how heart rate followed."]] : []),
-    ...(s.wbal ? [["W\u2032bal", AVG_COLOUR, `What is left of W\u2032 (${(s.wbal.w_prime / 1000).toFixed(1)}\u00a0kJ, the work ` +
+    ...(s.wbal && s.wbal.min_pct < WBAL_SHOW_PCT ? [["W\u2032bal", AVG_COLOUR, `What is left of W\u2032 (${(s.wbal.w_prime / 1000).toFixed(1)}\u00a0kJ, the work ` +
       `that can be done above CP, ${s.wbal.cp}\u00a0W): drains above CP, refills below it, slower as it fills (Skiba).`]] : []),
     ["Late push", C.fg, "The peak force comes later in the drive than in Easy rowing: the legs pushed late, or " +
       "hardly at all and the back and arms did the work."],
@@ -1503,7 +1504,8 @@ function sessionCard(s, rows) {
   const hz = s.heart_rate && s.hr_zones && s.hr_zones.tops ? s.hr_zones.tops : [], hzColours = zoneColours(hz.length);
   const hrBands = hz.map((top, k) => ({ name: `Z${k + 1}`, lo: k ? hz[k - 1] : null, hi: k === hz.length - 1 ? null : top,
                                         colour: hzColours[k] }));
-  const wb = s.wbal && s.wbal.series && s.wbal.series.length ? s.wbal : null;  // W'bal, when there's a W'
+  // W'bal, when there's a W' and it was used: otherwise a flat line in place of the pace chart says nothing
+  const wb = s.wbal && s.wbal.series && s.wbal.series.length && s.wbal.min_pct < WBAL_SHOW_PCT ? s.wbal : null;
   const heights = withHr ? [270, 190, 170, 220] : [320, 240, 260];
   // A margin on the right for the zone names, the same on every chart so the time axes line up.
   const GUTTER = powerBands.length || hrBands.length ? 136 : 44;
