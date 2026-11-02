@@ -1201,8 +1201,8 @@ function easyCard(s, rows) {
     text(sub, x + 24, y + 134, 22, C.dim);
   });
   const held = finishOk && lengthOk, kind = (s.intervals || []).length ? "Easy" : "Steady";
-  const verdict = !d ? [`Coach: not enough ${kind.toLowerCase()} rowing to compare`, C.dim]
-    : !hasFinish && !hasLen ? ["Coach: finish and length not readable from this export", C.dim]
+  const verdict = !hasFinish && !hasLen ? ["Coach: finish and length not readable from this export", C.dim]
+    : !d ? [`Coach: not enough ${kind.toLowerCase()} rowing to compare`, C.dim]
     : held ? [`Coach: ${kind} rowing held its shape`, C.green] : [`Coach: ${kind} rowing faded over the row`, C.amber];
   text(verdict[0], P, 1258, 30, verdict[1], true);
   text(CARD_CREDIT, CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
