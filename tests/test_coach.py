@@ -968,3 +968,14 @@ class OverEffortTest(unittest.TestCase):
         self.assertIn("I2 faded over the effort (first third to last): finish −", text)
         from smartrow_bridge import intervals
         self.assertRegex(intervals.effort_line(i), r"finish \u2212\d+% over it")
+
+    def test_a_build_is_not_a_hold(self):
+        # A ladder step-up inside one effort: power rises by design.
+        o = coach.over_effort(self.strokes([(20, 140, STEADY, 115), (20, 160, STEADY, 115), (20, 180, STEADY, 115)]))
+        self.assertTrue(o["built"])
+        self.assertFalse(o["held"])
+        i = {"index": 1, "duration_s": 300, "rating": "good", "finish_pct": 0, "power_w": 160, "intensity": "Challenging",
+             "over": o}
+        self.assertIn("I1 built from its first third to its last", " ".join(coach.findings([i])))
+        from smartrow_bridge import intervals
+        self.assertIn("built over it (power +", intervals.effort_line(i))

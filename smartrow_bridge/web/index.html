@@ -1266,7 +1266,7 @@ function overCard(s) {
   const drive = efforts.some((i) => i.over.change.drive_s != null);
   const cols = [["POWER", (c) => [signed(Math.round(c.power_pct), "%"), "power fell"]],
                 ["PEAK", (c) => [signed(Math.round(c.peak_pct), "%"), null]],
-                ["RATE", (c) => [signed(c.spm), null]],
+                ["RATE", (c) => [signed(Number(c.spm.toFixed(1))).replace(/^([+\u2212]\d+)$/, "$1.0"), null]],
                 ["FINISH", (c) => [c.finish_pct == null ? "–" : signed(Math.round(c.finish_pct), "%"), "finish faded"]],
                 ["STALL", (c, t) => [`${t[0].stall_pct}→${t[2].stall_pct}%`, "stall grew"]],
                 ...(drive ? [["DRIVE", (c) => [c.drive_s == null ? "–" : signed(Number(c.drive_s.toFixed(2)), " s"), null]]]
@@ -1279,14 +1279,18 @@ function overCard(s) {
   const size = Math.min(28, Math.round(rowH * 0.5));
   efforts.forEach((i, r) => {
     const y = ty + 64 + (r + 0.65) * rowH, slipped = i.over.slipped;
-    text(`I${i.index}  ${fmtTime(i.duration_s)}`, x0, y, size, i.over.held ? C.green : C.amber, true);
+    text(`I${i.index}  ${fmtTime(i.duration_s)}`, x0, y, size, i.over.built ? C.fg : i.over.held ? C.green : C.amber, true);
     cols.forEach(([, f], k) => {
       const [v, flag] = f(i.over.change, i.over.thirds);
       text(v, cx(k), y, size, flag && slipped.includes(flag) ? C.amber : C.fg, flag && slipped.includes(flag), "center");
     });
   });
-  const faded = efforts.filter((i) => !i.over.held);
-  const verdict = !faded.length ? [`Coach: ${efforts.length === 1 ? "it" : efforts.length === 2 ? "both" : "every one"} held`, C.green]
+  const faded = efforts.filter((i) => !i.over.held && !i.over.built), built = efforts.filter((i) => i.over.built);
+  const verdict = !faded.length && built.length === efforts.length
+    ? [`Coach: ${efforts.length === 1 ? "a build" : "builds"}, power rising by design: not judged for holding`, C.fg]
+    : !faded.length ? [`Coach: ${built.length ? efforts.filter((i) => !i.over.built).map((i) => `I${i.index}`).join(", ")
+                               : efforts.length === 1 ? "it" : efforts.length === 2 ? "both" : "every one"} held` +
+                       (built.length ? ` · ${built.map((i) => `I${i.index}`).join(", ")} built` : ""), C.green]
     : [`Coach: ${faded.slice(0, 3).map((i) => `I${i.index} ${i.over.slipped.join(", ")}`).join(" · ")}` +
        (faded.length > 3 ? ` · ${faded.length - 3} more` : ""), C.amber];
   text(verdict[0], P, 1258, 30, verdict[1], true);

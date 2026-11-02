@@ -131,6 +131,8 @@ def effort_line(i: dict) -> str:
     slipped = [r for r in (over or {}).get("slipped", []) if not (stall_told and r == "stall grew")]
     if slipped:  # its last third against its first
         notes.append(f"{over_text(over, only_slipped=True, skip=('stall grew',) if stall_told else ())} over it")
+    elif over and over.get("built"):
+        notes.append(f"built over it (power +{round(over['change']['power_pct'])}%)")
     elif over and i.get("no_reference") and over["held"]:
         notes.append("held over it")
     elif not over and i.get("fade_pct", 0) <= -10 and i.get("rating") != "unknown":

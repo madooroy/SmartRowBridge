@@ -418,6 +418,7 @@ OVER_POWER_PCT = -5.0  # power fell this much: slipped
 OVER_FINISH_PCT = -5.0  # the finish (force in the back half of the drive) fell this much
 OVER_LENGTH_CM = -2.0
 OVER_STALL_PTS = 15.0  # the stall came on this many more strokes
+OVER_BUILD_PCT = 8.0  # power rose this much: a build (a ladder, a negative split), not a hold to judge
 
 
 def over_effort(strokes: list[StrokeCurve]) -> dict | None:
@@ -459,7 +460,10 @@ def over_effort(strokes: list[StrokeCurve]) -> dict | None:
         ("finish faded", change["finish_pct"] is not None and change["finish_pct"] <= OVER_FINISH_PCT),
         ("strokes shorter", change["length_cm"] is not None and change["length_cm"] <= OVER_LENGTH_CM),
         ("stall grew", change["stall_pts"] >= OVER_STALL_PTS)) if bad]
-    return {"thirds": t, "change": change, "slipped": slipped, "held": not slipped}
+    built = change["power_pct"] >= OVER_BUILD_PCT
+    if built:
+        slipped = []
+    return {"thirds": t, "change": change, "slipped": slipped, "held": not slipped and not built, "built": built}
 
 
 @dataclass
@@ -1435,9 +1439,10 @@ def findings(intervals: list[dict]) -> list[str]:
     # Over the effort: each against its own first third (the only judge of one with no Easy before it).
     overs = [i for i in intervals if i.get("over")]
     for i in [i for i in overs if i.get("no_reference")]:
-        out.append(f"Over I{i['index']}, first third to last: {over_text(i['over'])}"
-                   f" — {'held' if i['over']['held'] else 'faded: ' + ', '.join(i['over']['slipped'])}.")
-    slid = [i for i in overs if not i["over"]["held"] and not i.get("no_reference")]
+        o = i["over"]
+        out.append(f"Over I{i['index']}, first third to last: {over_text(o)}"
+                   f" — {'built' if o.get('built') else 'held' if o['held'] else 'faded: ' + ', '.join(o['slipped'])}.")
+    slid = [i for i in overs if not i["over"]["held"] and not i["over"].get("built") and not i.get("no_reference")]
     # (a stall that grows is told with the other stall lines, by thirds: only the rest here)
     told = [i for i in slid if [r for r in i["over"]["slipped"] if r != "stall grew"]]
     if len(told) > 4:
@@ -1449,11 +1454,21 @@ def findings(intervals: list[dict]) -> list[str]:
         for i in told:
             out.append(f"I{i['index']} faded over the effort (first third to last): "
                        f"{over_text(i['over'], only_slipped=True, skip=('stall grew',))}.")
-    judged_over = [i for i in overs if not i.get("no_reference")]
+    built = [i for i in overs if i["over"].get("built") and not i.get("no_reference")]
+    if built:
+        out.append(f"{_names(built)} built from {'its' if len(built) == 1 else 'their'} first third to "
+                   f"{'its' if len(built) == 1 else 'their'} last (power "
+                   f"{_span([i['over']['change']['power_pct'] for i in built])} higher): a build, not a hold, "
+                   f"so not judged for holding.")
+    judged_over = [i for i in overs if not i.get("no_reference") and not i["over"].get("built")]
     if judged_over and not slid:
-        short = len(judged_over) < n - len([i for i in overs if i.get("no_reference")])
-        out.append(("The effort" if len(judged_over) == 1 else "Every effort" + (" of 2 min or more" if short else ""))
-                   + " held from its first third to its last (power, finish, length and stall).")
+        everyone = len(judged_over) == n - len([i for i in overs if i.get("no_reference")])
+        who = ("The effort" if n == 1 else "Every effort") if everyone else \
+            _names(judged_over) if len(judged_over) <= 4 else f"{len(judged_over)} of {n} efforts"
+        mine = "its" if len(judged_over) == 1 else "their"
+        what = ["power"] + [k for k, key in (("finish", "finish_pct"), ("length", "length_cm"))
+                            if any(i["over"]["change"].get(key) is not None for i in judged_over)]
+        out.append(f"{who} held from {mine} first third to {mine} last ({', '.join(what)} and stall).")
     long_fades = [i for i in intervals if i["duration_s"] >= 90 and i.get("fade_pct", 0) <= -5 and not i.get("over")
                   and i["rating"] != "unknown"]  # a cut-off curve can't say how the finish moved either
     if long_fades:
