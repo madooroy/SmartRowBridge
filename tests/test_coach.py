@@ -913,3 +913,58 @@ class HardStartTest(unittest.TestCase):
         r = Rower(ftp=160)
         r.row(400, 111)  # Moderate by FTP, but the whole row: the steady pace, not an effort
         self.assertEqual(r.coach.intervals, [])
+
+
+class OverEffortTest(unittest.TestCase):
+    """Each effort against its own first third: needs no Easy rowing before it."""
+
+    @staticmethod
+    def strokes(parts, drive=0.0):  # [(n, watts, curve, length)] in order
+        out, t = [], 0.0
+        for n, watts, curve, length in parts:
+            for _ in range(n):
+                t += PERIOD
+                out.append(StrokeCurve(time=t, force_n=list(curve), stroke_rate_spm=RATE, stroke_length_cm=length,
+                                       work_j=watts * 60 / RATE, stroke_count=len(out) + 1, drive_s=drive))
+        return out
+
+    def test_too_short_to_split(self):
+        self.assertIsNone(coach.over_effort(self.strokes([(20, 150, STEADY, 115)])))
+
+    def test_held(self):
+        o = coach.over_effort(self.strokes([(60, 150, STEADY, 115)], drive=0.9))
+        self.assertTrue(o["held"])
+        self.assertEqual(o["change"]["power_pct"], 0.0)
+        self.assertEqual(o["change"]["drive_s"], 0.0)  # the handle's drive time, when the export has it
+        self.assertEqual(len(o["thirds"][0]["curve"]), 24)
+
+    def test_finish_and_power_slip(self):
+        o = coach.over_effort(self.strokes([(40, 150, STEADY, 115), (20, 135, FADED, 115)]))
+        self.assertEqual(o["slipped"], ["power fell", "finish faded"])
+        self.assertIsNone(o["change"]["drive_s"])  # the pulley has no drive time
+
+    def test_shorter_strokes(self):
+        o = coach.over_effort(self.strokes([(40, 150, STEADY, 120), (20, 150, STEADY, 115)]))
+        self.assertEqual(o["slipped"], ["strokes shorter"])
+
+    def test_a_hard_start_is_judged_over_the_effort(self):
+        r = Rower(ftp=160)
+        r.row(300, 162)  # threshold from the first stroke
+        r.row(80, 70)
+        first = r.coach.intervals[0].as_dict()
+        self.assertTrue(first["no_reference"])
+        self.assertTrue(first["over"]["held"])
+        text = " ".join(coach.findings([first]))
+        self.assertIn("judged over the effort instead", text)
+        self.assertIn("Over I1, first third to last: power −0%", text.replace("+0%", "−0%"))
+        self.assertIn("held", text)
+        from smartrow_bridge import intervals
+        self.assertIn("held over it", intervals.effort_line({**first, "hr_peak": None}))
+
+    def test_a_fade_is_told(self):
+        i = {"index": 2, "duration_s": 230, "rating": "good", "finish_pct": 0, "power_w": 140, "intensity": "Moderate",
+             "over": coach.over_effort(self.strokes([(40, 150, STEADY, 115), (20, 150, FADED, 115)]))}
+        text = " ".join(coach.findings([i]))
+        self.assertIn("I2 faded over the effort (first third to last): finish −", text)
+        from smartrow_bridge import intervals
+        self.assertRegex(intervals.effort_line(i), r"finish \u2212\d+% over it")

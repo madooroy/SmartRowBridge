@@ -410,6 +410,58 @@ def mean_curve(strokes) -> list[float]:
     return [sum(s.force_n[i] for s in strokes) / len(strokes) for i in range(FORCE_SAMPLES)]
 
 
+# Over the effort: its last third against its first, so an effort needs no Easy rowing to be judged
+# (a race or a block from the first stroke). Did it hold, or did power, finish, length or the stall slip?
+OVER_MIN_STROKES = 30  # at least 10 strokes a third
+OVER_MIN_S = 120.0
+OVER_POWER_PCT = -5.0  # power fell this much: slipped
+OVER_FINISH_PCT = -5.0  # the finish (force in the back half of the drive) fell this much
+OVER_LENGTH_CM = -2.0
+OVER_STALL_PTS = 15.0  # the stall came on this many more strokes
+
+
+def over_effort(strokes: list[StrokeCurve]) -> dict | None:
+    """The effort's first, middle and last thirds side by side, and what changed from first to last.
+    None for an effort too short to split."""
+    n = len(strokes)
+    if n < OVER_MIN_STROKES or strokes[-1].time - strokes[0].time < OVER_MIN_S:
+        return None
+    parts = [strokes[k * n // 3:(k + 1) * n // 3] for k in range(3)]
+    has_length = all(s.stroke_length_cm for s in strokes)
+    has_drive = all(s.drive_s for s in strokes)
+    finish_read = cut_off_pct(strokes) < CUT_OFF_PCT
+
+    def third(p):
+        curve = mean_curve(p)
+        return {"power_w": round(statistics.fmean(stroke_power(s) for s in p), 1),
+                "spm": round(statistics.fmean(s.stroke_rate_spm for s in p), 1),
+                "peak_n": round(statistics.fmean(max(s.force_n) for s in p)),
+                "back_share": round(back_share(curve), 4),
+                "length_cm": round(statistics.fmean(s.stroke_length_cm for s in p), 1) if has_length else None,
+                "drive_s": round(statistics.fmean(s.drive_s for s in p), 3) if has_drive else None,
+                "stall_pct": round(stall_stats(p)[0]),
+                "hr": round(statistics.fmean(hrs)) if (hrs := [s.heart_rate_bpm for s in p if s.heart_rate_bpm]) else None,
+                "curve": [round(v) for v in curve]}
+
+    t = [third(p) for p in parts]
+    a, b = t[0], t[2]
+    pct = lambda x, y: round((y / x - 1) * 100, 1) if x else 0.0  # noqa: E731
+    change = {"power_pct": pct(a["power_w"], b["power_w"]),
+              "peak_pct": pct(a["peak_n"], b["peak_n"]),
+              "spm": round(b["spm"] - a["spm"], 1),
+              "finish_pct": pct(a["back_share"], b["back_share"]) if finish_read else None,
+              "length_cm": round(b["length_cm"] - a["length_cm"], 1) if has_length else None,
+              "drive_s": round(b["drive_s"] - a["drive_s"], 3) if has_drive else None,
+              "stall_pts": b["stall_pct"] - a["stall_pct"],
+              "hr": b["hr"] - a["hr"] if a["hr"] and b["hr"] else None}
+    slipped = [k for k, bad in (
+        ("power fell", change["power_pct"] <= OVER_POWER_PCT),
+        ("finish faded", change["finish_pct"] is not None and change["finish_pct"] <= OVER_FINISH_PCT),
+        ("strokes shorter", change["length_cm"] is not None and change["length_cm"] <= OVER_LENGTH_CM),
+        ("stall grew", change["stall_pts"] >= OVER_STALL_PTS)) if bad]
+    return {"thirds": t, "change": change, "slipped": slipped, "held": not slipped}
+
+
 @dataclass
 class IntervalSummary:
     index: int
@@ -451,6 +503,7 @@ class IntervalSummary:
     cut_off_pct: float = 0.0  # strokes whose curve was cut off before the end of the drive (cut_off), %
     no_reference: bool = False  # no Easy rowing before it (a row that starts hard): nothing to judge it against
     reference: str = "local"  # what it was judged against: local (the Easy rowing just before), fresh, steady
+    over: dict | None = None  # over_effort: its last third against its first (None: too short to split)
 
     @property
     def finish_known(self) -> bool:
@@ -587,6 +640,7 @@ class IntervalSummary:
             if self.first_third_back_share else 0,
             "curve": [round(v) for v in self.curve],
             "steady_curve": [round(v) for v in self.steady_curve],
+            "over": self.over,
         }
 
     def log_line(self) -> str:
@@ -991,6 +1045,7 @@ class IntervalCoach:
             stall_thirds=tuple(stall_stats(strokes[k * n // 3:(k + 1) * n // 3])[0] for k in range(3)),
             cut_off_pct=cut_off_pct(strokes),
             no_reference=not ref["back_share"],
+            over=over_effort(strokes),
         )
 
     # ------------------------------------------------------------ live cue
@@ -1286,6 +1341,21 @@ def _span(values, unit: str = "%") -> str:
     return f"{lo}{unit}" if lo == hi else f"{lo}\u2013{hi}{unit}"
 
 
+def over_text(over: dict, only_slipped: bool = False, skip: tuple = ()) -> str:
+    """'power −3%, peak force −8%, rate +0.6 spm, ...' from over_effort's change (first third to last)."""
+    c, t = over["change"], over["thirds"]
+    signed = lambda v, unit, nd=0: f"{v:+.{nd}f}{unit}".replace("-", "\u2212")  # noqa: E731
+    parts = {"power fell": f"power {signed(c['power_pct'], '%')}",
+             "peak": f"peak force {signed(c['peak_pct'], '%')}",
+             "rate": f"rate {signed(c['spm'], ' spm', 1)}",
+             "finish faded": f"finish {signed(c['finish_pct'], '%')}" if c.get("finish_pct") is not None else None,
+             "strokes shorter": f"length {signed(c['length_cm'], ' cm')}" if c.get("length_cm") is not None else None,
+             "drive": f"drive time {signed(c['drive_s'], ' s', 2)}" if c.get("drive_s") is not None else None,
+             "stall grew": f"stall {t[0]['stall_pct']}\u2192{t[2]['stall_pct']}%"}
+    keys = over["slipped"] if only_slipped else list(parts)
+    return ", ".join(parts[k] for k in keys if parts.get(k) and k not in skip)
+
+
 def findings(intervals: list[dict]) -> list[str]:
     """A few plain sentences about the session's intervals (summary dicts, as in as_dict()).
 
@@ -1318,8 +1388,10 @@ def findings(intervals: list[dict]) -> list[str]:
     cut = [i for i in unknown if not i.get("no_reference")]
     if first_hard:
         stalls = [i for i in first_hard if i.get("stall_pct", 0) >= STALL_NOTE_PCT]
-        out.append(f"{_names(first_hard)} came before any Easy rowing, so there was nothing to compare "
-                   f"{'it' if len(first_hard) == 1 else 'them'} with: power, rate and heart rate only"
+        out.append(f"{_names(first_hard)} came before any Easy rowing, so there was no Easy stroke to compare "
+                   f"{'it' if len(first_hard) == 1 else 'them'} with"
+                   + ("; judged over the effort instead" if all(i.get("over") for i in first_hard) else
+                      ": power, rate and heart rate only")
                    + (f"; a stall just after the peak on {_span([i['stall_pct'] for i in stalls])} of strokes"
                       if stalls else "") + ".")
     if cut:
@@ -1360,7 +1432,29 @@ def findings(intervals: list[dict]) -> list[str]:
             out.append(f"The ones that slipped were the longer efforts (about {_clock(d_slip)} against "
                        f"{_clock(d_good)}).")
 
-    long_fades = [i for i in intervals if i["duration_s"] >= 90 and i.get("fade_pct", 0) <= -5
+    # Over the effort: each against its own first third (the only judge of one with no Easy before it).
+    overs = [i for i in intervals if i.get("over")]
+    for i in [i for i in overs if i.get("no_reference")]:
+        out.append(f"Over I{i['index']}, first third to last: {over_text(i['over'])}"
+                   f" — {'held' if i['over']['held'] else 'faded: ' + ', '.join(i['over']['slipped'])}.")
+    slid = [i for i in overs if not i["over"]["held"] and not i.get("no_reference")]
+    # (a stall that grows is told with the other stall lines, by thirds: only the rest here)
+    told = [i for i in slid if [r for r in i["over"]["slipped"] if r != "stall grew"]]
+    if len(told) > 4:
+        reasons = [r for i in told for r in i["over"]["slipped"] if r != "stall grew"]
+        top = max(set(reasons), key=reasons.count)
+        out.append(f"{len(told)} of {len(overs)} efforts faded from their first third to their last "
+                   f"(most often: {top}).")
+    else:
+        for i in told:
+            out.append(f"I{i['index']} faded over the effort (first third to last): "
+                       f"{over_text(i['over'], only_slipped=True, skip=('stall grew',))}.")
+    judged_over = [i for i in overs if not i.get("no_reference")]
+    if judged_over and not slid:
+        short = len(judged_over) < n - len([i for i in overs if i.get("no_reference")])
+        out.append(("The effort" if len(judged_over) == 1 else "Every effort" + (" of 2 min or more" if short else ""))
+                   + " held from its first third to its last (power, finish, length and stall).")
+    long_fades = [i for i in intervals if i["duration_s"] >= 90 and i.get("fade_pct", 0) <= -5 and not i.get("over")
                   and i["rating"] != "unknown"]  # a cut-off curve can't say how the finish moved either
     if long_fades:
         worst = min(long_fades, key=lambda i: i["fade_pct"])

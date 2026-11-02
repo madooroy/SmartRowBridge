@@ -40,7 +40,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import sessions, webapi
-from .coach import SHORTER_CM, bands_text
+from .coach import SHORTER_CM, bands_text, over_text
 
 log = logging.getLogger(__name__)
 
@@ -125,7 +125,15 @@ def effort_line(i: dict) -> str:
                      else "finish not read (curve cut off)")
     if i.get("length_delta_cm", 0) <= SHORTER_CM:
         notes.append(f"strokes {abs(round(i['length_delta_cm']))} cm shorter")
-    if i.get("fade_pct", 0) <= -10 and i.get("rating") != "unknown":
+    over = i.get("over")
+    stall_told = i.get("transition") or i.get("small_stall") or i.get("habitual_stall") or \
+        (i.get("no_reference") and i.get("stall_pct", 0) >= 10)
+    slipped = [r for r in (over or {}).get("slipped", []) if not (stall_told and r == "stall grew")]
+    if slipped:  # its last third against its first
+        notes.append(f"{over_text(over, only_slipped=True, skip=('stall grew',) if stall_told else ())} over it")
+    elif over and i.get("no_reference") and over["held"]:
+        notes.append("held over it")
+    elif not over and i.get("fade_pct", 0) <= -10 and i.get("rating") != "unknown":
         notes.append(f"faded {abs(i['fade_pct'])}% over the effort")
     if i.get("legs_late"):
         notes.append("late push")

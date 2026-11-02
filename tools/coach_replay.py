@@ -47,6 +47,13 @@ def _number(text: str | None) -> int:
         return 0
 
 
+def _seconds(text: str | None) -> float:
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def strokes_from_csv(path: Path):
     """StrokeCurve per row of a SmartRow app export. Force column #0 is always 0 and skipped. Some
     exports (newer SmartRow devices) have no stroke length: it is then 0, which the coach reads as
@@ -63,6 +70,7 @@ def strokes_from_csv(path: Path):
                 stroke_count=int(float(row["Stroke (#)"])),
                 heart_rate_bpm=_number(row.get("Heart rate (bpm)")),
                 distance_m=_number(row.get("Distance (m)")),
+                drive_s=_seconds(row.get("Stroke time (s)")),  # the handle's drive time; not in pulley exports
             )
 
 

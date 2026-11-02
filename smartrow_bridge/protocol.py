@@ -140,6 +140,7 @@ class StrokeCurve:
     stroke_count: int = 0
     heart_rate_bpm: int = 0  # from the bridge's own strap connection, 0 = none
     distance_m: int = 0  # the pulley's distance when the stroke finished
+    drive_s: float = 0.0  # drive time, only in exports that have it (the SmartRow handle's); 0 = not measured
 
 
 @dataclass
