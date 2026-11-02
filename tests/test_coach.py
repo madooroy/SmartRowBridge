@@ -1043,4 +1043,4 @@ class StallBumpTest(unittest.TestCase):
         rise = {**base, "index": 1, "stall_pct": 17, "stall_thirds": [8, 19, 23]}
         text = " ".join(coach.findings([rise, bump]))
         self.assertIn("rising through I1 (from 8% in the first third to 23% in the last)", text)
-        self.assertIn("up mid-effort and down again by the end in I3 (I3 23\u219232\u219214% by thirds)", text)
+        self.assertIn("up mid-effort and down again by the end in I3 (23\u219232\u219214% by thirds)", text)

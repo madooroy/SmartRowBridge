@@ -1537,7 +1537,8 @@ def findings(intervals: list[dict]) -> list[str]:
             where = "each effort" if len(rising) == len(small) and len(small) > 1 else _which(rising, n)
             trend = f", rising through {where} (from {_span(starts)} in the first third to {_span(ends)} in the last)"
         if bump:
-            by = "; ".join(f"{_names([i])} {thirds(i)[0]}\u2192{thirds(i)[1]}\u2192{thirds(i)[2]}%" for i in bump[:4])
+            by = "; ".join(("" if len(bump) == 1 else f"{_names([i])} ")
+                           + f"{thirds(i)[0]}\u2192{thirds(i)[1]}\u2192{thirds(i)[2]}%" for i in bump[:4])
             trend += f", {'and ' if rising else ''}up mid-effort and down again by the end in {_which(bump, n)} ({by} by thirds)"
         out.append(f"A small stall just after the peak in {each}{trend}; flagged from {STALL_FLAG_PCT:.0f}%.")
 
