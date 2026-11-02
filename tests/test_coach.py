@@ -890,3 +890,26 @@ class SecondRowerTest(unittest.TestCase):
         text = " ".join(coach.findings([{**base, "index": k + 1} for k in range(9)]))
         self.assertIn("The finish eased a little in all 9 efforts (−7%)", text)
         self.assertNotIn("I1, I2", text)
+
+
+class HardStartTest(unittest.TestCase):
+    def test_a_row_that_starts_with_a_threshold_block(self):
+        # A friend's 16 Oct: 20 min at FTP from the first stroke, then recovery and short surges.
+        r = Rower(ftp=160)
+        r.row(400, 162)  # about 19 minutes at threshold, no warm-up
+        r.row(80, 70)  # recovery
+        r.row(20, 115)  # a Moderate surge
+        r.row(30, 70)
+        efforts = r.coach.intervals
+        self.assertEqual([i.intensity for i in efforts], ["Challenging", "Moderate"])
+        first = efforts[0].as_dict()
+        self.assertEqual((first["rating"], first["no_reference"]), ("unknown", True))
+        self.assertFalse(first["legs_late"] or first["uneven"] or first["transition"] or first["peak_wanders"])
+        self.assertLess(r.coach.steady_power(), 100)  # the Easy reference is the recovery, not the threshold block
+        text = " ".join(coach.findings([e.as_dict() for e in efforts]))
+        self.assertIn("I1 came before any Easy rowing", text)
+
+    def test_a_steady_row_below_challenging_is_still_the_reference(self):
+        r = Rower(ftp=160)
+        r.row(400, 111)  # Moderate by FTP, but the whole row: the steady pace, not an effort
+        self.assertEqual(r.coach.intervals, [])

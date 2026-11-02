@@ -449,12 +449,13 @@ class IntervalSummary:
     steady_stall_pct: float = 0.0  # ... in the Easy rowing before
     stall_thirds: tuple[float, float, float] = (0.0, 0.0, 0.0)  # stall % in the effort's first, middle and last third
     cut_off_pct: float = 0.0  # strokes whose curve was cut off before the end of the drive (cut_off), %
+    no_reference: bool = False  # no Easy rowing before it (a row that starts hard): nothing to judge it against
     reference: str = "local"  # what it was judged against: local (the Easy rowing just before), fresh, steady
 
     @property
     def finish_known(self) -> bool:
         """False when most strokes' curves were cut off before the end of the drive (cut_off)."""
-        return self.cut_off_pct < CUT_OFF_PCT
+        return self.cut_off_pct < CUT_OFF_PCT and not self.no_reference
 
     @property
     def length_known(self) -> bool:
@@ -464,17 +465,19 @@ class IntervalSummary:
     @property
     def small_stall(self) -> bool:
         """A stall on enough strokes to mention (STALL_NOTE_PCT), but under the flag (STALL_FLAG_PCT)."""
-        return not self.transition and STALL_NOTE_PCT <= self.stall_pct < STALL_FLAG_PCT
+        return not self.transition and not self.no_reference and STALL_NOTE_PCT <= self.stall_pct < STALL_FLAG_PCT
 
     @property
     def habitual_stall(self) -> bool:
         """A stall on many strokes (the flag's share or more) that isn't flagged because the Easy
         rowing before has it as much: part of this rower's stroke, not something the effort brought on."""
-        return not self.transition and self.stall_pct >= STALL_FLAG_PCT
+        return not self.transition and not self.no_reference and self.stall_pct >= STALL_FLAG_PCT
 
     @property
     def transition(self) -> bool:
         """The force stalled after the peak on clearly more strokes than in Easy rowing."""
+        if self.no_reference:
+            return False  # no Easy rowing to compare with: reported as a stall without a verdict
         return self.stall_pct >= max(STALL_FLAG_PCT, self.steady_stall_pct + STALL_FLAG_OVER)
 
     @property
@@ -485,12 +488,16 @@ class IntervalSummary:
     @property
     def uneven(self) -> bool:
         """The strokes were clearly less even than in the Easy rowing before the effort."""
+        if self.no_reference:
+            return False
         return self.variation_ratio >= UNEVEN_VARIATION or self.length_sd_cm >= max(
             self.steady_length_sd_cm * UNEVEN_LENGTH_SD_RATIO, UNEVEN_LENGTH_SD_MIN)
 
     @property
     def peak_wanders(self) -> bool:
         """The peak landed clearly less consistently than in steady rowing."""
+        if self.no_reference:
+            return False
         return self.peak_spread_pct > max(self.steady_peak_spread_pct * PEAK_SPREAD_RATIO,
                                           self.steady_peak_spread_pct + PEAK_SPREAD_MIN)
 
@@ -500,7 +507,7 @@ class IntervalSummary:
 
     @property
     def legs_late(self) -> bool:
-        return self.lateness > self.legs_threshold
+        return not self.no_reference and self.lateness > self.legs_threshold
 
     @property
     def finish_ratio(self) -> float:
@@ -573,6 +580,7 @@ class IntervalSummary:
             "length_known": self.length_known,
             "finish_known": self.finish_known,
             "cut_off_pct": round(self.cut_off_pct),
+            "no_reference": self.no_reference,
             "stall_thirds": [round(x) for x in self.stall_thirds],
             "reference": self.reference,  # only "local" ones teach sessions.learned_finish
             "fade_pct": round((self.last_third_back_share / self.first_third_back_share - 1) * 100)
@@ -767,7 +775,9 @@ class IntervalCoach:
         if self.effort is None:
             base = self.steady_power()
             start_at = self._start_at(base)
-            if self.ready and len(self.recent) >= 3 and smoothed >= start_at:
+            if not self.ready and self._hard(smoothed):
+                start_at = self.ftp * FTP_BOUNDS_PCT[2] / 100  # no Easy rowing yet: only a clearly hard start counts
+            if (self.ready or self._hard(smoothed)) and len(self.recent) >= 3 and smoothed >= start_at:
                 # Back-date to the first hard stroke among the recent ones.
                 recent = list(self.recent)
                 first = next(i for i, r in enumerate(recent) if stroke_power(r) >= start_at)
@@ -798,10 +808,16 @@ class IntervalCoach:
                 self._update_cue()
         return finished
 
+    def _hard(self, watts: float) -> bool:
+        """With an FTP: Challenging or above, which is never anyone's Easy rowing."""
+        return bool(self.ftp) and watts >= self.ftp * FTP_BOUNDS_PCT[2] / 100
+
     def _learn(self, s: StrokeCurve, base: float) -> None:
         if self.recovery_left > 0:
             self.recovery_left -= 1
             return
+        if self._hard(stroke_power(s)):
+            return  # a row that starts hard (a threshold block, a test) mustn't become the Easy reference
         if self.ready and (stroke_power(s) < base * EASY_RATIO or self.intensity(stroke_power(s)) == "Recovery"):
             return
         self.steady.append(s)
@@ -974,6 +990,7 @@ class IntervalCoach:
             steady_stall_pct=stall_stats(local)[0],
             stall_thirds=tuple(stall_stats(strokes[k * n // 3:(k + 1) * n // 3])[0] for k in range(3)),
             cut_off_pct=cut_off_pct(strokes),
+            no_reference=not ref["back_share"],
         )
 
     # ------------------------------------------------------------ live cue
@@ -988,6 +1005,8 @@ class IntervalCoach:
         ref = self.effort_ref()
         expect = self.expected(self.intensity(statistics.fmean(stroke_power(s) for s in window)))
         ratio = back_share(curve) / ((ref["back_share"] * expect) or 1)
+        if not ref["back_share"]:  # no Easy rowing yet to compare with
+            return 1.0, 0.0, 0.0
         if cut_off_pct(window) >= CUT_OFF_PCT:
             ratio = 1.0  # the end of the drive is missing: no finish cue on a cut-off curve
         ref_len = ref["length_cm"] or 1
@@ -1289,9 +1308,17 @@ def findings(intervals: list[dict]) -> list[str]:
             parts.append(f"{len(these)} {k}{span}")
         out.append("Efforts: " + ", ".join(parts) + ".")
 
-    if unknown:
-        out.append(f"The force curves were cut off before the end of the drive in {_which(unknown, n)} "
-                   f"({_span([i.get('cut_off_pct', 0) for i in unknown])} of strokes): the stroke runs past the "
+    first_hard = [i for i in unknown if i.get("no_reference")]
+    cut = [i for i in unknown if not i.get("no_reference")]
+    if first_hard:
+        stalls = [i for i in first_hard if i.get("stall_pct", 0) >= STALL_NOTE_PCT]
+        out.append(f"{_names(first_hard)} came before any Easy rowing, so there was nothing to compare "
+                   f"{'it' if len(first_hard) == 1 else 'them'} with: power, rate and heart rate only"
+                   + (f"; a stall just after the peak on {_span([i['stall_pct'] for i in stalls])} of strokes"
+                      if stalls else "") + ".")
+    if cut:
+        out.append(f"The force curves were cut off before the end of the drive in {_which(cut, n)} "
+                   f"({_span([i.get('cut_off_pct', 0) for i in cut])} of strokes): the stroke runs past the "
                    f"about 140 cm the sensor records, so the finish isn't judged there.")
     if judged and len(good) == judged:
         if judged == n:
@@ -1469,8 +1496,11 @@ def heart_rate_summary(trace: list[tuple[float, int, float]], intervals: list[In
         around = [(hr, t) for t, hr, _ in readings if t0 <= t <= t1 + HR_PEAK_AFTER_S]
         entry: dict = {"hr_avg": round(sum(during) / len(during)) if during else None,
                        "hr_peak": max(around)[0] if around else None, "hr_recovery": None}
-        if around:
-            peak, t_peak = max(around)
+        # Recovery: from the highest reading around the effort's end (in a long effort the peak can
+        # come minutes before it ends, and a minute after that point the effort is still going).
+        at_end = [(hr, t) for hr, t in around if t >= t1 - HR_PEAK_AFTER_S]
+        if at_end:
+            peak, t_peak = max(at_end)
             next_start = windows[k + 1][0] if k + 1 < len(windows) else float("inf")
             target = t_peak + HR_RECOVERY_S
             later = [(abs(t - target), hr) for t, hr, _ in readings if abs(t - target) <= 6]

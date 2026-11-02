@@ -121,7 +121,8 @@ def effort_line(i: dict) -> str:
     if i.get("rating") in ("short", "ok"):
         notes.append(f"finish {_signed(i['finish_pct'])}%")
     elif i.get("rating") == "unknown":
-        notes.append("finish not read (curve cut off)")
+        notes.append("finish not read (no Easy rowing before it)" if i.get("no_reference")
+                     else "finish not read (curve cut off)")
     if i.get("length_delta_cm", 0) <= SHORTER_CM:
         notes.append(f"strokes {abs(round(i['length_delta_cm']))} cm shorter")
     if i.get("fade_pct", 0) <= -10 and i.get("rating") != "unknown":
@@ -138,6 +139,8 @@ def effort_line(i: dict) -> str:
         notes.append(f"small stall on {i['stall_pct']}%")
     elif i.get("habitual_stall"):
         notes.append(f"stall on {i['stall_pct']}%, as in Easy")
+    elif i.get("no_reference") and i.get("stall_pct", 0) >= 10:
+        notes.append(f"stall on {i['stall_pct']}%")
     parts = [f"I{i['index']}" + (f" {i['intensity']}" if i.get("intensity") else ""),
              f"{_clock(i['duration_s'])} at {i['power_w']} W", ", ".join(notes) or "good"]
     if i.get("hr_peak"):

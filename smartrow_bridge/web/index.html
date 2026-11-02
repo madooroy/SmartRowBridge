@@ -1055,10 +1055,10 @@ function effortCard(s, i, rows, sharedTop = null) {
     for (let k = a; k <= b; k++) (k === a ? g.moveTo : g.lineTo).call(g, ax.X(sampleCm(k)), ax.Y(r.force_n[k]));
     g.strokeStyle = C.amber; g.lineWidth = 5; g.stroke();
   }
-  if (i.steady_curve && i.steady_curve.length) {
+  if (i.steady_curve && i.steady_curve.some((v) => v > 0)) {
     path(i.steady_curve); g.strokeStyle = C.fg; g.lineWidth = 4; g.setLineDash([14, 10]); g.stroke(); g.setLineDash([]);
   }
-  if (i.rating === "unknown") {  // the sensor's last sample: the drive went on past it
+  if (i.rating === "unknown" && !i.no_reference) {  // the sensor's last sample: the drive went on past it
     const x = ax.X(sampleCm(23));
     g.strokeStyle = C.amber; g.lineWidth = 3; g.setLineDash([10, 8]);
     g.beginPath(); g.moveTo(x, ax.y0 + 70); g.lineTo(x, ax.Y(0)); g.stroke(); g.setLineDash([]);
@@ -1066,7 +1066,7 @@ function effortCard(s, i, rows, sharedTop = null) {
   }
   text(strokes.length ? `${strokes.length} strokes, one line each` : `average of ${i.strokes} strokes`,
        box[0] + box[2] - 24, box[1] + 44, 22, C.dim, false, "right");
-  if (i.steady_curve && i.steady_curve.length)
+  if (i.steady_curve && i.steady_curve.some((v) => v > 0))
     text("\u2014 \u2014  Easy rowing just before", ax.x1, ax.y0 + 30, 22, C.fg, false, "right");
   if (cut.length) text(`${cut.length} cut short`, ax.x1, ax.y0 + 60, 22, C.amber, true, "right");
   // The labels, one row each from the bottom, under the shaded stretch (kept inside the chart).
@@ -1088,14 +1088,16 @@ function effortCard(s, i, rows, sharedTop = null) {
   // The numbers the coach judged it by.
   const tiles = [
     i.rating === "unknown"
-      ? ["FINISH", "\u2013", `not read: ${i.cut_off_pct}% of curves cut off`, C.dim]
+      ? ["FINISH", "\u2013", i.no_reference ? "no Easy rowing before it" : `not read: ${i.cut_off_pct}% of curves cut off`, C.dim]
       : ["FINISH", signed(i.finish_pct, "%"), `vs ${s.rower ? "the" : "your"} usual ${i.intensity || "effort"}`, ratingColour(i)],
     lengthKnown(i)
       ? ["LENGTH", `${Math.round(i.length_cm)} cm`, `${signed(Math.round(i.length_delta_cm), " cm")} vs Easy`,
          i.length_delta_cm <= -2 ? C.amber : C.fg]
       : ["LENGTH", "\u2013", "not in this export", C.dim],
-    ["CONSISTENCY", i.variation_ratio !== undefined ? `${i.variation_ratio.toFixed(1)}\u00d7` : "\u2013",
-     i.variation_ratio !== undefined ? "variation stroke to stroke, vs Easy" : "", i.uneven ? C.amber : C.fg],
+    i.no_reference
+      ? ["CONSISTENCY", "\u2013", "no Easy rowing before it", C.dim]
+      : ["CONSISTENCY", i.variation_ratio !== undefined ? `${i.variation_ratio.toFixed(1)}\u00d7` : "\u2013",
+         i.variation_ratio !== undefined ? "variation stroke to stroke, vs Easy" : "", i.uneven ? C.amber : C.fg],
     ["STALL AFTER THE PEAK", i.stall_pct !== undefined ? `${i.stall_pct}%` : "\u2013", stallNote(s, i),
      i.transition ? C.amber : C.fg],
   ];
@@ -1129,8 +1131,9 @@ const EASY_FROM_S = 120, AFTER_EFFORT_S = 35;
 function easyStrokes(s, rows) {
   const easy = (s.power_bands || []).find((b) => b[0] === "Easy");
   const busy = (s.intervals || []).map((i) => [(i.started_at_s ?? 0) - 1, (i.started_at_s ?? 0) + i.duration_s + AFTER_EFFORT_S]);
+  const steadyRow = !(s.intervals || []).length;  // no efforts: the whole row is the steady rowing
   return rows.filter((r) => r.t >= EASY_FROM_S && r.force_n && r.force_n.length && r.power_w
-                     && (!easy || ((easy[1] ?? 0) <= r.power_w && r.power_w < (easy[2] ?? Infinity)))
+                     && (steadyRow || !easy || ((easy[1] ?? 0) <= r.power_w && r.power_w < (easy[2] ?? Infinity)))
                      && !busy.some(([a, b]) => a <= r.t && r.t <= b));
 }
 
@@ -1141,7 +1144,7 @@ function easyCard(s, rows) {
   const P = CARD_P, med = (xs) => xs.slice().sort((a, b) => a - b)[Math.floor(xs.length / 2)];
   const watts = Math.round(med(strokes.map((r) => r.power_w))), minutes = (strokes[strokes.length - 1].t - strokes[0].t) / 60;
   text(`${fmtWhen(s.started_at)} \u00b7 ROWING`, P, P + 26, 26, C.dim, true);
-  text("Easy rowing", P, P + 104, 72, C.fg, true);
+  text((s.intervals || []).length ? "Easy rowing" : "Steady rowing", P, P + 104, 72, C.fg, true);
   text([`${strokes.length} strokes`, `${watts} W`, `${Math.round(med(strokes.map((r) => r.spm)))} spm`].join("  \u00b7  "),
        P, P + 158, 34, C.dim);
   const box = [P, 240, CARD_W - 2 * P, 620];
@@ -1180,7 +1183,7 @@ function easyCard(s, rows) {
                             / strokes.length), hasFinish = cutPct < 50;
   const finishOk = !d || !hasFinish || d.finish_pct > -5, lengthOk = !d || !hasLen || d.length_delta_cm > -2;
   const tiles = [
-    ["POWER", `${watts} W`, "median Easy stroke", C.fg],
+    ["POWER", `${watts} W`, `median ${(s.intervals || []).length ? "Easy" : "steady"} stroke`, C.fg],
     hasLen ? ["LENGTH", `${Math.round(med(lens))} cm`, fresh.length ? `fresh stroke ${Math.round(s.fresh_easy.length_cm)} cm` : "median", C.fg]
            : ["LENGTH", "\u2013", "not in this export", C.dim],
     hasFinish ? ["FINISH OVER THE ROW", d ? signed(d.finish_pct, "%") : "\u2013", "last minutes against the first", finishOk ? C.green : C.amber]
@@ -1196,9 +1199,11 @@ function easyCard(s, rows) {
     text(v, x + 24, y + 98, 52, colour, true);
     text(sub, x + 24, y + 134, 22, C.dim);
   });
-  const held = finishOk && lengthOk;
-  text(!d ? "Coach: not enough Easy rowing to compare" : held ? "Coach: Easy rowing held its shape" : "Coach: Easy rowing faded over the row",
-       P, 1258, 30, !d ? C.dim : held ? C.green : C.amber, true);
+  const held = finishOk && lengthOk, kind = (s.intervals || []).length ? "Easy" : "Steady";
+  const verdict = !d ? [`Coach: not enough ${kind.toLowerCase()} rowing to compare`, C.dim]
+    : !hasFinish && !hasLen ? ["Coach: finish and length not readable from this export", C.dim]
+    : held ? [`Coach: ${kind} rowing held its shape`, C.green] : [`Coach: ${kind} rowing faded over the row`, C.amber];
+  text(verdict[0], P, 1258, 30, verdict[1], true);
   text(CARD_CREDIT, CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
   return cv;
 }
@@ -1241,7 +1246,7 @@ function glossary(s) {
   ];
 }
 // Under the list: what the pulley can and can't tell, and what tells the rest.
-const glossaryNote = (s) => ((s.intervals || []).some((i) => i.rating === "unknown")
+const glossaryNote = (s) => ((s.intervals || []).some((i) => i.rating === "unknown" && !i.no_reference)
   ? "Here the sensor stops at about 140 cm of handle travel, before the end of this drive, so the finish isn't read. " : "") +
   `All of this comes from the ${s.rower ? "SmartRow sensor" : "pulley"} alone: it measures how hard and how far the handle is ` +
   "pulled, not which muscles pull it. An early pull with the arms, say, shows only as a curve of a different shape. " +
