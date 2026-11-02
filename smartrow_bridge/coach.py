@@ -688,7 +688,7 @@ class IntervalCoach:
         self.length_note: dict | None = None
         self.easy_window: deque[StrokeCurve] = deque(maxlen=CUE_WINDOW)
         self.easy_cue: str | None = None
-        self.easy_log: list[tuple[float, float, float]] = []  # (back-half share, length cm, time) per Easy stroke
+        self.easy_log: list[tuple[float, float, float, bool]] = []  # (back-half share, length cm, time, cut off) per Easy stroke
         self.intervals: list[IntervalSummary] = []
         self.last_time: float | None = None
         self.last_count = 0
@@ -831,7 +831,7 @@ class IntervalCoach:
                 self.baseline = fresh_stats(self.fresh)
                 log.debug("Provisional Easy reference from %d fresh strokes", len(self.fresh))
         self.easy_window.append(s)
-        self.easy_log.append((back_share(s.force_n), s.stroke_length_cm, s.time))
+        self.easy_log.append((back_share(s.force_n), s.stroke_length_cm, s.time, cut_off(s.force_n)))
         self._update_easy_cue()
 
     def _fresh_outcome(self) -> tuple[dict | None, dict | None, dict | None]:
@@ -1112,12 +1112,18 @@ class IntervalCoach:
         if len(self.easy_log) < 3 * n:
             return None
         # the first: the fresh Easy strokes (after the warm-up) when there are enough
-        first = [(back_share(s.force_n), s.stroke_length_cm) for s in self.fresh] \
+        first = [(back_share(s.force_n), s.stroke_length_cm, s.time, cut_off(s.force_n)) for s in self.fresh] \
             if len(self.fresh) >= n else self.easy_log[:n]
         last = self.easy_log[-n:]
         f0, f1 = statistics.median(x[0] for x in first), statistics.median(x[0] for x in last)
         l0, l1 = statistics.median(x[1] for x in first), statistics.median(x[1] for x in last)
-        return {"finish_pct": round((f1 / f0 - 1) * 100) if f0 else 0, "length_delta_cm": round(l1 - l0)}
+        # Not readable: curves cut off at the end (the finish), or an export without stroke length.
+        cut = sum(x[3] for x in first + last) * 100 / len(first + last) >= CUT_OFF_PCT
+        finish = None if cut else round((f1 / f0 - 1) * 100) if f0 else 0
+        length = round(l1 - l0) if l0 and l1 else None
+        if finish is None and length is None:
+            return None
+        return {"finish_pct": finish, "length_delta_cm": length}
 
     def thresholds(self) -> dict:
         """Every number the judgements turn on, saved with each session: when one is tuned later, an
@@ -1467,12 +1473,15 @@ def easy_findings(drift: dict | None) -> list[str]:
     if not drift:
         return []
     parts = []
-    if abs(drift["finish_pct"]) >= 5:
-        parts.append(f"finish {_pct(drift['finish_pct'])}")
-    if abs(drift["length_delta_cm"]) >= 2:
-        parts.append(f"strokes {abs(drift['length_delta_cm'])} cm {'longer' if drift['length_delta_cm'] > 0 else 'shorter'}")
+    finish, length = drift.get("finish_pct"), drift.get("length_delta_cm")
+    if finish is not None and abs(finish) >= 5:
+        parts.append(f"finish {_pct(finish)}")
+    if length is not None and abs(length) >= 2:
+        parts.append(f"strokes {abs(length)} cm {'longer' if length > 0 else 'shorter'}")
     if not parts:
-        return ["Easy rowing kept its shape from the first minutes to the last."]
+        what = "its shape" if finish is not None and length is not None else \
+            "its finish" if finish is not None else "its stroke length"
+        return [f"Easy rowing kept {what} from the first minutes to the last."]
     return [f"Easy rowing, last minutes against the first: {' and '.join(parts)} "
             "(efforts are judged against the Easy rowing just before them, so this isn't counted against them)."]
 

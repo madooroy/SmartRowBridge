@@ -1181,14 +1181,15 @@ function easyCard(s, rows) {
   const d = s.easy_drift, lens = strokes.map((r) => r.length_cm), hasLen = med(lens) > 0;
   const cutPct = Math.round(100 * strokes.filter((r) => r.force_n[r.force_n.length - 1] >= 0.25 * Math.max(...r.force_n)).length
                             / strokes.length), hasFinish = cutPct < 50;
-  const finishOk = !d || !hasFinish || d.finish_pct > -5, lengthOk = !d || !hasLen || d.length_delta_cm > -2;
+  const finishOk = !d || !hasFinish || d.finish_pct == null || d.finish_pct > -5;
+  const lengthOk = !d || !hasLen || d.length_delta_cm == null || d.length_delta_cm > -2;
   const tiles = [
     ["POWER", `${watts} W`, `median ${(s.intervals || []).length ? "Easy" : "steady"} stroke`, C.fg],
     hasLen ? ["LENGTH", `${Math.round(med(lens))} cm`, fresh.length ? `fresh stroke ${Math.round(s.fresh_easy.length_cm)} cm` : "median", C.fg]
            : ["LENGTH", "\u2013", "not in this export", C.dim],
-    hasFinish ? ["FINISH OVER THE ROW", d ? signed(d.finish_pct, "%") : "\u2013", "last minutes against the first", finishOk ? C.green : C.amber]
+    hasFinish ? ["FINISH OVER THE ROW", d && d.finish_pct != null ? signed(d.finish_pct, "%") : "\u2013", "last minutes against the first", finishOk ? C.green : C.amber]
               : ["FINISH OVER THE ROW", "\u2013", `not read: ${cutPct}% of curves cut off`, C.dim],
-    hasLen ? ["LENGTH OVER THE ROW", d ? signed(d.length_delta_cm, " cm") : "\u2013", "last minutes against the first", lengthOk ? C.green : C.amber]
+    hasLen ? ["LENGTH OVER THE ROW", d && d.length_delta_cm != null ? signed(d.length_delta_cm, " cm") : "\u2013", "last minutes against the first", lengthOk ? C.green : C.amber]
            : ["LENGTH OVER THE ROW", "\u2013", "not in this export", C.dim],
   ];
   const tw = (CARD_W - 2 * P - 24) / 2, th = 150;
