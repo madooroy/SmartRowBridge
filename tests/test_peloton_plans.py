@@ -50,11 +50,50 @@ class PelotonPlansTest(unittest.TestCase):
             class A:
                 pass
             args = A()
-            args.cache, args.out = str(cache), str(Path(tmp, "out"))
+            args.cache, args.out, args.minutes = str(cache), str(Path(tmp, "out")), None
             pp.analyse(args)
             report = Path(tmp, "out", "report.html").read_text(encoding="utf-8")
             self.assertIn("2 classes with a class plan (1 without)", report)
-            self.assertIn("<td>Challenging</td><td>9:00</td><td>60 min Intervals</td>", report)
-            self.assertIn("<td>Max</td><td>1:00</td>", report)
+            self.assertLess(report.index("60-minute classes"), report.index("10-minute classes"))  # longest first
+            self.assertIn("<b>9:00</b> <small>60 min Intervals, Coach", report)
+            self.assertIn("Recovery 1:00 (1) · Easy 5:00 (1) · Challenging 9:00 (1) · Max 1:00 (1)", report)
             rows = Path(tmp, "out", "intervals.csv").read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(rows), 1 + 6)
+            per_class = Path(tmp, "out", "classes.csv").read_text(encoding="utf-8").splitlines()
+            self.assertTrue(per_class[1].startswith("60,60 min Intervals,Coach"))
+            self.assertIn("9.0,1,9:00", per_class[1])  # Challenging: 9 min in one block
+
+            args.minutes = [10]  # one class length only
+            pp.analyse(args)
+            report = Path(tmp, "out", "report.html").read_text(encoding="utf-8")
+            self.assertNotIn("60-minute classes", report)
+
+    def test_fetch_goes_longest_first_one_length_at_a_time(self):
+        from unittest import mock
+        catalogue = [{"id": f"c{m}{k}", "duration": m * 60, "fitness_discipline": "caesar"}
+                     for m in (10, 30, 60) for k in range(2)]
+        asked = []
+
+        class FakeClient:
+            def __init__(self, *a, **k):
+                pass
+
+            def get(self, path, **params):
+                asked.append(path)
+                return details("x", 10, [(0, 60, 1)])
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(pp, "Client", FakeClient), \
+                mock.patch.object(pp, "list_rows", lambda c: catalogue), \
+                mock.patch.object(pp.getpass, "getpass", lambda *a: "secret"):
+            class A:
+                pass
+            args = A()
+            args.cache, args.cookie, args.delay, args.max, args.refresh = tmp, False, 0, None, False
+            args.minutes = [60, 30]
+            pp.fetch(args)
+            self.assertEqual(asked, ["/api/ride/c600/details", "/api/ride/c601/details",
+                                     "/api/ride/c300/details", "/api/ride/c301/details"])
+            asked.clear()
+            args.minutes = None  # the rest; the cached ones are skipped
+            pp.fetch(args)
+            self.assertEqual(asked, ["/api/ride/c100/details", "/api/ride/c101/details"])
