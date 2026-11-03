@@ -316,7 +316,8 @@
       <div class="hint" id="cCount"></div>
       <div id="cList"></div>
       <button id="cMore" hidden>Show more</button>
-      <div class="hint">Intensity: each minute of the class plan weighted by its level (Easy 0.55, Moderate 0.78,
+      <div class="hint">Skyline: the class plan from start to finish, each bar's height and colour its level.
+        Intensity: each minute of the class plan weighted by its level (Easy 0.55, Moderate 0.78,
         Challenging 1.0, Max 1.3; Recovery and untargeted 0.45), root-mean-square over the class, like cycling's
         intensity factor. Load: intensity² × hours × 100. From Peloton's own class plans, not members' votes.</div>
     </section>
@@ -930,7 +931,7 @@ function classFilter(ignoreLength = false) {
     && (!max || (max === "none" ? !c.x : c.x > 0)) && (!q || c.t.toLowerCase().includes(q) || c.i.toLowerCase().includes(q));
 }
 
-// A class (or classes back to back) as a small step graph: bar height and colour by level, so the
+// A class's skyline (or two classes back to back): a small step graph, bar height and colour by level, so the
 // shape of the class reads at a glance (as Peloton's Power Zone class graphs); untargeted stretches
 // a thin baseline; a faint line at Challenging's height for reference.
 const LEVEL_HEIGHT = { "-1": 0.28, 0: 0.42, 1: 0.62, 2: 0.82, 3: 1 };
@@ -951,7 +952,7 @@ function classGraph(classes) {
     x0 += c.len + joint;
   }
   const ref = H * (1 - LEVEL_HEIGHT[2]);
-  return `<svg class="cgraph" viewBox="0 0 ${total} ${H}" preserveAspectRatio="none" role="img" aria-label="class plan">
+  return `<svg class="cgraph" viewBox="0 0 ${total} ${H}" preserveAspectRatio="none" role="img" aria-label="skyline: the class plan by level">
     ${bars}<line x1="0" x2="${total}" y1="${ref}" y2="${ref}" stroke="${C.dim}" stroke-width="0.6" stroke-dasharray="6 6" vector-effect="non-scaling-stroke"/></svg>`;
 }
 

@@ -700,7 +700,8 @@ instructor calls, minute by minute) and the web page's **Classes** screen lists 
 length, instructor, class type, how much Challenging and Max, or title; order by an intensity worked
 out from the plan (each minute weighted by its level, like cycling's intensity factor), load, minutes
 at Challenging and Max, longest hard block, Max sprints, date or members' rating; find classes like
-one you liked; and pair two classes into a longer row at a chosen intensity.
+one you liked; and pair two classes into a longer row at a chosen intensity. Each class is drawn as
+its *skyline*: the plan from start to finish, each bar's height and colour its level.
 
 It uses Peloton's unofficial members API with your own sign-in, so run it yourself on the Pi:
 
