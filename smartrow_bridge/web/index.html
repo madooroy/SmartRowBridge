@@ -153,6 +153,17 @@
   .cfilters select, .sessbar input, #cStack select { font: inherit; font-size: var(--label); color: var(--fg);
     background: var(--tile); border: 1px solid var(--faint); border-radius: 10px; padding: 6px 8px; }
   .sessbar input { flex: 1; min-width: 10em; }
+  .dd { position: relative; }
+  .dd summary { list-style: none; cursor: pointer; font-size: var(--label); background: var(--tile);
+    border: 1px solid var(--faint); border-radius: 10px; padding: 6px 28px 6px 10px; white-space: nowrap; }
+  .dd summary::-webkit-details-marker { display: none; }
+  .dd summary::after { content: "▾"; position: absolute; right: 10px; color: var(--dim); }
+  .ddmenu { position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; min-width: 15em; background: var(--tile);
+    border: 1px solid var(--faint); border-radius: 10px; padding: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.6);
+    display: flex; flex-direction: column; gap: 2px; font-size: var(--label); }
+  .ddmenu label { display: flex; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  .ddmenu label:hover { background: var(--faint); }
+  .ddmenu button { margin-top: 4px; font-size: var(--label); }
   .chip { display: inline-flex; align-items: center; gap: 4px; font-size: var(--label); background: var(--tile);
     border: 1px solid var(--faint); border-radius: 10px; padding: 5px 9px; cursor: pointer; }
   .chip input { margin: 0; }
@@ -286,6 +297,8 @@
       </div>
       <div class="cfilters">
         <span id="cLen"></span>
+        <details class="dd" id="cWhoDD"><summary id="cWhoSum">All instructors</summary>
+          <div class="ddmenu" id="cWho" aria-label="Instructors"></div></details>
         <select id="cGroup" aria-label="Class type"></select>
         <select id="cHard" aria-label="Challenging and Max">
           <option value="">Challenging + Max: any</option>
@@ -305,7 +318,6 @@
           <option value="some">some</option>
         </select>
       </div>
-      <div class="cfilters" id="cWho" aria-label="Instructors (none ticked: all)"></div>
       <div class="ckey" id="cKey"></div>
       <details class="tile" id="cStack">
         <summary>Build a longer row from two classes</summary>
@@ -921,8 +933,9 @@ async function openClassesView() {
     // Instructors as tick-boxes, most classes first; none ticked means all of them.
     const counts = {};
     for (const c of pel) counts[c.i] = (counts[c.i] || 0) + 1;
-    $("cWho").innerHTML = `<span class="csub">Instructors (none ticked: all)</span>` + Object.keys(counts)
-      .sort((a, b) => counts[b] - counts[a]).map((w) => `<label class="chip"><input type="checkbox" value="${esc(w)}">${esc(w)} <span class="csub">${counts[w]}</span></label>`).join(" ");
+    $("cWho").innerHTML = Object.keys(counts).sort((a, b) => counts[b] - counts[a])
+      .map((w) => `<label><input type="checkbox" value="${esc(w)}">${esc(w)} <span class="csub">${counts[w]}</span></label>`).join("")
+      + `<button id="cWhoAll" type="button">All instructors</button>`;
     $("cGroup").innerHTML = opt("", "All class types") + [...new Set(pel.map((c) => c.g))].sort().map((g) => opt(g, g)).join("");
     const sums = [...new Set(pel.flatMap((a) => pel.map((b) => a.m + b.m)))].filter((m) => m >= 40).sort((a, b) => a - b);
     $("sLen").innerHTML = sums.map((m) => `<option value="${m}" ${m === 50 ? "selected" : ""}>${m} min in all</option>`).join("");
@@ -999,6 +1012,8 @@ function classRow(c) {
 
 function renderClasses() {
   if (!pel) return;
+  const who = [...$("cWho").querySelectorAll("input:checked")].map((x) => x.value.split(" ")[0]);
+  $("cWhoSum").textContent = !who.length ? "All instructors" : who.length <= 3 ? who.join(", ") : `${who.length} instructors`;
   let list = pel.filter(classFilter());
   if (pelLike) {
     const v = shares(pelLike).concat(pelLike.if);
@@ -1053,6 +1068,12 @@ $("cBack").addEventListener("click", closeSessionView);
 for (const id of ["cSort", "cWho", "cGroup", "cHard", "cMax", "cTaken"]) $(id).addEventListener("change", () => { pelShown = 100; renderClasses(); });
 $("cSearch").addEventListener("input", () => { pelShown = 100; renderClasses(); });
 $("cLen").addEventListener("change", () => { pelShown = 100; renderClasses(); });
+$("cWho").addEventListener("click", (e) => {
+  if (e.target.id !== "cWhoAll") return;
+  for (const x of $("cWho").querySelectorAll("input")) x.checked = false;
+  pelShown = 100; renderClasses();
+});
+document.addEventListener("click", (e) => { if (!e.target.closest("#cWhoDD")) $("cWhoDD").open = false; });
 $("cMore").addEventListener("click", () => { pelShown += 100; renderClasses(); });
 for (const id of ["sLen", "sHow", "sEnd"]) $(id).addEventListener("change", renderPairs);
 $("cStack").addEventListener("toggle", () => { if ($("cStack").open) renderPairs(); });
