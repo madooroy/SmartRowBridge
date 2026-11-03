@@ -11,7 +11,7 @@ that cache. Use it gently (one request a second by default) and for your own ana
     python3 tools/peloton_plans.py fetch --minutes 60              # then one class length at a time,
     python3 tools/peloton_plans.py analyse --minutes 60            # longest first: 60, 45, 30 ...
     python3 tools/peloton_plans.py index                           # the Pi's Classes page (20 min and up)
-    python3 tools/peloton_plans.py update                          # weekly: new classes, then the index
+    python3 tools/peloton_plans.py update                          # weekly: new classes, your history, the index
 
 Your token: sign in at members.onepeloton.com in a browser, open the developer tools (F12),
 Network tab, reload, click any request to api.onepeloton.com and copy the value of its
@@ -154,6 +154,36 @@ def fetch(args) -> None:
             (cache / "classes" / f"{ride['id']}.json").write_text(json.dumps(details), encoding="utf-8")
             if k % 25 == 0 or k == len(todo):
                 print(f"  {k}/{len(todo)}", flush=True)
+    return client
+
+
+def fetch_history(client: Client, cache: Path) -> int:
+    """Your own workouts (which class, when), for "taken before" on the Classes page: saved as
+    history.json, [{"ride": class id, "start": epoch s}], newest first."""
+    me = client.get("/api/me")
+    user = me.get("id")
+    if not user:
+        raise SystemExit("Peloton didn't say who you are (no id in /api/me).")
+    out, page = [], 0
+    while True:
+        reply = client.get(f"/api/user/{user}/workouts", joins="ride", limit=100, page=page, sort_by="-created")
+        for w in reply.get("data") or []:
+            ride = (w.get("ride") or {}).get("id") or w.get("ride_id")
+            start = w.get("start_time") or w.get("created_at")
+            if ride and start:
+                out.append({"ride": ride, "start": int(start)})
+        page += 1
+        if page >= (reply.get("page_count") or 0) or not reply.get("data"):
+            break
+    Path(cache, "history.json").write_text(json.dumps(out), encoding="utf-8")
+    print(f"Your workout history: {len(out)} workouts")
+    return len(out)
+
+
+def history(args) -> None:
+    token = None if args.cookie else getpass.getpass("Peloton token (hidden): ").strip()
+    cookie = getpass.getpass("peloton_session_id cookie (hidden): ").strip() if args.cookie else None
+    fetch_history(Client(token, cookie, args.delay), Path(args.cache))
 
 
 # ------------------------------------------------------------------ reading a class plan
@@ -502,15 +532,53 @@ def index_entry(class_id: str, details: dict) -> dict | None:
             "if": round(score, 3), "load": round(score ** 2 * length / 3600 * 100)}
 
 
-def build_index(cache: Path, min_minutes: int = INDEX_MIN_MINUTES) -> list[dict]:
+SESSIONS = "/var/lib/smartrow-bridge/sessions"  # the bridge's saved sessions (smartrow_bridge.sessions)
+SESSION_MATCH_S = 20 * 60  # a Peloton workout and a Pi session starting this close are the same row
+
+
+def _read_json(path: Path, default):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+
+
+def pi_sessions(directory) -> list[tuple[int, str]]:
+    """(start epoch, session id) of the Pi's saved sessions."""
+    out = []
+    for f in Path(directory).glob("*.json"):
+        if f.name.endswith(".strokes.json"):
+            continue
+        rec = _read_json(f, {})
+        if rec.get("started_at") and rec.get("id"):
+            out.append((int(rec["started_at"]), str(rec["id"])))
+    return out
+
+
+def build_index(cache: Path, min_minutes: int = INDEX_MIN_MINUTES, sessions_dir=SESSIONS) -> list[dict]:
+    """Every class with a plan, plus what Peloton knows about you and it: bookmarked ("fav", from the
+    catalogue), how often you've taken it ("n"), and when ("taken": [start, Pi session id or None],
+    newest first, from history.json) with the Pi's session of that row when one starts close by."""
+    catalogue = {r.get("id"): r for r in _read_json(Path(cache, "catalogue.json"), [])}
+    taken = defaultdict(list)
+    for w in _read_json(Path(cache, "history.json"), []):
+        taken[w["ride"]].append(w["start"])
+    rows = pi_sessions(sessions_dir) if sessions_dir and Path(sessions_dir).is_dir() else []
     out = []
     for f in sorted(Path(cache, "classes").glob("*.json")):
         details = json.loads(f.read_text(encoding="utf-8"))
         if class_minutes(details.get("ride") or {}) < min_minutes:
             continue
         entry = index_entry(f.stem, details)
-        if entry:
-            out.append(entry)
+        if not entry:
+            continue
+        listed = catalogue.get(f.stem) or {}
+        when = sorted(taken.get(f.stem, []), reverse=True)
+        entry["fav"] = bool(listed.get("is_favorite"))
+        entry["n"] = max(len(when), int(listed.get("total_user_workouts") or 0))
+        entry["taken"] = [[t, min(((abs(t - s), sid) for s, sid in rows if abs(t - s) <= SESSION_MATCH_S),
+                                  default=(0, None))[1]] for t in when]
+        out.append(entry)
     return out
 
 
@@ -529,20 +597,27 @@ def write_index(entries: list[dict], path: Path) -> None:
 
 
 def index(args) -> None:
-    entries = build_index(Path(args.cache), args.min_minutes)
+    entries = build_index(Path(args.cache), args.min_minutes, getattr(args, "sessions", SESSIONS))
     if not entries:
         raise SystemExit("No class plans in the cache yet: run fetch first.")
     write_index(entries, Path(args.out))
     lengths = Counter(e["m"] for e in entries)
     print(f"Indexed {len(entries)} classes (" + ", ".join(f"{m} min: {n}" for m, n in sorted(lengths.items(), reverse=True))
           + f") into {args.out}. The Pi's web page shows them under Classes.")
+    taken = [e for e in entries if e["n"]]
+    print(f"  bookmarked: {sum(e['fav'] for e in entries)}, taken before: {len(taken)}, "
+          f"with your Pi session linked: {sum(1 for e in taken if any(sid for _, sid in e['taken']))}")
 
 
 def update(args) -> None:
     """The weekly refresh: list the catalogue again, fetch the classes not seen yet, rebuild the index."""
     args.refresh, args.max = True, None
     args.minutes = args.minutes or [m for m in (60, 45, 30, 20) if m >= args.min_minutes]
-    fetch(args)
+    client = fetch(args)
+    try:
+        fetch_history(client, Path(args.cache))
+    except (SystemExit, urllib.error.URLError, ValueError) as exc:  # the classes still get indexed
+        print(f"Couldn't read your workout history ({exc}); taken-before dates are left as they were.")
     index(args)
 
 
@@ -567,6 +642,11 @@ def main(argv=None) -> None:
     x.add_argument("--cache", default="peloton-cache")
     x.add_argument("--out", default=PUBLISHED)
     x.add_argument("--min-minutes", type=int, default=INDEX_MIN_MINUTES)
+    x.add_argument("--sessions", default=SESSIONS, help="the Pi's saved sessions, to link the classes you rowed")
+    h = sub.add_parser("history", help="download your own workout history (which classes, when)")
+    h.add_argument("--cache", default="peloton-cache")
+    h.add_argument("--delay", type=float, default=1.0)
+    h.add_argument("--cookie", action="store_true")
     u = sub.add_parser("update", help="weekly: fetch new classes (needs a token) and rebuild the index")
     u.add_argument("--cache", default="peloton-cache")
     u.add_argument("--out", default=PUBLISHED)
@@ -574,8 +654,10 @@ def main(argv=None) -> None:
     u.add_argument("--minutes", type=int, nargs="+", help="class lengths (default 60 45 30 20)")
     u.add_argument("--delay", type=float, default=1.0)
     u.add_argument("--cookie", action="store_true")
+    u.add_argument("--sessions", default=SESSIONS)
     args = p.parse_args(argv)
-    {"fetch": fetch, "inspect": inspect, "analyse": analyse, "index": index, "update": update}[args.cmd](args)
+    {"fetch": fetch, "inspect": inspect, "analyse": analyse, "index": index, "update": update,
+     "history": history}[args.cmd](args)
 
 
 if __name__ == "__main__":

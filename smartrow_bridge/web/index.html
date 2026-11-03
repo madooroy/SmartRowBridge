@@ -156,6 +156,8 @@
   .chip { display: inline-flex; align-items: center; gap: 4px; font-size: var(--label); background: var(--tile);
     border: 1px solid var(--faint); border-radius: 10px; padding: 5px 9px; cursor: pointer; }
   .chip input { margin: 0; }
+  .cstar { color: var(--amber); }
+  .ctaken { color: var(--green); font-size: var(--label); }
   .crow { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
   .ctop { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
   .ctitle { font-weight: 700; font-size: clamp(15px, 2.4vmin, 21px); }
@@ -277,6 +279,7 @@
           <option value="block">Longest hard block</option>
           <option value="x">Most Max sprints</option>
           <option value="new">Newest</option>
+          <option value="taken">Recently taken</option>
           <option value="r">Hardest first (members' rating)</option>
           <option value="rl">Easiest first (members' rating)</option>
         </select>
@@ -290,6 +293,12 @@
           <option value="le10">at most 10% of the class</option>
           <option value="le20">at most 20%</option>
           <option value="ge20">20% or more</option>
+        </select>
+        <select id="cTaken" aria-label="Taken before">
+          <option value="">Taken or not</option>
+          <option value="yes">Taken before</option>
+          <option value="no">Not taken yet</option>
+          <option value="fav">Bookmarked</option>
         </select>
         <select id="cMax" aria-label="Max sprints">
           <option value="">Max sprints: any</option>
@@ -926,8 +935,8 @@ async function openClassesView() {
 function classFilter(ignoreLength = false) {
   const lens = [...$("cLen").querySelectorAll("input:checked")].map((x) => +x.value);
   const who = $("cWho").value, group = $("cGroup").value, hard = $("cHard").value, max = $("cMax").value;
-  const q = $("cSearch").value.trim().toLowerCase();
-  return (c) => (ignoreLength || lens.includes(c.m)) && (!who || c.i === who) && (!group || c.g === group)
+  const q = $("cSearch").value.trim().toLowerCase(), taken = $("cTaken").value;
+  return (c) => (!taken || (taken === "yes" ? c.n > 0 : taken === "no" ? !c.n : c.fav)) && (ignoreLength || lens.includes(c.m)) && (!who || c.i === who) && (!group || c.g === group)
     && (!hard || (hard === "le10" ? hardShare(c) <= 0.1 : hard === "le20" ? hardShare(c) <= 0.2 : hardShare(c) >= 0.2))
     && (!max || (max === "none" ? !c.x : c.x > 0)) && (!q || c.t.toLowerCase().includes(q) || c.i.toLowerCase().includes(q));
 }
@@ -957,18 +966,29 @@ function classGraph(classes) {
     ${bars}<line x1="0" x2="${total}" y1="${ref}" y2="${ref}" stroke="${C.dim}" stroke-width="0.6" stroke-dasharray="6 6" vector-effect="non-scaling-stroke"/></svg>`;
 }
 
+// "Taken 2× · 2 Nov (your session ›) · 14 Oct": from Peloton's history, each date linking to the Pi's
+// own session of that row when it has one.
+function takenLine(c) {
+  if (!c.n) return "";
+  const day = (t) => { const d = new Date(t * 1000); return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`; };
+  const when = (c.taken || []).slice(0, 4).map(([t, sid]) => sid
+    ? `<a href="#" data-session="${esc(sid)}">${day(t)}: your session ›</a>` : day(t)).join(" · ");
+  return `<div class="ctaken">✓ Taken ${c.n}×${when ? ` · ${when}` : ""}</div>`;
+}
+
 function classRow(c) {
   const blocks = (k) => c.p.filter((x) => x[2] === k).length;
   const totals = [0, 1, 2, 3].filter((k) => c.s[k]).map((k) => `${LEVELS[k][0]} ${clock(c.s[k])} (${blocks(k)})`).join(" · ");
   const d = new Date(c.d * 1000);
   return `<div class="tile crow">
-    <div class="ctop"><div><div class="ctitle">${esc(c.t)}</div>
+    <div class="ctop"><div><div class="ctitle">${c.fav ? `<span class="cstar" title="Bookmarked in Peloton">★</span> ` : ""}${esc(c.t)}</div>
       <div class="csub">${esc(c.i)} · ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} · ${esc(c.g)}</div></div>
       <div class="cnums"><div><b>${c.if.toFixed(2)}</b><span class="csub">intensity</span></div>
         <div><b>${c.load}</b><span class="csub">load</span></div>
         <div><b>${c.r ?? "–"}</b><span class="csub">members</span></div></div></div>
     ${classGraph(c)}
     <div class="csub">${totals}${c.s["-1"] ? ` · Recovery ${clock(c.s["-1"])}` : ""}${c.none ? ` · no target ${clock(c.none)}` : ""}${c.x ? ` · ${c.x} Max sprint${c.x > 1 ? "s" : ""}` : ""}</div>
+    ${takenLine(c)}
     <div class="cbtns"><button data-like="${c.id}">Similar</button>
       <a href="${PELOTON_CLASS(c.id)}" target="_blank" rel="noopener">Open in Peloton</a></div></div>`;
 }
@@ -985,6 +1005,7 @@ function renderClasses() {
   } else {
     $("cLike").hidden = true;
     const key = { if: (c) => -c.if, ifl: (c) => c.if, load: (c) => -c.load, hard: (c) => -hardShare(c) * c.len,
+                  taken: (c) => -((c.taken || [])[0]?.[0] || (c.n ? 1 : 0)),
                   block: (c) => -Math.max(c.b["2"] || 0, c.b["3"] || 0), x: (c) => -c.x, new: (c) => -c.d,
                   r: (c) => -(c.r ?? -1), rl: (c) => c.r ?? 99 }[$("cSort").value];
     list.sort((a, b) => key(a) - key(b));
@@ -1025,13 +1046,15 @@ function renderPairs() {
 
 $("classesBtn").addEventListener("click", openClassesView);
 $("cBack").addEventListener("click", closeSessionView);
-for (const id of ["cSort", "cWho", "cGroup", "cHard", "cMax"]) $(id).addEventListener("change", () => { pelShown = 100; renderClasses(); });
+for (const id of ["cSort", "cWho", "cGroup", "cHard", "cMax", "cTaken"]) $(id).addEventListener("change", () => { pelShown = 100; renderClasses(); });
 $("cSearch").addEventListener("input", () => { pelShown = 100; renderClasses(); });
 $("cLen").addEventListener("change", () => { pelShown = 100; renderClasses(); });
 $("cMore").addEventListener("click", () => { pelShown += 100; renderClasses(); });
 for (const id of ["sLen", "sHow", "sEnd"]) $(id).addEventListener("change", renderPairs);
 $("cStack").addEventListener("toggle", () => { if ($("cStack").open) renderPairs(); });
 $("cList").addEventListener("click", (e) => {
+  const link = e.target.closest("a[data-session]");
+  if (link) { e.preventDefault(); openSessionView(link.dataset.session); return; }
   const b = e.target.closest("button[data-like]");
   if (!b) return;
   pelLike = pel.find((c) => c.id === b.dataset.like);

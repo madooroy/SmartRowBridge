@@ -138,3 +138,41 @@ class IndexTest(unittest.TestCase):
             pp.index(args)
             data = json.loads(Path(tmp, "pub", "classes.json").read_text())
             self.assertEqual([c["id"] for c in data["classes"]], ["a"])
+
+
+class TakenAndBookmarksTest(unittest.TestCase):
+    def test_index_marks_bookmarks_taken_and_links_pi_sessions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache, sess = Path(tmp, "c"), Path(tmp, "sessions")
+            (cache / "classes").mkdir(parents=True)
+            sess.mkdir()
+            for cid in ("a", "b"):
+                (cache / "classes" / f"{cid}.json").write_text(json.dumps(details(f"30 min {cid}", 30, [(0, 600, 1)])))
+            (cache / "catalogue.json").write_text(json.dumps([
+                {"id": "a", "is_favorite": True, "total_user_workouts": 2},
+                {"id": "b", "is_favorite": False, "total_user_workouts": 0}]))
+            (cache / "history.json").write_text(json.dumps([
+                {"ride": "a", "start": 1_000_000}, {"ride": "a", "start": 2_000_000}]))
+            (sess / "2026-11-02T0603.json").write_text(json.dumps({"id": "2026-11-02T0603", "started_at": 2_000_300}))
+            (sess / "2026-11-02T0603.strokes.json").write_text("[]")
+            entries = {e["id"]: e for e in pp.build_index(cache, 20, sess)}
+            a, b = entries["a"], entries["b"]
+            self.assertTrue(a["fav"])
+            self.assertEqual(a["n"], 2)
+            self.assertEqual(a["taken"], [[2_000_000, "2026-11-02T0603"], [1_000_000, None]])  # newest first
+            self.assertEqual((b["fav"], b["n"], b["taken"]), (False, 0, []))
+
+    def test_fetch_history(self):
+        class FakeClient:
+            def get(self, path, **params):
+                if path == "/api/me":
+                    return {"id": "u1"}
+                self.assertion = path
+                pages = [{"data": [{"ride": {"id": "a"}, "start_time": 5}, {"ride_id": "b", "start_time": 4}],
+                          "page_count": 2},
+                         {"data": [{"ride": {"id": "c"}, "created_at": 3}, {"ride": {}}], "page_count": 2}]
+                return pages[params["page"]]
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(pp.fetch_history(FakeClient(), Path(tmp)), 3)
+            self.assertEqual(json.loads(Path(tmp, "history.json").read_text()),
+                             [{"ride": "a", "start": 5}, {"ride": "b", "start": 4}, {"ride": "c", "start": 3}])

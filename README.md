@@ -712,7 +712,12 @@ python3 tools/peloton_plans.py index                         # the Classes scree
 python3 tools/peloton_plans.py update                        # weekly: new classes, then the index
 ```
 
-`fetch` and `update` ask for a token (hidden; never printed or saved): sign in at
+Classes you've taken show "✓ Taken 2× · 1 Nov: your session ›" (from your Peloton workout history,
+linked to the Pi's own session of that row when the start times match), and classes you've
+bookmarked in the Peloton app a ★; the Classes screen can filter on both and order by recently
+taken. `update` (or `history`) reads your workout history.
+
+`fetch`, `history` and `update` ask for a token (hidden; never printed or saved): sign in at
 members.onepeloton.com, press F12, Network, reload, filter on `api.onepeloton`, click a `me`
 request, and copy the value of its `authorization` header after `Bearer `. It lasts 48 hours.
 The downloaded plans stay in `peloton-cache`, the index in `/var/lib/smartrow-bridge/peloton`
