@@ -286,7 +286,6 @@
       </div>
       <div class="cfilters">
         <span id="cLen"></span>
-        <select id="cWho" aria-label="Instructor"></select>
         <select id="cGroup" aria-label="Class type"></select>
         <select id="cHard" aria-label="Challenging and Max">
           <option value="">Challenging + Max: any</option>
@@ -306,6 +305,7 @@
           <option value="some">some</option>
         </select>
       </div>
+      <div class="cfilters" id="cWho" aria-label="Instructors (none ticked: all)"></div>
       <div class="ckey" id="cKey"></div>
       <details class="tile" id="cStack">
         <summary>Build a longer row from two classes</summary>
@@ -319,7 +319,7 @@
           </select>
           <label class="chip"><input type="checkbox" id="sEnd" checked>start with an Endurance class</label>
         </div>
-        <div class="hint">Pairs that add up to the length, easier class first, within the instructor filter above.</div>
+        <div class="hint">Pairs that add up to the length, easier class first, from the instructors ticked above.</div>
         <div id="cPairs"></div>
       </details>
       <div class="hint" id="cLike" hidden></div>
@@ -918,7 +918,11 @@ async function openClassesView() {
     const lens = [...new Set(pel.map((c) => c.m))].sort((a, b) => b - a);
     $("cLen").innerHTML = lens.map((m) => `<label class="chip"><input type="checkbox" value="${m}" ${m >= 30 ? "checked" : ""}>${m} min</label>`).join(" ");
     const opt = (v, t) => `<option value="${v}">${t}</option>`;
-    $("cWho").innerHTML = opt("", "All instructors") + [...new Set(pel.map((c) => c.i))].sort().map((w) => opt(w, w)).join("");
+    // Instructors as tick-boxes, most classes first; none ticked means all of them.
+    const counts = {};
+    for (const c of pel) counts[c.i] = (counts[c.i] || 0) + 1;
+    $("cWho").innerHTML = `<span class="csub">Instructors (none ticked: all)</span>` + Object.keys(counts)
+      .sort((a, b) => counts[b] - counts[a]).map((w) => `<label class="chip"><input type="checkbox" value="${esc(w)}">${esc(w)} <span class="csub">${counts[w]}</span></label>`).join(" ");
     $("cGroup").innerHTML = opt("", "All class types") + [...new Set(pel.map((c) => c.g))].sort().map((g) => opt(g, g)).join("");
     const sums = [...new Set(pel.flatMap((a) => pel.map((b) => a.m + b.m)))].filter((m) => m >= 40).sort((a, b) => a - b);
     $("sLen").innerHTML = sums.map((m) => `<option value="${m}" ${m === 50 ? "selected" : ""}>${m} min in all</option>`).join("");
@@ -934,9 +938,9 @@ async function openClassesView() {
 
 function classFilter(ignoreLength = false) {
   const lens = [...$("cLen").querySelectorAll("input:checked")].map((x) => +x.value);
-  const who = $("cWho").value, group = $("cGroup").value, hard = $("cHard").value, max = $("cMax").value;
+  const who = [...$("cWho").querySelectorAll("input:checked")].map((x) => x.value), group = $("cGroup").value, hard = $("cHard").value, max = $("cMax").value;
   const q = $("cSearch").value.trim().toLowerCase(), taken = $("cTaken").value;
-  return (c) => (!taken || (taken === "yes" ? c.n > 0 : taken === "no" ? !c.n : c.fav)) && (ignoreLength || lens.includes(c.m)) && (!who || c.i === who) && (!group || c.g === group)
+  return (c) => (!taken || (taken === "yes" ? c.n > 0 : taken === "no" ? !c.n : c.fav)) && (ignoreLength || lens.includes(c.m)) && (!who.length || who.includes(c.i)) && (!group || c.g === group)
     && (!hard || (hard === "le10" ? hardShare(c) <= 0.1 : hard === "le20" ? hardShare(c) <= 0.2 : hardShare(c) >= 0.2))
     && (!max || (max === "none" ? !c.x : c.x > 0)) && (!q || c.t.toLowerCase().includes(q) || c.i.toLowerCase().includes(q));
 }
