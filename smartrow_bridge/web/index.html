@@ -162,8 +162,7 @@
   .csub { color: var(--dim); font-size: var(--label); }
   .cnums { display: flex; gap: 14px; text-align: right; flex: none; }
   .cnums b { display: block; font-size: clamp(16px, 2.8vmin, 24px); font-variant-numeric: tabular-nums; }
-  .cstrip { display: flex; height: 14px; border-radius: 4px; overflow: hidden; background: var(--bg); }
-  .cstrip .gap { background: repeating-linear-gradient(45deg, var(--faint) 0 3px, transparent 3px 6px); }
+  .cgraph { display: block; width: 100%; height: 40px; }
   .cbtns { display: flex; gap: 8px; align-items: center; }
   #classes a { color: #5aa5f0; font-size: var(--label); }
   .ckey { display: flex; flex-wrap: wrap; gap: 12px; font-size: var(--label); color: var(--dim); }
@@ -913,7 +912,7 @@ async function openClassesView() {
     const sums = [...new Set(pel.flatMap((a) => pel.map((b) => a.m + b.m)))].filter((m) => m >= 40).sort((a, b) => a - b);
     $("sLen").innerHTML = sums.map((m) => `<option value="${m}" ${m === 50 ? "selected" : ""}>${m} min in all</option>`).join("");
     $("cKey").innerHTML = Object.values(LEVELS).map(([n, col]) => `<span><i style="background:${col}"></i>${n}</span>`).join("")
-      + `<span><i style="background:repeating-linear-gradient(45deg,${C.faint} 0 3px,transparent 3px 6px)"></i>no target</span>`;
+      + `<span><i style="height:2px;background:${C.faint}"></i>no target</span><span>- - - Challenging</span>`;
   }
   reviewing = true;
   $("layout").classList.add("reviewing");
@@ -931,14 +930,29 @@ function classFilter(ignoreLength = false) {
     && (!max || (max === "none" ? !c.x : c.x > 0)) && (!q || c.t.toLowerCase().includes(q) || c.i.toLowerCase().includes(q));
 }
 
-function classStrip(c) {
-  let at = 0, html = "";
-  for (const [a, b, lv] of [...c.p, [c.len, 0, null]]) {
-    if (a > at) html += `<span class="gap" style="flex:${(a - at) / c.len}" title="no target ${clock(a - at)}"></span>`;
-    if (lv !== null) html += `<span style="flex:${b / c.len};background:${LEVELS[lv][1]}" title="${LEVELS[lv][0]} ${clock(b)}"></span>`;
-    at = Math.max(at, a + b);
+// A class (or classes back to back) as a small step graph: bar height and colour by level, so the
+// shape of the class reads at a glance (as Peloton's Power Zone class graphs); untargeted stretches
+// a thin baseline; a faint line at Challenging's height for reference.
+const LEVEL_HEIGHT = { "-1": 0.28, 0: 0.42, 1: 0.62, 2: 0.82, 3: 1 };
+function classGraph(classes) {
+  classes = [].concat(classes);
+  const H = 40, joint = 40, total = classes.reduce((t, c) => t + c.len, 0) + joint * (classes.length - 1);
+  let x0 = 0, bars = "";
+  for (const c of classes) {
+    let at = 0;
+    for (const [a, b, lv] of [...c.p, [c.len, 0, null]]) {
+      if (a > at) bars += `<rect x="${x0 + at}" y="${H - 2}" width="${a - at}" height="2" fill="${C.faint}"><title>no target ${clock(a - at)}</title></rect>`;
+      if (lv !== null) {
+        const h = H * LEVEL_HEIGHT[lv];
+        bars += `<rect x="${x0 + a}" y="${H - h}" width="${b}" height="${h}" fill="${LEVELS[lv][1]}"><title>${LEVELS[lv][0]} ${clock(b)}</title></rect>`;
+      }
+      at = Math.max(at, a + b);
+    }
+    x0 += c.len + joint;
   }
-  return `<div class="cstrip">${html}</div>`;
+  const ref = H * (1 - LEVEL_HEIGHT[2]);
+  return `<svg class="cgraph" viewBox="0 0 ${total} ${H}" preserveAspectRatio="none" role="img" aria-label="class plan">
+    ${bars}<line x1="0" x2="${total}" y1="${ref}" y2="${ref}" stroke="${C.dim}" stroke-width="0.6" stroke-dasharray="6 6" vector-effect="non-scaling-stroke"/></svg>`;
 }
 
 function classRow(c) {
@@ -951,7 +965,7 @@ function classRow(c) {
       <div class="cnums"><div><b>${c.if.toFixed(2)}</b><span class="csub">intensity</span></div>
         <div><b>${c.load}</b><span class="csub">load</span></div>
         <div><b>${c.r ?? "–"}</b><span class="csub">members</span></div></div></div>
-    ${classStrip(c)}
+    ${classGraph(c)}
     <div class="csub">${totals}${c.s["-1"] ? ` · Recovery ${clock(c.s["-1"])}` : ""}${c.none ? ` · no target ${clock(c.none)}` : ""}${c.x ? ` · ${c.x} Max sprint${c.x > 1 ? "s" : ""}` : ""}</div>
     <div class="cbtns"><button data-like="${c.id}">Similar</button>
       <a href="${PELOTON_CLASS(c.id)}" target="_blank" rel="noopener">Open in Peloton</a></div></div>`;
@@ -1004,7 +1018,7 @@ function renderPairs() {
         <div class="cnums"><div><b>${v.toFixed(2)}</b><span class="csub">intensity</span></div></div></div>
       <div class="csub">${esc(a.i)} then ${esc(b.i)} · <a href="${PELOTON_CLASS(a.id)}" target="_blank" rel="noopener">first</a> ·
         <a href="${PELOTON_CLASS(b.id)}" target="_blank" rel="noopener">second</a></div>
-      ${classStrip(a)}${classStrip(b)}</div>`).join("") || `<div class="hint">No pairs at that length and intensity: try another.</div>`;
+      ${classGraph([a, b])}</div>`).join("") || `<div class="hint">No pairs at that length and intensity: try another.</div>`;
 }
 
 $("classesBtn").addEventListener("click", openClassesView);
