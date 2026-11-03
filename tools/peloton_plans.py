@@ -273,11 +273,14 @@ def analyse(args) -> None:
                          "class_min": minutes, "intensity": label, "start_s": start, "length_s": length,
                          "bucket": bucket(length)})
         classes.append({"class_id": f.stem, "title": ride.get("title", ""), "instructor": who, "aired": aired,
-                        "class_min": minutes, "blocks": dict(blocks)})
+                        "class_min": minutes, "length_s": ride.get("duration") or minutes * 60, "blocks": dict(blocks)})
     if not rows:
         raise SystemExit(f"No class plans found ({no_plan} cached classes without one): run inspect to see their shape.")
     order = [n for n in DEFAULT_NAMES if any(r["intensity"] == n for r in rows)] + \
         sorted({r["intensity"] for r in rows} - set(DEFAULT_NAMES))
+    # Recovery isn't one of Peloton's pace levels (on the Row its time isn't counted, and some rack the
+    # handle): it's left out of the tables and shown only where class time is accounted for.
+    levels = [i for i in order if i != "Recovery"]
 
     with open(out / "intervals.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]))
@@ -287,13 +290,14 @@ def analyse(args) -> None:
     with open(out / "classes.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["class_min", "title", "instructor", "aired"]
-                   + [f"{i} {k}" for i in order for k in ("min", "blocks", "lengths")])
+                   + [f"{i} {k}" for i in order for k in ("min", "blocks", "lengths")] + ["no target min"])
         for c in sorted(classes, key=lambda c: (-c["class_min"], c["aired"])):
             cells = []
             for i in order:
                 b = c["blocks"].get(i, [])
                 cells += [round(sum(b) / 60, 1), len(b), " ".join(_clock(x) for x in b)]
-            w.writerow([c["class_min"], c["title"], c["instructor"], c["aired"]] + cells)
+            w.writerow([c["class_min"], c["title"], c["instructor"], c["aired"]] + cells
+                       + [round(no_target(c) / 60, 1)])
     counts = Counter((r["intensity"], r["bucket"]) for r in rows)
     by_len = defaultdict(Counter)
     for r in rows:
@@ -305,14 +309,14 @@ def analyse(args) -> None:
             c = counts if minutes == "all" else by_len[minutes]
             for i in order:
                 w.writerow([minutes, i] + [c[(i, b)] for _, b in BUCKETS])
-    (out / "report.html").write_text(_html(rows, classes, order, counts, by_len, no_plan), encoding="utf-8")
+    (out / "report.html").write_text(_html(rows, classes, order, levels, counts, by_len, no_plan), encoding="utf-8")
 
     # the console summary: per class length, longest call-out and typical time at each intensity
     print(f"{len(classes)} classes with a plan ({no_plan} without), {len(rows)} intervals.")
     for minutes in sorted({c["class_min"] for c in classes}, reverse=True):
         cs = [c for c in classes if c["class_min"] == minutes]
-        print(f"\n{minutes}-minute classes ({len(cs)}):")
-        for i in order:
+        print(f"\n{minutes}-minute classes ({len(cs)}): {accounting(cs)}")
+        for i in levels:
             mine = [r for r in rows if r["class_min"] == minutes and r["intensity"] == i]
             if not mine:
                 print(f"  {i:<12} never called")
@@ -324,6 +328,20 @@ def analyse(args) -> None:
     print(f"\nWrote {out / 'report.html'}, classes.csv, intervals.csv and summary.csv")
 
 
+def no_target(c: dict) -> int:
+    """Seconds of the class with no pace target at all (drills, a warm-up or cool-down without one)."""
+    return max(0, c["length_s"] - sum(sum(b) for b in c["blocks"].values()))
+
+
+def accounting(cs: list[dict]) -> str:
+    """Where the class time went: pace levels, Recovery, and no target, as shares of it."""
+    total = sum(c["length_s"] for c in cs) or 1
+    rec = sum(sum(c["blocks"].get("Recovery", [])) for c in cs)
+    none = sum(no_target(c) for c in cs)
+    return (f"pace levels {100 * (total - rec - none) / total:.0f}%, Recovery {100 * rec / total:.0f}%, "
+            f"no target {100 * none / total:.0f}% of class time")
+
+
 def instructor_table(rows, classes, order, minutes=None) -> list[list]:
     """Per instructor: classes, the longest call-out at each intensity, and the share of class time at each."""
     out = []
@@ -331,7 +349,7 @@ def instructor_table(rows, classes, order, minutes=None) -> list[list]:
         cs = [c for c in classes if c["instructor"] == who and (minutes is None or c["class_min"] == minutes)]
         if not cs:
             continue
-        total = sum(sum(sum(b) for b in c["blocks"].values()) for c in cs) or 1
+        total = sum(c["length_s"] for c in cs) or 1  # share of class time
         cells = []
         for i in order:
             lens = [x for c in cs for x in c["blocks"].get(i, [])]
@@ -357,7 +375,7 @@ def _bars(counts: Counter, order: list[str]) -> str:
     return "".join(out)
 
 
-def _html(rows, classes, order, counts, by_len, no_plan) -> str:
+def _html(rows, classes, order, levels, counts, by_len, no_plan) -> str:
     esc = html.escape
     colour = lambda i: COLOURS.get(i, "#b48cff")  # noqa: E731
     key = "".join(f'<span class="k"><i style="background:{colour(i)}"></i>{esc(i)}</span>' for i in order)
@@ -366,7 +384,7 @@ def _html(rows, classes, order, counts, by_len, no_plan) -> str:
         cs = sorted((c for c in classes if c["class_min"] == minutes), key=lambda c: c["aired"], reverse=True)
         mine = [r for r in rows if r["class_min"] == minutes]
         head = []
-        for i in order:
+        for i in levels:
             lens = [r for r in mine if r["intensity"] == i]
             totals = [sum(c["blocks"].get(i, [])) for c in cs]
             nblocks = [len(c["blocks"].get(i, [])) for c in cs]
@@ -382,23 +400,31 @@ def _html(rows, classes, order, counts, by_len, no_plan) -> str:
         strips = []
         for c in cs:
             plan_rows = sorted((r for r in mine if r["class_id"] == c["class_id"]), key=lambda r: r["start_s"])
-            total = sum(r["length_s"] for r in plan_rows) or 1
-            bar = "".join(f'<span title="{esc(r["intensity"])} {_clock(r["length_s"])}" style="flex:{r["length_s"] / total:.4f};'
-                          f'background:{colour(r["intensity"])}"></span>' for r in plan_rows)
+            total, at, parts = c["length_s"] or 1, 0, []
+            for r in plan_rows + [{"start_s": total, "length_s": 0, "intensity": None}]:
+                if r["start_s"] > at:  # no target here: drawn as a gap
+                    parts.append(f'<span title="no target {_clock(r["start_s"] - at)}" class=gap '
+                                 f'style="flex:{(r["start_s"] - at) / total:.4f}"></span>')
+                if r["intensity"]:
+                    parts.append(f'<span title="{esc(r["intensity"])} {_clock(r["length_s"])}" '
+                                 f'style="flex:{r["length_s"] / total:.4f};background:{colour(r["intensity"])}"></span>')
+                at = max(at, r["start_s"] + r["length_s"])
+            bar = "".join(parts)
             sums = " · ".join(f"{esc(i)} {_clock(sum(c['blocks'][i]))} ({len(c['blocks'][i])})"
-                              for i in order if c["blocks"].get(i))
+                              for i in order if c["blocks"].get(i)) + f" · no target {_clock(no_target(c))}"
             strips.append(f"<div class=c><div class=t>{esc(c['title'])} <small>{esc(str(c['instructor']))}, "
                           f"{c['aired']}</small></div><div class=strip>{bar}</div><small>{sums}</small></div>")
         inst = "".join(
             f"<tr><td>{esc(str(who))}</td><td>{n}</td>"
             + "".join(f"<td>{_clock(lo) if lo else '–'} <small>{share * 100:.0f}%</small></td>" for lo, share in cells)
-            + "</tr>" for who, n, cells in instructor_table(rows, classes, order, minutes))
+            + "</tr>" for who, n, cells in instructor_table(rows, classes, levels, minutes))
         sections.append(f"""<h2>{minutes}-minute classes <small>{len(cs)} classes</small></h2>
+<p><small>Class time: {accounting(cs)}.</small></p>
 <table><tr><th>Intensity</th><th>Longest call-out</th><th>Per class: median</th><th>most</th><th>blocks (median)</th><th>classes using it</th></tr>{''.join(head)}</table>
 <h3>By instructor <small>longest call-out, and share of class time</small></h3>
-<table><tr><th>Instructor</th><th>Classes</th>{''.join(f'<th>{esc(i)}</th>' for i in order)}</tr>{inst}</table>
+<table><tr><th>Instructor</th><th>Classes</th>{''.join(f'<th>{esc(i)}</th>' for i in levels)}</tr>{inst}</table>
 <h3>Each class <small>the plan from start to finish; time at each intensity (blocks)</small></h3>{''.join(strips)}
-<h3>How long each call-out lasts</h3><div class="g">{_bars(by_len[minutes], order)}</div>""")
+<h3>How long each call-out lasts</h3><div class="g">{_bars(by_len[minutes], levels)}</div>""")
     return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Peloton Row class plans</title><style>
 :root{{--bg:#fff;--fg:#1a1a1a;--dim:#6b6b6b;--line:#e3e3e3}}
@@ -410,14 +436,16 @@ small{{color:var(--dim);font-weight:400}} .g{{display:grid;grid-template-columns
 table{{border-collapse:collapse;width:100%;font-size:14px}} td,th{{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}}
 .sw,.k i{{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}} .k{{margin-right:14px;font-size:13px}}
 .c{{margin:10px 0}} .t{{font-size:14px}} .strip{{display:flex;height:14px;border-radius:3px;overflow:hidden;margin:3px 0}}
-.table-wrap{{overflow-x:auto}}
+.table-wrap{{overflow-x:auto}} .gap{{background:repeating-linear-gradient(45deg,var(--line) 0 3px,transparent 3px 6px)}}
 </style></head><body>
 <h1>Peloton Row class plans</h1>
 <p><small>{len(classes)} classes with a class plan ({no_plan} without), {len(rows)} continuous intervals. Back-to-back
-segments at the same intensity count as one interval. From Peloton's class plans, for personal analysis.</small></p>
-<p>{key}</p>
+segments at the same intensity count as one interval. Recovery isn't one of Peloton's pace levels, so it is
+left out of the tables and only counted where class time is accounted for. From Peloton's class plans, for
+personal analysis.</small></p>
+<p>{key} <span class="k"><i class="gap"></i>no target</span></p>
 {''.join(sections)}
-<h2>All class lengths</h2><div class="g">{_bars(counts, order)}</div>
+<h2>All class lengths</h2><div class="g">{_bars(counts, levels)}</div>
 </body></html>"""
 
 

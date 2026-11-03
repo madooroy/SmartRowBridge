@@ -62,6 +62,9 @@ class PelotonPlansTest(unittest.TestCase):
             self.assertLess(report.index("60-minute classes"), report.index("10-minute classes"))  # longest first
             self.assertIn("<b>9:00</b> <small>60 min Intervals, Coach", report)
             self.assertIn("Recovery 1:00 (1) · Easy 5:00 (1) · Challenging 9:00 (1) · Max 1:00 (1)", report)
+            # Recovery isn't a pace level: not in the tables, only in the time accounting
+            self.assertNotIn("></i>Recovery</td>", report)
+            self.assertIn("pace levels 25%, Recovery 2%, no target 73% of class time", report)
             rows = Path(tmp, "out", "intervals.csv").read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(rows), 1 + 6)
             per_class = Path(tmp, "out", "classes.csv").read_text(encoding="utf-8").splitlines()
