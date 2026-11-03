@@ -21,16 +21,21 @@ def details(title, minutes, segs, names=False):
 
 class PelotonPlansTest(unittest.TestCase):
     def test_back_to_back_segments_at_one_intensity_are_one_interval(self):
-        d = details("60 min Endurance", 60, [(0, 300, 1), (300, 600, 1), (600, 660, 2), (660, 1200, 3)])
-        self.assertEqual(pp.plan(d, pp.DEFAULT_NAMES),
+        d = details("60 min Endurance", 60, [(0, 300, 0), (300, 600, 0), (600, 660, 1), (660, 1200, 2)])
+        self.assertEqual(pp.plan(d, pp.PELOTON_LEVELS),
                          [(0, 600, "Easy"), (600, 60, "Moderate"), (660, 540, "Challenging")])
 
     def test_names_from_the_reply_win(self):
         d = details("x", 10, [(0, 60, 4)], names=True)
-        self.assertEqual(pp.plan(d, pp.DEFAULT_NAMES), [(0, 60, "Mx")])
+        self.assertEqual(pp.plan(d, pp.PELOTON_LEVELS), [(0, 60, "Mx")])
+
+    def test_peloton_numbering_and_float_levels(self):
+        # Peloton numbers Recovery -1 and Easy 0; some replies store -1 as -1.0.
+        d = details("x", 10, [(0, 60, -1.0), (60, 120, 0), (120, 180, 3), (180, 240, -1)])
+        self.assertEqual([x[2] for x in pp.plan(d, pp.PELOTON_LEVELS)], ["Recovery", "Easy", "Max", "Recovery"])
 
     def test_a_class_without_a_plan(self):
-        self.assertEqual(pp.plan({"ride": {"title": "x"}}, pp.DEFAULT_NAMES), [])
+        self.assertEqual(pp.plan({"ride": {"title": "x"}}, pp.PELOTON_LEVELS), [])
 
     def test_buckets(self):
         self.assertEqual(pp.bucket(20), "≤20 s")
@@ -43,8 +48,8 @@ class PelotonPlansTest(unittest.TestCase):
             cache = Path(tmp, "c")
             (cache / "classes").mkdir(parents=True)
             (cache / "classes" / "a.json").write_text(json.dumps(
-                details("60 min Intervals", 60, [(0, 300, 1), (300, 840, 3), (840, 900, 0), (900, 960, 4)])))
-            (cache / "classes" / "b.json").write_text(json.dumps(details("10 min HIIT", 10, [(0, 30, 4), (30, 90, 1)])))
+                details("60 min Intervals", 60, [(0, 300, 0), (300, 840, 2), (840, 900, -1.0), (900, 960, 3)])))
+            (cache / "classes" / "b.json").write_text(json.dumps(details("10 min HIIT", 10, [(0, 30, 3), (30, 90, 0)])))
             (cache / "classes" / "c.json").write_text(json.dumps({"ride": {"title": "no plan"}}))
 
             class A:

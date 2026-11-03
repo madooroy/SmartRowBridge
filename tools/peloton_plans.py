@@ -44,8 +44,19 @@ from pathlib import Path
 
 API = "https://api.onepeloton.com"
 ROW_DISCIPLINES = ("caesar", "rowing")  # Peloton's internal name for the Row is "caesar"
-# The Row's five pace intensities, lowest first, used when a reply doesn't name them itself.
-DEFAULT_NAMES = ["Recovery", "Easy", "Moderate", "Challenging", "Max"]
+# The Row's pace intensities as Peloton numbers them (Recovery is -1, Easy 0), used when a reply
+# doesn't name them itself; DEFAULT_NAMES is their order in the report.
+PELOTON_LEVELS = {-1: "Recovery", 0: "Easy", 1: "Moderate", 2: "Challenging", 3: "Max"}
+DEFAULT_NAMES = list(PELOTON_LEVELS.values())
+
+
+def _key(value) -> str:
+    """One spelling per level: -1, -1.0 and "-1" are all "-1"."""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return str(int(f)) if f.is_integer() else str(f)
 BUCKETS = [(20, "≤20 s"), (30, "30 s"), (45, "45 s"), (60, "1 min"), (90, "1.5 min"), (120, "2 min"),
            (180, "3 min"), (240, "4 min"), (300, "5 min"), (420, "6–7 min"), (540, "8–9 min"),
            (840, "10–14 min"), (1140, "15–19 min"), (10 ** 9, "20 min+")]
@@ -168,7 +179,7 @@ def _intensity_names(details: dict) -> dict:
                             key = x.get("value", x.get("slug", x.get("id")))
                             name = x.get("display_name") or x.get("name")
                             if key is not None and name:
-                                names[str(key)] = str(name)
+                                names[_key(key)] = str(name)
                 walk(v)
         elif isinstance(o, list):
             for v in o:
@@ -177,7 +188,7 @@ def _intensity_names(details: dict) -> dict:
     return names
 
 
-def plan(details: dict, names: list[str] | None = None) -> list[tuple[int, int, str]]:
+def plan(details: dict, levels: dict | None = None) -> list[tuple[int, int, str]]:
     """The class's intensity targets as continuous intervals: [(start s, length s, intensity)].
     Back-to-back segments at the same intensity are one interval (as the app's plan reads)."""
     lists = list(_target_lists(details))
@@ -194,10 +205,8 @@ def plan(details: dict, names: list[str] | None = None) -> list[tuple[int, int, 
         if metric is None:
             continue
         lo, hi = metric.get("lower"), metric.get("upper")
-        value = lo if lo == hi or hi is None else f"{lo}-{hi}"
-        label = found.get(str(value))
-        if label is None and isinstance(value, (int, float)) and names and 0 <= int(value) < len(names):
-            label = names[int(value)]
+        value = _key(lo) if lo == hi or hi is None else f"{_key(lo)} to {_key(hi)}"
+        label = found.get(value) or {_key(k): v for k, v in (levels or {}).items()}.get(value)
         start, end = int(t["offsets"].get("start", 0)), int(t["offsets"].get("end", 0))
         if end > start:
             segs.append([start, end, label or str(value)])
@@ -225,8 +234,8 @@ def inspect(args) -> None:
     print(f"Target lists found: {len(lists)}" + (f", longest has {max(map(len, lists))} entries" if lists else ""))
     if lists:
         print("First entry:", json.dumps(max(lists, key=len)[0])[:600])
-    print("Intensity names in the reply:", _intensity_names(details) or "none (DEFAULT_NAMES used)")
-    for start, length, label in plan(details, DEFAULT_NAMES)[:20]:
+    print("Intensity names in the reply:", _intensity_names(details) or "none (PELOTON_LEVELS used)")
+    for start, length, label in plan(details, PELOTON_LEVELS)[:20]:
         print(f"  {start // 60:3d}:{start % 60:02d}  {length:4d} s  {label}")
 
 
@@ -251,7 +260,7 @@ def analyse(args) -> None:
         minutes = class_minutes(ride)
         if args.minutes and minutes not in args.minutes:
             continue
-        intervals = plan(details, DEFAULT_NAMES)
+        intervals = plan(details, PELOTON_LEVELS)
         if not intervals:
             no_plan += 1
             continue
