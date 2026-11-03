@@ -30,7 +30,7 @@
     border-radius: 10px; padding: 6px 12px; cursor: pointer; }
   button:active { background: var(--faint); }
 
-  header { display: flex; align-items: center; gap: 10px; font-size: var(--label); color: var(--dim); }
+  header { display: flex; align-items: center; gap: 10px; font-size: var(--label); color: var(--dim); flex-wrap: wrap; }
   header .dot { width: .8em; height: .8em; border-radius: 50%; background: var(--faint); flex: none; }
   header .dot.ok { background: var(--green); } header .dot.warn { background: var(--amber); }
   header .dot.bad { background: var(--red); }
@@ -147,6 +147,30 @@
   .plist .row:last-child { border-bottom: none; }
   .plist .row .d { color: var(--dim); font-size: var(--label); }
 
+  /* Peloton classes, ranked by their class plans (tools/peloton_plans.py index) */
+  #classes { overflow-y: auto; -webkit-user-select: text; user-select: text; }
+  .cfilters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .cfilters select, .sessbar input, #cStack select { font: inherit; font-size: var(--label); color: var(--fg);
+    background: var(--tile); border: 1px solid var(--faint); border-radius: 10px; padding: 6px 8px; }
+  .sessbar input { flex: 1; min-width: 10em; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; font-size: var(--label); background: var(--tile);
+    border: 1px solid var(--faint); border-radius: 10px; padding: 5px 9px; cursor: pointer; }
+  .chip input { margin: 0; }
+  .crow { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+  .ctop { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+  .ctitle { font-weight: 700; font-size: clamp(15px, 2.4vmin, 21px); }
+  .csub { color: var(--dim); font-size: var(--label); }
+  .cnums { display: flex; gap: 14px; text-align: right; flex: none; }
+  .cnums b { display: block; font-size: clamp(16px, 2.8vmin, 24px); font-variant-numeric: tabular-nums; }
+  .cstrip { display: flex; height: 14px; border-radius: 4px; overflow: hidden; background: var(--bg); }
+  .cstrip .gap { background: repeating-linear-gradient(45deg, var(--faint) 0 3px, transparent 3px 6px); }
+  .cbtns { display: flex; gap: 8px; align-items: center; }
+  #classes a { color: #5aa5f0; font-size: var(--label); }
+  .ckey { display: flex; flex-wrap: wrap; gap: 12px; font-size: var(--label); color: var(--dim); }
+  .ckey i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; }
+  #cStack summary { cursor: pointer; font-weight: 700; }
+  #cStack .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+
   #pipVideo { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; bottom: 0; right: 0; }
 </style>
 </head>
@@ -157,6 +181,7 @@
   <span id="awake" hidden title="This page is keeping the screen on">screen stays on</span>
   <button id="close" hidden>Close</button>
   <button id="sessBtn" hidden title="Saved summaries of your sessions">Sessions</button>
+  <button id="classesBtn" hidden title="Peloton row classes, ranked by their class plans">Classes</button>
   <button id="full" hidden title="Hide the browser's address bar (swipe from the top edge, or tap again, to leave)">Full screen</button>
   <button id="float" hidden title="Keep the coach in a floating window over other apps">Float</button>
   <button id="pipShapeBtn" hidden title="The floating window's shape: wide (5:4) or tall (4:5)">Shape: wide</button>
@@ -239,6 +264,62 @@
       <div class="tile"><div class="label">OVER THIS PERIOD</div><ul class="findings" id="pFindings"></ul></div>
       <div class="charts" id="pCharts"></div>
       <div class="tile plist"><div class="label">SESSIONS · tap one for its summary</div><div id="pList"></div></div>
+    </section>
+
+    <section id="classes">
+      <div class="sessbar">
+        <button id="cBack">‹ Live</button>
+        <input id="cSearch" type="search" placeholder="Search class titles" aria-label="Search class titles">
+        <select id="cSort" aria-label="Order">
+          <option value="if">Hardest first (intensity)</option>
+          <option value="ifl">Easiest first (intensity)</option>
+          <option value="load">Most work first (load)</option>
+          <option value="hard">Most Challenging + Max</option>
+          <option value="block">Longest hard block</option>
+          <option value="x">Most Max sprints</option>
+          <option value="new">Newest</option>
+          <option value="r">Members' difficulty rating</option>
+        </select>
+      </div>
+      <div class="cfilters">
+        <span id="cLen"></span>
+        <select id="cWho" aria-label="Instructor"></select>
+        <select id="cGroup" aria-label="Class type"></select>
+        <select id="cHard" aria-label="Challenging and Max">
+          <option value="">Challenging + Max: any</option>
+          <option value="le10">at most 10% of the class</option>
+          <option value="le20">at most 20%</option>
+          <option value="ge20">20% or more</option>
+        </select>
+        <select id="cMax" aria-label="Max sprints">
+          <option value="">Max sprints: any</option>
+          <option value="none">none</option>
+          <option value="some">some</option>
+        </select>
+      </div>
+      <div class="ckey" id="cKey"></div>
+      <details class="tile" id="cStack">
+        <summary>Build a longer row from two classes</summary>
+        <div class="row">
+          <select id="sLen" aria-label="Total length"></select>
+          <select id="sHow" aria-label="How hard">
+            <option value="0,0.64">easy-going (intensity under 0.64)</option>
+            <option value="0.64,0.70" selected>steady (0.64 to 0.70)</option>
+            <option value="0.70,0.76">hard (0.70 to 0.76)</option>
+            <option value="0.76,9">very hard (0.76 and up)</option>
+          </select>
+          <label class="chip"><input type="checkbox" id="sEnd" checked>start with an Endurance class</label>
+        </div>
+        <div class="hint">Pairs that add up to the length, easier class first, within the instructor filter above.</div>
+        <div id="cPairs"></div>
+      </details>
+      <div class="hint" id="cLike" hidden></div>
+      <div class="hint" id="cCount"></div>
+      <div id="cList"></div>
+      <button id="cMore" hidden>Show more</button>
+      <div class="hint">Intensity: each minute of the class plan weighted by its level (Easy 0.55, Moderate 0.78,
+        Challenging 1.0, Max 1.3; Recovery and untargeted 0.45), root-mean-square over the class, like cycling's
+        intensity factor. Load: intensity² × hours × 100. From Peloton's own class plans, not members' votes.</div>
     </section>
   </main>
   <aside id="history"></aside>
@@ -799,6 +880,150 @@ $("pList").addEventListener("click", (e) => {
   const row = e.target.closest(".row");
   if (row) openSessionView(row.dataset.id);
 });
+
+// ------------------------------------------------------------------ Peloton classes (tools/peloton_plans.py index)
+
+const LEVELS = { "-1": ["Recovery", C.dim], 0: ["Easy", C.blue], 1: ["Moderate", C.green], 2: ["Challenging", C.amber],
+                 3: ["Max", C.red] };
+const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
+const PELOTON_CLASS = (id) => `https://members.onepeloton.com/classes/rowing?modal=classDetailsModal&classId=${id}`;
+let pel = null, pelLike = null, pelShown = 100;
+
+async function checkClasses() {
+  try { $("classesBtn").hidden = !(await fetch("/peloton/classes.json", { method: "HEAD", cache: "no-store" })).ok; }
+  catch (e) { /* no index: no button */ }
+}
+
+const clock = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+const hardShare = (c) => ((c.s["2"] || 0) + (c.s["3"] || 0)) / c.len;
+const shares = (c) => [0, 1, 2, 3].map((k) => (c.s[k] || 0) / c.len);
+
+async function openClassesView() {
+  if (!pel) {
+    try {
+      const r = await fetch("/peloton/classes.json", { cache: "no-store" });
+      if (!r.ok) return;
+      pel = (await r.json()).classes;
+    } catch (e) { return; }
+    const lens = [...new Set(pel.map((c) => c.m))].sort((a, b) => b - a);
+    $("cLen").innerHTML = lens.map((m) => `<label class="chip"><input type="checkbox" value="${m}" ${m >= 30 ? "checked" : ""}>${m} min</label>`).join(" ");
+    const opt = (v, t) => `<option value="${v}">${t}</option>`;
+    $("cWho").innerHTML = opt("", "All instructors") + [...new Set(pel.map((c) => c.i))].sort().map((w) => opt(w, w)).join("");
+    $("cGroup").innerHTML = opt("", "All class types") + [...new Set(pel.map((c) => c.g))].sort().map((g) => opt(g, g)).join("");
+    const sums = [...new Set(pel.flatMap((a) => pel.map((b) => a.m + b.m)))].filter((m) => m >= 40).sort((a, b) => a - b);
+    $("sLen").innerHTML = sums.map((m) => `<option value="${m}" ${m === 50 ? "selected" : ""}>${m} min in all</option>`).join("");
+    $("cKey").innerHTML = Object.values(LEVELS).map(([n, col]) => `<span><i style="background:${col}"></i>${n}</span>`).join("")
+      + `<span><i style="background:repeating-linear-gradient(45deg,${C.faint} 0 3px,transparent 3px 6px)"></i>no target</span>`;
+  }
+  reviewing = true;
+  $("layout").classList.add("reviewing");
+  $("close").hidden = true;
+  show("classes");
+  renderClasses();
+}
+
+function classFilter(ignoreLength = false) {
+  const lens = [...$("cLen").querySelectorAll("input:checked")].map((x) => +x.value);
+  const who = $("cWho").value, group = $("cGroup").value, hard = $("cHard").value, max = $("cMax").value;
+  const q = $("cSearch").value.trim().toLowerCase();
+  return (c) => (ignoreLength || lens.includes(c.m)) && (!who || c.i === who) && (!group || c.g === group)
+    && (!hard || (hard === "le10" ? hardShare(c) <= 0.1 : hard === "le20" ? hardShare(c) <= 0.2 : hardShare(c) >= 0.2))
+    && (!max || (max === "none" ? !c.x : c.x > 0)) && (!q || c.t.toLowerCase().includes(q) || c.i.toLowerCase().includes(q));
+}
+
+function classStrip(c) {
+  let at = 0, html = "";
+  for (const [a, b, lv] of [...c.p, [c.len, 0, null]]) {
+    if (a > at) html += `<span class="gap" style="flex:${(a - at) / c.len}" title="no target ${clock(a - at)}"></span>`;
+    if (lv !== null) html += `<span style="flex:${b / c.len};background:${LEVELS[lv][1]}" title="${LEVELS[lv][0]} ${clock(b)}"></span>`;
+    at = Math.max(at, a + b);
+  }
+  return `<div class="cstrip">${html}</div>`;
+}
+
+function classRow(c) {
+  const blocks = (k) => c.p.filter((x) => x[2] === k).length;
+  const totals = [0, 1, 2, 3].filter((k) => c.s[k]).map((k) => `${LEVELS[k][0]} ${clock(c.s[k])} (${blocks(k)})`).join(" · ");
+  const d = new Date(c.d * 1000);
+  return `<div class="tile crow">
+    <div class="ctop"><div><div class="ctitle">${esc(c.t)}</div>
+      <div class="csub">${esc(c.i)} · ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} · ${esc(c.g)}</div></div>
+      <div class="cnums"><div><b>${c.if.toFixed(2)}</b><span class="csub">intensity</span></div>
+        <div><b>${c.load}</b><span class="csub">load</span></div>
+        <div><b>${c.r ?? "–"}</b><span class="csub">members</span></div></div></div>
+    ${classStrip(c)}
+    <div class="csub">${totals}${c.s["-1"] ? ` · Recovery ${clock(c.s["-1"])}` : ""}${c.none ? ` · no target ${clock(c.none)}` : ""}${c.x ? ` · ${c.x} Max sprint${c.x > 1 ? "s" : ""}` : ""}</div>
+    <div class="cbtns"><button data-like="${c.id}">Similar</button>
+      <a href="${PELOTON_CLASS(c.id)}" target="_blank" rel="noopener">Open in Peloton</a></div></div>`;
+}
+
+function renderClasses() {
+  if (!pel) return;
+  let list = pel.filter(classFilter());
+  if (pelLike) {
+    const v = shares(pelLike).concat(pelLike.if);
+    const dist = (c) => shares(c).concat(c.if).reduce((t, x, k) => t + (x - v[k]) ** 2, 0);
+    list = list.filter((c) => c.id !== pelLike.id).sort((a, b) => dist(a) - dist(b));
+    $("cLike").hidden = false;
+    $("cLike").innerHTML = `Most like <b>${esc(pelLike.t)}</b> (${esc(pelLike.i)}), nearest first · <button id="cUnlike">Clear</button>`;
+  } else {
+    $("cLike").hidden = true;
+    const key = { if: (c) => -c.if, ifl: (c) => c.if, load: (c) => -c.load, hard: (c) => -hardShare(c) * c.len,
+                  block: (c) => -Math.max(c.b["2"] || 0, c.b["3"] || 0), x: (c) => -c.x, new: (c) => -c.d,
+                  r: (c) => -(c.r ?? -1) }[$("cSort").value];
+    list.sort((a, b) => key(a) - key(b));
+  }
+  $("cCount").textContent = `${list.length} of ${pel.length} classes`;
+  $("cList").innerHTML = list.slice(0, pelShown).map(classRow).join("");
+  $("cMore").hidden = list.length <= pelShown;
+  if ($("cStack").open) renderPairs();
+}
+
+// Two classes back to back that add up to the chosen length, easier first, at the chosen intensity.
+function renderPairs() {
+  const total = +$("sLen").value, [lo, hi] = $("sHow").value.split(",").map(Number), endFirst = $("sEnd").checked;
+  const pool = pel.filter(classFilter(true)), mid = (lo + Math.min(hi, 1)) / 2, found = [];
+  for (const a of pool) {
+    if (endFirst && a.g !== "Endurance") continue;
+    for (const b of pool) {
+      if (a === b || a.m + b.m !== total || a.if > b.if) continue;
+      const v = Math.sqrt((a.if ** 2 * a.len + b.if ** 2 * b.len) / (a.len + b.len));
+      if (v >= lo && v < hi) found.push([Math.abs(v - mid), v, a, b]);
+    }
+  }
+  found.sort((x, y) => x[0] - y[0]);
+  const used = {}, picked = [];  // variety: each class in at most two of the suggestions
+  for (const f of found) {
+    if ((used[f[2].id] || 0) >= 2 || (used[f[3].id] || 0) >= 2) continue;
+    used[f[2].id] = (used[f[2].id] || 0) + 1; used[f[3].id] = (used[f[3].id] || 0) + 1;
+    picked.push(f);
+    if (picked.length === 15) break;
+  }
+  $("cPairs").innerHTML = picked.map(([, v, a, b]) => `<div class="tile crow" style="background:var(--bg)">
+      <div class="ctop"><div class="ctitle">${esc(a.t)} + ${esc(b.t)}</div>
+        <div class="cnums"><div><b>${v.toFixed(2)}</b><span class="csub">intensity</span></div></div></div>
+      <div class="csub">${esc(a.i)} then ${esc(b.i)} · <a href="${PELOTON_CLASS(a.id)}" target="_blank" rel="noopener">first</a> ·
+        <a href="${PELOTON_CLASS(b.id)}" target="_blank" rel="noopener">second</a></div>
+      ${classStrip(a)}${classStrip(b)}</div>`).join("") || `<div class="hint">No pairs at that length and intensity: try another.</div>`;
+}
+
+$("classesBtn").addEventListener("click", openClassesView);
+$("cBack").addEventListener("click", closeSessionView);
+for (const id of ["cSort", "cWho", "cGroup", "cHard", "cMax"]) $(id).addEventListener("change", () => { pelShown = 100; renderClasses(); });
+$("cSearch").addEventListener("input", () => { pelShown = 100; renderClasses(); });
+$("cLen").addEventListener("change", () => { pelShown = 100; renderClasses(); });
+$("cMore").addEventListener("click", () => { pelShown += 100; renderClasses(); });
+for (const id of ["sLen", "sHow", "sEnd"]) $(id).addEventListener("change", renderPairs);
+$("cStack").addEventListener("toggle", () => { if ($("cStack").open) renderPairs(); });
+$("cList").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-like]");
+  if (!b) return;
+  pelLike = pel.find((c) => c.id === b.dataset.like);
+  renderClasses();
+  $("classes").scrollTop = 0;
+});
+$("cLike").addEventListener("click", (e) => { if (e.target.id === "cUnlike") { pelLike = null; renderClasses(); } });
+checkClasses();
 
 // ------------------------------------------------------------------ share the summary as an image
 

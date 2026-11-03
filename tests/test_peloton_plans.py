@@ -105,3 +105,36 @@ class PelotonPlansTest(unittest.TestCase):
             args.minutes = None  # the rest; the cached ones are skipped
             pp.fetch(args)
             self.assertEqual(asked, ["/api/ride/c100/details", "/api/ride/c101/details"])
+
+
+class IndexTest(unittest.TestCase):
+    def test_entry_scores_and_totals(self):
+        d = details("30 min Endurance Row", 30, [(60, 1260, 0), (1260, 1560, 2), (1560, 1590, 3), (1590, 1740, -1)])
+        e = pp.index_entry("abc", d)
+        self.assertEqual((e["m"], e["g"], e["k"], e["i"]), (30, "Endurance", "Endurance Row", "Coach"))
+        self.assertEqual(e["s"], {"0": 1200, "2": 300, "3": 30, "-1": 150})
+        self.assertEqual(e["none"], 1800 - 1680)
+        self.assertEqual((e["x"], e["b"]["2"]), (1, 300))
+        expected = ((0.55 ** 2 * 1200 + 1.0 ** 2 * 300 + 1.3 ** 2 * 30 + 0.45 ** 2 * 150 + 0.45 ** 2 * 120) / 1800) ** 0.5
+        self.assertAlmostEqual(e["if"], round(expected, 3))
+        self.assertEqual(e["load"], round(expected ** 2 * 0.5 * 100))
+
+    def test_groups(self):
+        self.assertEqual(pp.class_group("20 min Tabata Row"), "HIIT & Tabata")
+        self.assertEqual(pp.class_group("30 min Intervals & Arms Row"), "Intervals")
+        self.assertEqual(pp.class_group("30 min 2000s Row"), "Music & themes")
+
+    def test_index_skips_short_classes_and_writes_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp, "c")
+            (cache / "classes").mkdir(parents=True)
+            (cache / "classes" / "a.json").write_text(json.dumps(details("30 min Pop Row", 30, [(0, 600, 1)])))
+            (cache / "classes" / "b.json").write_text(json.dumps(details("15 min HIIT Row", 15, [(0, 600, 2)])))
+
+            class A:
+                pass
+            args = A()
+            args.cache, args.out, args.min_minutes = str(cache), str(Path(tmp, "pub", "classes.json")), 20
+            pp.index(args)
+            data = json.loads(Path(tmp, "pub", "classes.json").read_text())
+            self.assertEqual([c["id"] for c in data["classes"]], ["a"])

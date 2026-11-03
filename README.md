@@ -693,6 +693,31 @@ Like the screen, the page is a separate service that only reads the bridge's sta
 serves only on your local network and needs nothing beyond the Python already installed. To remove it:
 `sudo bash ~/smartrow-bridge/tools/setup_web.sh --undo`.
 
+## Optional: Peloton row classes, ranked by their class plans
+
+`tools/peloton_plans.py` reads the class plans of Peloton's rowing classes (the pace levels the
+instructor calls, minute by minute) and the web page's **Classes** screen lists them: filter by
+length, instructor, class type, how much Challenging and Max, or title; order by an intensity worked
+out from the plan (each minute weighted by its level, like cycling's intensity factor), load, minutes
+at Challenging and Max, longest hard block, Max sprints, date or members' rating; find classes like
+one you liked; and pair two classes into a longer row at a chosen intensity.
+
+It uses Peloton's unofficial members API with your own sign-in, so run it yourself on the Pi:
+
+```
+cd ~/smartrow-bridge
+python3 tools/peloton_plans.py fetch --minutes 60 45 30 20   # first time: about 25 min, resumable
+python3 tools/peloton_plans.py index                         # the Classes screen appears on the page
+python3 tools/peloton_plans.py update                        # weekly: new classes, then the index
+```
+
+`fetch` and `update` ask for a token (hidden; never printed or saved): sign in at
+members.onepeloton.com, press F12, Network, reload, filter on `api.onepeloton`, click a `me`
+request, and copy the value of its `authorization` header after `Bearer `. It lasts 48 hours.
+The downloaded plans stay in `peloton-cache`, the index in `/var/lib/smartrow-bridge/peloton`
+(made by `install.sh`). `analyse` writes a report of how long each level is called (see the
+script's help). Keep the data for yourself: it is Peloton's.
+
 ## Optional: faster start-up
 
 The bridge works without this. It shortens the time from power-on to the bridge being visible by about 7 s

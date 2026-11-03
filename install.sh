@@ -47,6 +47,10 @@ if [[ ! -x "$PREFIX/venv/bin/pip" ]]; then
 fi
 pip_install "$PREFIX/requirements.txt"
 
+# The Peloton class index for the web page's Classes screen (tools/peloton_plans.py index): a folder the
+# user who ran this owns, so the scanner writes it without sudo and the web page can read it.
+install -d -m 755 -o "${SUDO_USER:-root}" /var/lib/smartrow-bridge/peloton
+
 if [[ ! -f /etc/default/smartrow-bridge ]]; then
     install -m 644 deploy/smartrow-bridge.env /etc/default/smartrow-bridge
 fi

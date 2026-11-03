@@ -9,7 +9,9 @@ its app manifest, icons and service worker; /status.json, the bridge's status fi
 plus its age in seconds as the Pi sees it (so a tablet whose clock differs from the
 Pi's can still tell when the bridge has stopped); the saved session summaries,
 /sessions.json (the list), /session/<id>.json (one) and /strokes/<id>.json (its strokes,
-for the photo cards); and /progress.json?weeks=N, their trends. Standard library only.
+for the photo cards); /progress.json?weeks=N, their trends; and /peloton/classes.json, the Peloton
+row classes indexed by tools/peloton_plans.py (for the Classes page), when there is one. Standard
+library only.
 """
 
 from __future__ import annotations
@@ -51,6 +53,10 @@ MANIFEST = {
 }
 
 
+# The Peloton class index (tools/peloton_plans.py index writes it; install.sh makes the folder).
+PELOTON_INDEX = "/var/lib/smartrow-bridge/peloton/classes.json"
+
+
 def _env(name: str, default: str) -> str:
     return os.environ.get(name, "").strip() or default
 
@@ -65,7 +71,9 @@ def status_payload(path: str, now: float | None = None) -> dict:
     return status
 
 
-def make_handler(path: str, session_dir: str = sessions.DEFAULT_DIR):
+def make_handler(path: str, session_dir: str = sessions.DEFAULT_DIR, peloton_index: str | None = None):
+    peloton_index = peloton_index or _env("SRB_PELOTON_INDEX", PELOTON_INDEX)
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "smartrow-web"
 
@@ -105,6 +113,13 @@ def make_handler(path: str, session_dir: str = sessions.DEFAULT_DIR):
                     self._send(HTTPStatus.NOT_FOUND, b"Not found\n", "text/plain; charset=utf-8")
                 else:
                     self._send(HTTPStatus.OK, json.dumps(record).encode(), "application/json")
+            elif route == "/peloton/classes.json":
+                try:
+                    body = Path(peloton_index).read_bytes()
+                except OSError:
+                    self._send(HTTPStatus.NOT_FOUND, b"No class index yet\n", "text/plain; charset=utf-8")
+                else:
+                    self._send(HTTPStatus.OK, body, "application/json")
             elif route in FILES:
                 name, content_type = FILES[route]
                 self._send(HTTPStatus.OK, (HERE / name).read_bytes(), content_type)

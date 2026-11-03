@@ -239,3 +239,27 @@ class ExportWithoutLengthTest(unittest.TestCase):
             strokes = list(replay_tool.strokes_from_csv(export))
         self.assertEqual({s.stroke_length_cm for s in strokes}, {0})
         self.assertEqual(len(strokes), 101)
+
+
+class PelotonIndexRouteTest(unittest.TestCase):
+    def test_served_when_present_404_when_not(self):
+        import tempfile
+        import threading
+        import urllib.error
+        import urllib.request
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp, "classes.json")
+            from smartrow_bridge.web.__main__ import ThreadingHTTPServer, make_handler
+            server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler("/nonexistent", tmp, str(index)))
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            url = f"http://127.0.0.1:{server.server_address[1]}/peloton/classes.json"
+            try:
+                with self.assertRaises(urllib.error.HTTPError) as err:
+                    urllib.request.urlopen(url)
+                self.assertEqual(err.exception.code, 404)
+                index.write_text('{"classes": []}')
+                with urllib.request.urlopen(url) as r:
+                    self.assertEqual(r.read(), b'{"classes": []}')
+            finally:
+                server.shutdown()

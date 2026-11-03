@@ -10,6 +10,8 @@ that cache. Use it gently (one request a second by default) and for your own ana
     python3 tools/peloton_plans.py inspect                         # what one class plan looks like
     python3 tools/peloton_plans.py fetch --minutes 60              # then one class length at a time,
     python3 tools/peloton_plans.py analyse --minutes 60            # longest first: 60, 45, 30 ...
+    python3 tools/peloton_plans.py index                           # the Pi's Classes page (20 min and up)
+    python3 tools/peloton_plans.py update                          # weekly: new classes, then the index
 
 Your token: sign in at members.onepeloton.com in a browser, open the developer tools (F12),
 Network tab, reload, click any request to api.onepeloton.com and copy the value of its
@@ -33,6 +35,8 @@ import csv
 import getpass
 import html
 import json
+import os
+import re
 import sys
 import statistics
 import time
@@ -449,6 +453,99 @@ personal analysis.</small></p>
 </body></html>"""
 
 
+# ------------------------------------------------------------------ the index for the Pi's Classes page
+
+# Where the Pi's web page reads it (smartrow_bridge.web serves it as /peloton/classes.json). install.sh
+# makes the folder, writable by the user who ran it, so this runs without sudo.
+PUBLISHED = "/var/lib/smartrow-bridge/peloton/classes.json"
+LEVEL_CODES = {name: code for code, name in PELOTON_LEVELS.items()}
+# How hard a minute at each level is, for the ranking: about each band's middle as a share of the middle
+# of Challenging (Recovery and stretches with no target count as easy-ish). Root-mean-square over the
+# class, as cycling's intensity factor weights hard minutes more than easy ones.
+LEVEL_WEIGHT = {-1: 0.45, 0: 0.55, 1: 0.78, 2: 1.0, 3: 1.3}
+NO_TARGET_WEIGHT = 0.45
+INDEX_MIN_MINUTES = 20
+GROUPS = [("Endurance", ("endurance",)), ("Intervals", ("interval",)), ("HIIT & Tabata", ("hiit", "tabata")),
+          ("Beginner & form", ("beginner", "form", "drill", "technique", "learn")),
+          ("Warm-up & cool-down", ("warm up", "warm-up", "cool down", "cool-down"))]
+
+
+def class_group(title: str) -> str:
+    t = title.lower()
+    return next((g for g, words in GROUPS if any(w in t for w in words)), "Music & themes")
+
+
+def index_entry(class_id: str, details: dict) -> dict | None:
+    """One class for the Classes page: its plan as [start s, length s, level code], time at each level,
+    longest block, Max sprints, and the intensity and load computed from the plan."""
+    ride = details.get("ride") or {}
+    intervals = plan(details, PELOTON_LEVELS)
+    if not intervals:
+        return None
+    length = int(ride.get("duration") or 0) or max(a + b for a, b, _ in intervals)
+    steps = [[a, b, LEVEL_CODES.get(lbl)] for a, b, lbl in intervals if lbl in LEVEL_CODES]
+    totals, longest = defaultdict(int), defaultdict(int)
+    for _, b, code in steps:
+        totals[code] += b
+        longest[code] = max(longest[code], b)
+    none = max(0, length - sum(totals.values()))
+    work = sum(LEVEL_WEIGHT[c] ** 2 * t for c, t in totals.items()) + NO_TARGET_WEIGHT ** 2 * none
+    score = (work / length) ** 0.5 if length else 0.0
+    title = ride.get("title", "")
+    rating = ride.get("difficulty_rating_avg")
+    return {"id": class_id, "t": title, "i": (ride.get("instructor") or {}).get("name") or "",
+            "d": int(ride.get("original_air_time") or 0), "m": class_minutes(ride), "len": length,
+            "k": re.sub(r"^\d+ min ", "", title), "g": class_group(title),
+            "r": round(rating, 1) if rating else None, "rn": ride.get("difficulty_rating_count") or 0,
+            "p": steps, "s": {str(c): t for c, t in totals.items()}, "none": none,
+            "b": {str(c): t for c, t in longest.items()}, "x": sum(1 for _, _, c in steps if c == 3),
+            "if": round(score, 3), "load": round(score ** 2 * length / 3600 * 100)}
+
+
+def build_index(cache: Path, min_minutes: int = INDEX_MIN_MINUTES) -> list[dict]:
+    out = []
+    for f in sorted(Path(cache, "classes").glob("*.json")):
+        details = json.loads(f.read_text(encoding="utf-8"))
+        if class_minutes(details.get("ride") or {}) < min_minutes:
+            continue
+        entry = index_entry(f.stem, details)
+        if entry:
+            out.append(entry)
+    return out
+
+
+def write_index(entries: list[dict], path: Path) -> None:
+    path = Path(path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.tmp")
+        tmp.write_text(json.dumps({"generated": int(time.time()), "classes": entries}, separators=(",", ":")),
+                       encoding="utf-8")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except PermissionError:
+        raise SystemExit(f"Can't write {path}: run 'sudo bash install.sh' once (it makes that folder yours), "
+                         "or give --out a folder you can write.") from None
+
+
+def index(args) -> None:
+    entries = build_index(Path(args.cache), args.min_minutes)
+    if not entries:
+        raise SystemExit("No class plans in the cache yet: run fetch first.")
+    write_index(entries, Path(args.out))
+    lengths = Counter(e["m"] for e in entries)
+    print(f"Indexed {len(entries)} classes (" + ", ".join(f"{m} min: {n}" for m, n in sorted(lengths.items(), reverse=True))
+          + f") into {args.out}. The Pi's web page shows them under Classes.")
+
+
+def update(args) -> None:
+    """The weekly refresh: list the catalogue again, fetch the classes not seen yet, rebuild the index."""
+    args.refresh, args.max = True, None
+    args.minutes = args.minutes or [m for m in (60, 45, 30, 20) if m >= args.min_minutes]
+    fetch(args)
+    index(args)
+
+
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -466,8 +563,19 @@ def main(argv=None) -> None:
     a.add_argument("--cache", default="peloton-cache")
     a.add_argument("--out", default="peloton-report")
     a.add_argument("--minutes", type=int, nargs="+", help="only these class lengths")
+    x = sub.add_parser("index", help="write the class list the Pi's Classes page reads")
+    x.add_argument("--cache", default="peloton-cache")
+    x.add_argument("--out", default=PUBLISHED)
+    x.add_argument("--min-minutes", type=int, default=INDEX_MIN_MINUTES)
+    u = sub.add_parser("update", help="weekly: fetch new classes (needs a token) and rebuild the index")
+    u.add_argument("--cache", default="peloton-cache")
+    u.add_argument("--out", default=PUBLISHED)
+    u.add_argument("--min-minutes", type=int, default=INDEX_MIN_MINUTES)
+    u.add_argument("--minutes", type=int, nargs="+", help="class lengths (default 60 45 30 20)")
+    u.add_argument("--delay", type=float, default=1.0)
+    u.add_argument("--cookie", action="store_true")
     args = p.parse_args(argv)
-    {"fetch": fetch, "inspect": inspect, "analyse": analyse}[args.cmd](args)
+    {"fetch": fetch, "inspect": inspect, "analyse": analyse, "index": index, "update": update}[args.cmd](args)
 
 
 if __name__ == "__main__":
