@@ -25,7 +25,9 @@
     font-family: "DejaVu Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     -webkit-user-select: none; user-select: none; }
   body { display: flex; flex-direction: column; padding: var(--pad);
-    padding-top: max(var(--pad), env(safe-area-inset-top)); gap: var(--pad); }
+    padding-top: max(var(--pad), env(safe-area-inset-top)); padding-bottom: max(var(--pad), env(safe-area-inset-bottom));
+    padding-left: max(var(--pad), env(safe-area-inset-left)); padding-right: max(var(--pad), env(safe-area-inset-right));
+    gap: var(--pad); }
   button { font: inherit; color: var(--fg); background: var(--tile); border: 1px solid var(--faint);
     border-radius: 10px; padding: 6px 12px; cursor: pointer; }
   button:active { background: var(--faint); }
@@ -396,6 +398,7 @@ function show(id) {
 
 // ------------------------------------------------------------------ curve
 
+let scratchCanvas = null;
 function drawCurve(canvas, curve, steady, colour, gapHalf = "back", labels = true, stall = null) {
   const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
   if (!w || !h) return;
@@ -431,9 +434,10 @@ function plotCurve(g, bx, by, w, h, curve, steady, colour, gapHalf = "back", lab
   if (pc && steady.length) {
     // The steady area minus the effort's area, clipped to that half: one shape, no seams.
     // Drawn on a scratch canvas so cutting it out leaves whatever is underneath alone.
-    const sc = document.createElement("canvas");
-    sc.width = g.canvas.width; sc.height = g.canvas.height;
+    const sc = scratchCanvas || (scratchCanvas = document.createElement("canvas"));  // one, reused: phones cap canvas memory
+    sc.width = g.canvas.width; sc.height = g.canvas.height;  // also clears it
     const s2 = sc.getContext("2d");
+    s2.setTransform(1, 0, 0, 1, 0, 0);
     const t = g.getTransform();
     s2.setTransform(t);
     const edge = Math.round(mid * t.a + t.e) / t.a - t.e / t.a;  // on a whole device pixel: no hairline
@@ -629,7 +633,20 @@ $("history").addEventListener("click", () => {  // tap the list: the last interv
     closedIndex = null; recallUntil = Date.now() / 1000 + RECALL_S; render(); drawPip();
   }
 });
-window.addEventListener("resize", render);
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  render();
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {  // a saved view open: redraw its charts at the new size (after a phone turns)
+    if (!reviewing) return;
+    const on = document.querySelector("main section.on");
+    if (!on) return;
+    const top = on.scrollTop;
+    if (on.id === "session" && openSession) renderSession(openSession);
+    else if (on.id === "progress" && progressData) renderProgress(progressData);
+    on.scrollTop = top;
+  }, 250);
+});
 
 async function poll() {
   const ac = new AbortController(), timer = setTimeout(() => ac.abort(), POLL_TIMEOUT_MS);  // a hung request counts as a failure
@@ -2027,6 +2044,23 @@ async function keepAwake() {
 }
 document.addEventListener("visibilitychange", keepAwake);  // the lock is dropped whenever the page is hidden
 keepAwake();
+
+// Over plain http (no wake lock): a tiny silent video playing on a loop keeps most phones' screens on
+// (the trick NoSleep.js uses). Browsers only let it start from a tap, so the first tap on the page starts it.
+const AWAKE_MP4 = "data:video/mp4;base64,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";
+const awakeVideo = Object.assign(document.createElement("video"),
+  { muted: true, loop: true, playsInline: true, src: AWAKE_MP4 });
+awakeVideo.setAttribute("playsinline", ""); awakeVideo.setAttribute("muted", "");
+awakeVideo.style.cssText = "position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:0;bottom:0";
+document.body.appendChild(awakeVideo);
+awakeVideo.addEventListener("playing", () => { $("awake").hidden = false; });
+awakeVideo.addEventListener("pause", () => { if (!wakeLock) $("awake").hidden = true; });
+async function awakeByVideo() {
+  if (wakeLock || "wakeLock" in navigator && window.isSecureContext) return;  // the real lock is there
+  if (document.visibilityState === "visible" && awakeVideo.paused) awakeVideo.play().catch(() => {});
+}
+document.addEventListener("pointerdown", awakeByVideo, { passive: true });
+document.addEventListener("visibilitychange", awakeByVideo);
 
 poll();
 </script>
