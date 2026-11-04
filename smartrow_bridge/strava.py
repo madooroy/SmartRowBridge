@@ -73,7 +73,7 @@ def _save(path: str, data: dict) -> None:
 
 
 def describe_error(exc: BaseException) -> str:
-    if isinstance(exc, webapi.Rejected):
+    if isinstance(exc, (webapi.Rejected, webapi.AccountTrouble)):
         return str(exc)
     if isinstance(exc, urllib.error.HTTPError):
         if exc.code == 401:
@@ -129,9 +129,14 @@ class StravaAccount:
         if creds is None:
             raise RuntimeError("Strava is not set up: run tools/setup_strava.sh")
         if creds.get("expires_at", 0) - REFRESH_MARGIN_S <= time.time() or not creds.get("access_token"):
-            answer = webapi.request("POST", TOKEN_URL, form={
-                "client_id": creds["client_id"], "client_secret": creds["client_secret"],
-                "grant_type": "refresh_token", "refresh_token": creds["refresh_token"]})
+            try:
+                answer = webapi.request("POST", TOKEN_URL, form={
+                    "client_id": creds["client_id"], "client_secret": creds["client_secret"],
+                    "grant_type": "refresh_token", "refresh_token": creds["refresh_token"]})
+            except urllib.error.HTTPError as exc:
+                if exc.code in (400, 401, 403):  # the sign-in was revoked or no longer valid: not this session's fault
+                    raise webapi.AccountTrouble("Strava sign-in no longer valid: run tools/setup_strava.sh again") from exc
+                raise
             creds.update(access_token=answer["access_token"], expires_at=answer["expires_at"],
                          refresh_token=answer.get("refresh_token", creds["refresh_token"]))
             _save(self.path, creds)

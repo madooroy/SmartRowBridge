@@ -18,6 +18,10 @@ class Rejected(Exception):
     """The service turned the session down for good (trying again won't help)."""
 
 
+class AccountTrouble(Exception):
+    """The account, not the session: e.g. a revoked sign-in. Every session waits until it is fixed."""
+
+
 class _Redirect(urllib.request.HTTPRedirectHandler):
     """Follows redirects, but never carries our credentials to another site."""
 

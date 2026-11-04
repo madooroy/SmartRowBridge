@@ -157,6 +157,7 @@ def wbal(log, cp: float | None, w_prime: float | None, every_s: int = 5) -> dict
             j += 1
         p = log[j][2] if t - log[j][0] < STOP_S else 0.0
         w = w - (p - cp) if p > cp else w + (cp - p) * (w_prime - w) / w_prime
+        w = max(w, 0.0)  # below empty means W' (or CP) is set too low; the chart stops at empty
         if w < low:
             low, low_t = w, sec
         if sec % every_s == 0:
@@ -174,7 +175,7 @@ def ladder_findings(ladders: list[dict]) -> list[str]:
     out = []
     for lad in ladders:
         st, c = lad["steps"], lad["change"]
-        parts = [f"stroke rate {c['spm_pct']:+d}%"]
+        parts = [f"stroke rate {c['spm_pct']:+d}%"] if c["spm_pct"] is not None else []
         if c["peak_pct"] is not None:
             parts.append(f"peak force {c['peak_pct']:+d}%")
         if c["drive_s"] is not None:
@@ -183,6 +184,8 @@ def ladder_findings(ladders: list[dict]) -> list[str]:
             parts.append(f"heart rate {c['hr'][0]}→{c['hr'][1]}")
         how = {"rate": "mostly from stroke rate", "force": "mostly from force",
                "both": "from rate and force alike"}[c["by"]]
+        if not parts:
+            parts = ["no stroke rate to compare"]
         out.append((f"A ladder of {len(st)} steps, {round(st[0]['power_w'])}→{round(st[-1]['power_w'])} W "
                     f"({_clock(lad['start_s'])}–{_clock(lad['end_s'])}): " + ", ".join(parts)
                     + (f"; the extra power came {how}." if lad["up"] else ".")).replace("-", "−"))

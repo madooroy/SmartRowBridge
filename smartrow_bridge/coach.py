@@ -102,6 +102,7 @@ RECOVERY_STROKES = 12  # after an effort, not used for the steady reference
 EASY_RATIO = 0.80  # strokes this far below steady (easy paddling) are ignored too
 GAP_S = 10.0  # no stroke for this long ends an effort
 END_CONFIRM = 3  # an effort ends after this many strokes in a row below its end (one dip doesn't end it)
+END_GAP_MIN_W, END_GAP_PCT = 8.0, 6.0  # with an FTP: an effort ends at least this far below where it starts
 NEW_SESSION_S = 300.0  # no stroke for this long starts over
 LEAD_GAP_S, LEAD_STROKES = 30.0, 10  # a few pulls, then a pause this long: the row starts after it
 
@@ -712,8 +713,14 @@ class IntervalCoach:
 
     def _end_at(self) -> float:
         """Smoothed power below which an effort is over."""
-        end = self.steady_power() * self.settings.end_ratio
-        return max(end, self.effort_floor_w * 0.95) if self.ftp else end
+        steady = self.steady_power()
+        end = steady * self.settings.end_ratio
+        if not self.ftp:
+            return end  # always below the start: that is at least steady + 20% and + 15 W
+        # With an FTP the start is the Moderate floor, which can sit close to (or under) steady + 10%:
+        # keep the end clearly below the start, or an effort would end as soon as it began.
+        start = self._start_at(steady)
+        return min(max(end, self.effort_floor_w * 0.95), start - max(END_GAP_MIN_W, start * END_GAP_PCT / 100))
 
     @property
     def max_effort_s(self) -> float:

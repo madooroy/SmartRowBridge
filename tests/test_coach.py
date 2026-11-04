@@ -206,6 +206,17 @@ class FtpTest(unittest.TestCase):
         self.assertEqual(r.summaries, [])
         self.assertIsNone(r.state().get("live"))
 
+    def test_upper_easy_steady_with_an_ftp_still_finds_the_effort(self):
+        """Steady at 64% of FTP put steady + 10% above the start: efforts ended as soon as they began."""
+        r = Rower(ftp=250)
+        r.row(80, 160)
+        c = r.coach
+        self.assertLess(c._end_at(), c._start_at(c.steady_power()) - 7)
+        r.row(60, 200)  # about 3 minutes, Moderate
+        r.row(40, 160)
+        self.assertEqual(len(r.summaries), 1)
+        self.assertGreater(r.summaries[0].as_dict()["duration_s"], 150)
+
     def test_fixed_ftp_setting(self):
         from smartrow_bridge.bridge import _fixed_ftp
         self.assertEqual(_fixed_ftp("185"), 185.0)

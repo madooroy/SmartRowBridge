@@ -97,6 +97,8 @@ def finished(record: dict, now: float) -> bool:
 
 def connection_trouble(exc: BaseException) -> bool:
     """Trouble with the destination as a whole (not this session): wait before trying it again."""
+    if isinstance(exc, webapi.AccountTrouble):
+        return True
     if isinstance(exc, urllib.error.HTTPError):
         return exc.code in (401, 403, 408, 429) or exc.code >= 500
     return isinstance(exc, (urllib.error.URLError, OSError))

@@ -184,6 +184,7 @@
   #cStack summary { cursor: pointer; font-weight: 700; }
   #cStack .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
 
+  @media (pointer: coarse) { select, input, .dd summary { font-size: max(16px, var(--label)) !important; } }  /* iOS zooms in on smaller */
   #pipVideo { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; bottom: 0; right: 0; }
 </style>
 </head>
@@ -358,7 +359,7 @@ const C = { bg: "#000", fg: "#f0f0f0", dim: "#878787", faint: "#464646", tile: "
             green: "#46cd5f", amber: "#f5af2d", red: "#eb4b41", gap: "#d7d7d7",
             blue: "#5aa5f0" };  // blue: the force curve during steady rowing (no cue; steady is the reference)
 const GOOD_PCT = -5, OK_PCT = -12, METER_MIN = -30, METER_MAX = 15, FORCE_HALF = 12;
-const STALE_S = 5, RECALL_S = 20, POLL_MS = 1000;
+const STALE_S = 5, RECALL_S = 20, POLL_MS = 1000, POLL_TIMEOUT_MS = 3000;
 // Two words: what to do, and the part of the stroke; never a muscle (see coach.py).
 if (!CanvasRenderingContext2D.prototype.roundRect) {  // Safari before 16.4, older WebViews
   CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
@@ -631,8 +632,9 @@ $("history").addEventListener("click", () => {  // tap the list: the last interv
 window.addEventListener("resize", render);
 
 async function poll() {
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), POLL_TIMEOUT_MS);  // a hung request counts as a failure
   try {
-    const r = await fetch("/status.json", { cache: "no-store" });
+    const r = await fetch("/status.json", { cache: "no-store", signal: ac.signal });
     if (!r.ok) throw new Error(r.status);
     state = await r.json();
     failures = 0;
@@ -643,6 +645,9 @@ async function poll() {
       $("dot").className = "dot bad";
       if (!reviewing) message("Can't reach the Pi", "Check that this device is on the same Wi-Fi as the Pi", "bad");
     }
+  } finally {
+    clearTimeout(timer);
+    setTimeout(poll, POLL_MS);  // the next one only after this one: no pile-up, never out of order
   }
   drawPip();
 }
@@ -931,7 +936,7 @@ async function openClassesView() {
     } catch (e) { return; }
     const lens = [...new Set(pel.map((c) => c.m))].sort((a, b) => b - a);
     $("cLen").innerHTML = lens.map((m) => `<label class="chip"><input type="checkbox" value="${m}" ${m >= 30 ? "checked" : ""}>${m} min</label>`).join(" ");
-    const opt = (v, t) => `<option value="${v}">${t}</option>`;
+    const opt = (v, t) => `<option value="${esc(v)}">${esc(t)}</option>`;
     // Instructors as tick-boxes, most classes first; none ticked means all of them.
     const counts = {};
     for (const c of pel) counts[c.i] = (counts[c.i] || 0) + 1;
@@ -1027,7 +1032,7 @@ function renderClasses() {
     $("cLike").hidden = true;
     const key = { if: (c) => -c.if, ifl: (c) => c.if, load: (c) => -c.load, hard: (c) => -hardShare(c) * c.len,
                   taken: (c) => -((c.taken || [])[0]?.[0] || (c.n ? 1 : 0)),
-                  block: (c) => -Math.max(c.b["2"] || 0, c.b["3"] || 0), x: (c) => -c.x, new: (c) => -c.d, old: (c) => c.d,
+                  block: (c) => -Math.max(c.b["2"] || 0, c.b["3"] || 0), x: (c) => -c.x, new: (c) => -(c.d || 0), old: (c) => c.d || 9e15,
                   r: (c) => -(c.r ?? -1), rl: (c) => c.r ?? 99 }[$("cSort").value];
     list.sort((a, b) => key(a) - key(b));
   }
@@ -2024,7 +2029,6 @@ document.addEventListener("visibilitychange", keepAwake);  // the lock is droppe
 keepAwake();
 
 poll();
-setInterval(poll, POLL_MS);
 </script>
 </body>
 </html>
