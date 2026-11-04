@@ -291,6 +291,7 @@
           <option value="block">Longest hard block</option>
           <option value="x">Most Max sprints</option>
           <option value="new">Newest</option>
+          <option value="old">Oldest</option>
           <option value="taken">Recently taken</option>
           <option value="r">Hardest first (members' rating)</option>
           <option value="rl">Easiest first (members' rating)</option>
@@ -1026,7 +1027,7 @@ function renderClasses() {
     $("cLike").hidden = true;
     const key = { if: (c) => -c.if, ifl: (c) => c.if, load: (c) => -c.load, hard: (c) => -hardShare(c) * c.len,
                   taken: (c) => -((c.taken || [])[0]?.[0] || (c.n ? 1 : 0)),
-                  block: (c) => -Math.max(c.b["2"] || 0, c.b["3"] || 0), x: (c) => -c.x, new: (c) => -c.d,
+                  block: (c) => -Math.max(c.b["2"] || 0, c.b["3"] || 0), x: (c) => -c.x, new: (c) => -c.d, old: (c) => c.d,
                   r: (c) => -(c.r ?? -1), rl: (c) => c.r ?? 99 }[$("cSort").value];
     list.sort((a, b) => key(a) - key(b));
   }
