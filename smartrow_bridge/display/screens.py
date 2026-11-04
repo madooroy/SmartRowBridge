@@ -612,6 +612,19 @@ def discard_screen(status: dict | None, acked: bool) -> Image.Image:
     return image
 
 
+def drill_screen(on: bool) -> Image.Image:
+    """After B was held: this session is drills (or not any more)."""
+    image, draw = _canvas()
+    if on:
+        lines = [("Drills: on", 26, True, AMBER), ("Kept and uploaded,", 16, False, FG),
+                 ("no force-curve analysis", 16, False, FG), ("Hold B again to undo", 14, False, DIM)]
+    else:
+        lines = [("Drills: off", 26, True, FG), ("The coach analyses this session", 16, False, FG),
+                 ("Hold B again for drills", 14, False, DIM)]
+    _centered(draw, lines, centre_y=120)
+    return image
+
+
 def upload_off_screen(status: dict | None, closing: bool) -> Image.Image:
     """A held with uploads still to go: upload first, then switch off by itself."""
     image, draw = _canvas()

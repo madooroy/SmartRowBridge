@@ -194,6 +194,7 @@ class Bridge:
                         if self.hr_link else None),
             uploads=self.uploader.snapshot() if self.uploader else None,
             finish=self._finish_result,
+            drill=self.recorder.drill_on() if self.recorder else False,
         )
 
     def _handle_request(self) -> None:
@@ -216,6 +217,13 @@ class Bridge:
                 self.uploader.check_now(request.get("token"))
             self._finish_result = {"token": request.get("token"), "session": session, "action": "discard",
                                    "uploaded": sent}
+            return
+        if request.get("action") == "drill":  # B held: this session is drills (uploaded, not analysed)
+            on = bool(request.get("on"))
+            if self.recorder:
+                self.recorder.set_drill(on)
+            log.info("Session marked as %s (from the screen)", "drills" if on else "not drills")
+            self._finish_result = {"token": request.get("token"), "action": "drill", "drill": on}
             return
         if request.get("action") != "finish":
             return

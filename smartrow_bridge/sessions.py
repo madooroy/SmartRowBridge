@@ -57,7 +57,9 @@ class SessionRecorder:
         self._id: str | None = None
         self._started_at = 0.0
         self._ended_at = 0.0
-        self._written: tuple | None = None  # what the last write contained (intervals, complete)
+        self._written: tuple | None = None  # what the last write contained (intervals, complete, drill)
+        self.drill = False  # this session is drills (B held on the screen)
+        self._drill_next = False  # marked before the session was saved: for the session about to start
         self._written_at = 0.0
         self._failed = False
 
@@ -73,6 +75,7 @@ class SessionRecorder:
             self._session = c.session
             self._id = session_id(wall_now - (mono_now - c.first_time))
             self._written = None
+            self.drill, self._drill_next = self._drill_next, False
         # Wall times from the steady clock at every write, so a clock set mid-session (the Pi has
         # no clock of its own; the network sets it) puts the session at its real time.
         self._started_at = wall_now - (mono_now - c.first_time)
@@ -80,7 +83,7 @@ class SessionRecorder:
         complete = mono_now - (c.last_time or mono_now) > END_AFTER_S
         if complete and c.effort is not None:
             c.state(mono_now)  # closes an effort that was still open when rowing stopped
-        key = (len(c.intervals), complete)
+        key = (len(c.intervals), complete, self.drill)
         if key == self._written and (complete or wall_now - self._written_at < REFRESH_S):
             return None
         path = self._write(metrics, complete, wall_now)
@@ -99,7 +102,7 @@ class SessionRecorder:
             c.state(c.last_time + END_AFTER_S + 1)  # closes an effort still open
         path = self._write(metrics, True, time.time())
         if path is not None:
-            self._written = (len(c.intervals), True)
+            self._written = (len(c.intervals), True, self.drill)
         return path
 
     def finish(self, metrics: RowingMetrics) -> str | None:
@@ -115,6 +118,23 @@ class SessionRecorder:
             log.warning("Could not mark session %s finished: %s", self._id, exc)
             return None
         return self._id
+
+    def drill_on(self) -> bool:
+        """Whether the session being rowed (or about to start) is marked as drills."""
+        c = self.coach
+        return self.drill if self._id is not None and c.session == self._session else self._drill_next
+
+    def set_drill(self, on: bool) -> bool:
+        """Mark the session being rowed as drills, or not (B held on the screen). Before it is saved
+        (fewer than MIN_STROKES strokes, or not started) it applies to the session about to start.
+        Takes effect at the next save, so before the session's uploads."""
+        c = self.coach
+        if self._id is not None and c.session == self._session:
+            self.drill = on
+            self._written = None  # save again now, with or without the analysis
+        else:
+            self._drill_next = on
+        return on
 
     def discard(self) -> tuple[str | None, list[str]]:
         """You don't want this session (X held on the screen): delete its files, so it is neither
@@ -133,7 +153,7 @@ class SessionRecorder:
         rows = stroke_rows(self.coach)
         distance = metrics.distance_m - distance_offset([r[1] for r in rows])
         record = build_record(self.coach, self._started_at, wall_now, complete, max(0, distance),
-                              metrics.elapsed_s, session=self._id, ended_at=self._ended_at)
+                              metrics.elapsed_s, session=self._id, ended_at=self._ended_at, drill=self.drill)
         previous = read_session(str(self.directory), self._id)
         if previous and previous.get("uploads"):
             record["uploads"] = previous["uploads"]  # what was already sent stays sent
@@ -150,9 +170,16 @@ class SessionRecorder:
         return path
 
 
+DRILL_TEXT = "Worked on drills today. No force-curve analysis performed."
+# A drill session keeps only these: what was rowed, not what the coach made of it (no efforts, no
+# findings, no fresh Easy stroke for the next session, nothing for the learned targets or Progress).
+DRILL_KEEPS = ("strokes", "rowing_s", "avg_power_w", "avg_length_cm", "heart_rate", "ftp", "power_bands",
+               "hr_zones", "settings")
+
+
 def build_record(coach: IntervalCoach, started_at: float, saved_at: float, complete: bool,
                  distance_m: int, elapsed_s: int, source: str = "bridge", session: str | None = None,
-                 ended_at: float | None = None) -> dict:
+                 ended_at: float | None = None, drill: bool = False) -> dict:
     """What a session file holds: when, the pulley's totals and the coach's session summary.
 
     source: "bridge" (rowed live) or "replay" (from a CSV export; never uploaded by itself).
@@ -161,6 +188,9 @@ def build_record(coach: IntervalCoach, started_at: float, saved_at: float, compl
     summary = coach.session_summary()
     if ended_at is None:
         ended_at = started_at + summary.get("rowing_s", 0)
+    if drill:  # drills (B held on the screen): uploaded, but not analysed
+        summary = {k: summary[k] for k in DRILL_KEEPS if k in summary}
+        summary.update(drill=True, intervals=[], findings=[DRILL_TEXT])
     return {
         "version": VERSION,
         "id": session or session_id(started_at),
@@ -282,6 +312,7 @@ def list_sessions(directory: str) -> list[dict]:
             "avg_power_w": record.get("avg_power_w", 0),
             "intervals": len(intervals),
             "short": sum(1 for i in intervals if i.get("rating") == "short"),
+            "drill": bool(record.get("drill")),
         })
     return out
 
@@ -389,6 +420,7 @@ def session_point(record: dict) -> dict:
     fresh = record.get("fresh_easy") or {}
     return {
         "id": record.get("id"),
+        "drill": bool(record.get("drill")),
         "started_at": record.get("started_at"),
         "rowing_s": record.get("rowing_s", 0),
         "distance_m": record.get("distance_m", 0),
@@ -507,8 +539,10 @@ def progress(directory: str, weeks: int | None = None, now: float | None = None)
         record = read_session(directory, entry["id"])
         if record is not None and record.get("rowing_s", 0) >= 300:
             points.append(session_point(record))
+    rowed = points
+    points = [p for p in points if not p.get("drill")]  # drills count as rowing done, not in the trends
     by_week: dict[str, dict] = {}
-    for p in points:
+    for p in rowed:
         day = datetime.fromtimestamp(p["started_at"])
         monday = (day - timedelta(days=day.weekday())).strftime("%Y-%m-%d")
         w = by_week.setdefault(monday, {"week": monday, "sessions": 0, "distance_m": 0, "rowing_s": 0})

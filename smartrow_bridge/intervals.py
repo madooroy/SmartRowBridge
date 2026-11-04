@@ -169,6 +169,8 @@ STRAVA_FIRST_LINE = "Rowed using SmartRow \u00b7 coached by PiRowingCoach"
 def note_for(record: dict) -> dict:
     """The calendar note for one saved session (sessions.build_record)."""
     started = datetime.fromtimestamp(record["started_at"])
+    if record.get("drill"):
+        return drill_note(record, started)
     intervals = record.get("intervals") or []
     faded = sum(1 for i in intervals if i.get("rating") == "short")
     km = record.get("distance_m", 0) / 1000
@@ -198,12 +200,30 @@ def note_for(record: dict) -> dict:
     }
 
 
+def drill_note(record: dict, started: datetime) -> dict:
+    """A drills session: what was rowed, and that the coach left it alone."""
+    km = record.get("distance_m", 0) / 1000
+    line = (f"Rowed at {started.strftime('%H:%M')}: {_clock(record.get('rowing_s', 0))}, {km:.2f} km, "
+            f"{record.get('avg_power_w', 0)} W average, {record.get('strokes', 0)} strokes.")
+    hr = record.get("heart_rate")
+    if hr:
+        line += f" Heart rate {hr['avg']} average, {hr['max']} max."
+    findings = record.get("findings") or []
+    return {
+        "category": "NOTE",
+        "start_date_local": started.strftime("%Y-%m-%dT00:00:00"),
+        "name": f"Row coach: {_clock(record.get('rowing_s', 0))} · {km:.2f} km · drills",
+        "description": "\n".join([STRAVA_FIRST_LINE, "", line, ""] + findings),
+        "uid": f"smartrowbridge-{record['id']}",
+    }
+
+
 def activity_name(record: dict) -> str:
-    """"Morning Row" and so on, as Strava and Garmin name activities."""
+    """"Morning Row" and so on, as Strava and Garmin name activities; "Morning Row: drills" for drills."""
     hour = datetime.fromtimestamp(record["started_at"]).hour
     part = ("Night" if hour < 5 else "Morning" if hour < 12 else "Afternoon" if hour < 17
             else "Evening" if hour < 21 else "Night")
-    return f"{part} Row"
+    return f"{part} Row" + (": drills" if record.get("drill") else "")
 
 
 def _count(n: int) -> str:
@@ -213,6 +233,8 @@ def _count(n: int) -> str:
 def coach_line(record: dict) -> str:
     """One line on what the coach saw: 'Coach: 3 Moderate efforts (145-156 W); the finish eased in all three.'"""
     efforts = record.get("intervals") or []
+    if record.get("drill"):
+        return "Coach: drills; no force-curve analysis."
     if not efforts:
         return "Coach: Easy rowing, no efforts."
     kinds = []
@@ -242,7 +264,7 @@ def summary_text(record: dict) -> str:
     """The intervals.icu activity's description: just "Rowed using SmartRow", so the calendar shows
     "Evening Row ~ Rowed using SmartRow", as for the SmartRow app's own activities. The efforts are
     its intervals; the coach's report goes to Strava (full_text) and the bridge's web page."""
-    return "Rowed using SmartRow"
+    return "Rowed using SmartRow · drills" if record.get("drill") else "Rowed using SmartRow"
 
 
 def full_text(record: dict) -> str:

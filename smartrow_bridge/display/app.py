@@ -2,7 +2,10 @@
 
 - The status screen, until rowing starts; then the rowing screen, back to status a
   minute after the last stroke.
-- B switches between the two by hand (until rowing starts or stops again).
+- B (a tap) switches between the two by hand (until rowing starts or stops again).
+- Holding B for B_HOLD_S seconds (2): this session is drills, or not (it toggles). Drills are
+  still kept and uploaded, but the coach doesn't analyse them (sessions.DRILL_TEXT). Before
+  the session has started it applies to the session about to start.
 - While rowing with the interval coach on (smartrow_bridge.coach): the interval
   screen during an effort, then its summary for a while after it; X brings the last
   summary back, or closes it.
@@ -44,6 +47,9 @@ Y_HOLD_S = 1.0  # hold Y this long: done
 X_HOLD_S = 2.0  # hold X this long: discard the session
 X_TAP_S = 0.6  # X let go before this: a tap (the interval summary); longer shows the discard hold
 DISCARD_SHOW_S = 6.0
+B_HOLD_S = 2.0  # hold B this long: drills on/off
+B_TAP_S = 0.6  # B let go before this: a tap (switch screens)
+DRILL_SHOW_S = 4.0
 MIN_SESSION_STROKES = 30  # as sessions.MIN_STROKES: fewer is not a session
 ACK_WAIT_S = 10.0  # the bridge answers a request within a second or two; don't wait longer than this
 FINISH_SHOW_S = 20.0  # the "Session finished" screen stays this long once its uploads are through
@@ -127,6 +133,9 @@ class Controller:
         self.x_armed = False  # X has been seen released since start (as A)
         self._discard: dict | None = None  # X held: {"token", "at"} while its screen shows
         self._off: dict | None = None  # A with uploads to go: {"token", "at", "closing_at", "a_up"}
+        self._b_since: float | None = None
+        self.b_armed = False  # B has been seen released since start (as A)
+        self._drill: dict | None = None  # B held: {"token", "at", "on"} while its screen shows
 
     def _rowing_recently(self, now: float) -> bool:
         return now - self._last_rowing < BACK_TO_STATUS_S
@@ -312,11 +321,35 @@ class Controller:
                 acked = ((status or {}).get("finish") or {}).get("token") == self._discard["token"]
                 return Frame(screens.discard_screen(status, acked), led)
 
+        # B: a tap (on release) switches screens; held B_HOLD_S: drills on/off. Only a press that
+        # started here counts (not one still held from cancelling another screen).
         b_down = buttons.get("B", False)
-        if b_down and not self._b_was_down:
-            self._manual = "status" if self.view == "rowing" else "rowing"
-            self.view = self._manual
+        if not b_down:
+            if self._b_since is not None and self.b_armed and now - self._b_since < B_TAP_S:
+                self._manual = "status" if self.view == "rowing" else "rowing"
+                self.view = self._manual
+            self.b_armed = True
+            self._b_since = None
+        elif self.b_armed and fresh and (self._b_since is not None or not self._b_was_down):
+            self._b_since = now if self._b_since is None else self._b_since
+            held = now - self._b_since
+            on = not bool((status or {}).get("drill"))
+            if held >= B_HOLD_S:
+                self.b_armed, self._b_since, self._b_was_down = False, None, True
+                token = self._token(now)
+                self._drill = {"token": token, "at": now, "on": on}
+                return Frame(screens.drill_screen(on), led, request={"action": "drill", "on": on, "token": token})
+            if held >= B_TAP_S:
+                self._b_was_down = True
+                return Frame(screens.hold_screen((held - B_TAP_S) / (B_HOLD_S - B_TAP_S),
+                                                 "Keep holding: drills" + (" on" if on else " off")), led)
         self._b_was_down = b_down
+
+        if self._drill is not None:
+            if now - self._drill["at"] > DRILL_SHOW_S or any(buttons.values()):
+                self._drill = None
+            else:
+                return Frame(screens.drill_screen(self._drill["on"]), led)
 
         if not buttons.get("A", False):
             self.a_armed = True

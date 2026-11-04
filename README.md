@@ -339,6 +339,12 @@ without a phone:
   you're done. The session is saved as finished and uploaded straight away (instead of about seven minutes
   after the last stroke), and the screen shows *Session finished* with each upload as it goes; X closes it.
   Rowing again after that starts a new session.
+- **Drills:** rowing a drills or technique class? Hold button **B** for 2 seconds (a quick tap still switches
+  screens). The session is still kept and uploaded to intervals.icu and Strava, named "Morning Row: drills",
+  with "Worked on drills today. No force-curve analysis performed." in place of the coach's report: no
+  efforts, no findings, nothing learned for later sessions, and it is left out of the Progress trends (its
+  time and distance still count in the weekly totals). You can do it before you start (it applies to the
+  session about to start), while rowing, or at the end before holding Y. Hold B again to undo.
 - **Discard:** rowed a warm-up you don't want kept? Hold button **X** for 2 seconds. The Pi deletes that
   session, so it is neither kept nor uploaded, and starts a new one when you row on. (A quick tap of X still
   brings back the interval summary.) The pulley's own metres, which the SmartRow app and the rowing screen

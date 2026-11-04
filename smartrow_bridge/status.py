@@ -48,6 +48,7 @@ def build(
     heart_rate: dict | None = None,
     uploads: dict | None = None,
     finish: dict | None = None,
+    drill: bool = False,
 ) -> dict:
     m = asdict(metrics)
     for key in ("last_stroke_time", "stopped"):
@@ -67,6 +68,7 @@ def build(
         "heart_rate": heart_rate,  # {"name", "connected"} of the bridge's strap, or None when off
         "uploads": uploads,  # smartrow_bridge.uploads.Uploader.snapshot(), or None without session saving
         "finish": finish,  # the last "Done" request handled: {"token", "session"} (see request_path)
+        "drill": drill,  # this session is marked as drills (B held on the screen)
     }
 
 

@@ -139,15 +139,31 @@ class ControllerTest(unittest.TestCase):
 
     def test_b_toggles_until_rowing_changes(self):
         c = app.Controller()
+        self.step(c, status(), -1)  # B seen released first
         self.step(c, status(), 0, B=True)
-        self.assertEqual(c.view, "rowing")
-        self.step(c, status(), 0.1, B=True)  # still held: no second toggle
-        self.assertEqual(c.view, "rowing")
+        self.step(c, status(), 0.1, B=True)  # a tap switches on release
+        self.assertEqual(c.view, "status")
         self.step(c, status(), 0.2)
+        self.assertEqual(c.view, "rowing")
         self.step(c, status(), 0.3, B=True)
+        self.step(c, status(), 0.4)
         self.assertEqual(c.view, "status")
         self.step(c, status(rowing=True), 1)  # rowing starts: automatic again
         self.assertEqual(c.view, "rowing")
+
+    def test_hold_b_for_drills(self):
+        c = app.Controller()
+        self.step(c, status(), -1)
+        self.step(c, status(), 0, B=True)
+        self.assertIsNone(self.step(c, status(), 1.0, B=True).request)  # the hold screen
+        frame = self.step(c, status(), 2.0, B=True)
+        self.assertEqual((frame.request["action"], frame.request["on"]), ("drill", True))
+        self.assertIsNone(self.step(c, status(), 2.5, B=True).request)  # only once
+        self.step(c, status(), 3.0)  # let go: no screen switch
+        on = lambda t: {**status(age=-t), "drill": True}  # noqa: E731
+        self.step(c, on(3.1), 3.1)  # any button or a few seconds closes the drills screen
+        self.step(c, on(3.2), 3.2, B=True)
+        self.assertFalse(self.step(c, on(5.2), 5.2, B=True).request["on"])  # held again: off
 
     def test_hold_a_to_switch_off(self):
         c = app.Controller(hold_s=2.0)

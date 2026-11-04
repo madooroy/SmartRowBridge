@@ -137,6 +137,29 @@ class RecorderTest(unittest.TestCase):
         short = rowed((10, 110, STEADY, 115))
         self.assertIsNone(self.recorder(short).finish(RowingMetrics()))  # no session yet: nothing to finish
 
+    def test_drills_are_kept_and_uploaded_but_not_analysed(self):
+        from smartrow_bridge import intervals
+        r = saturday()
+        rec = self.recorder(r)
+        wall0 = 1_800_000_000.0
+        rec.set_drill(True)  # before it was saved: for the session about to start
+        self.assertTrue(rec.drill_on())
+        path = rec.update(RowingMetrics(distance_m=6000), mono_now=r.t, wall_now=wall0)
+        record = json.loads(path.read_text())
+        self.assertTrue(record["drill"])
+        self.assertEqual((record["intervals"], record["findings"]), ([], [sessions.DRILL_TEXT]))
+        for gone in ("fresh_easy", "steady_curve", "wbal", "easy_drift"):
+            self.assertNotIn(gone, record)
+        self.assertTrue(sessions.read_strokes(str(self.dir), record["id"]))  # the strokes are kept
+        self.assertIn(sessions.DRILL_TEXT, intervals.full_text(record))
+        self.assertNotIn("Easy rowing", intervals.full_text(record))
+        self.assertTrue(intervals.activity_name(record).endswith("Row: drills"))
+        self.assertEqual(intervals.coach_line(record), "Coach: drills; no force-curve analysis.")
+        rec.set_drill(False)  # undone: saved again at once, analysed
+        record = json.loads(rec.update(RowingMetrics(distance_m=6000), mono_now=r.t + 1, wall_now=wall0 + 1).read_text())
+        self.assertNotIn("drill", record)
+        self.assertEqual(len(record["intervals"]), 4)
+
     def test_stroke_rows_carry_drive_times(self):
         r = saturday()
         log = r.coach.stroke_log
