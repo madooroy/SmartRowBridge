@@ -254,6 +254,32 @@ def plan(details: dict, levels: dict | None = None) -> list[tuple[int, int, str]
     return [(a, b - a, label) for a, b, label in merged]
 
 
+def rate_targets(details: dict) -> list[tuple[int, int, int, int]]:
+    """Peloton's stroke-rate target through the class: [(start s, end s, lower spm, upper spm)]."""
+    lists = list(_target_lists(details))
+    if not lists:
+        return []
+    out = []
+    for t in max(lists, key=len):
+        for m in t.get("metrics") or []:
+            if "stroke_rate" in str(m.get("name", "")).lower() and m.get("lower") is not None:
+                lo, hi = m.get("lower"), m.get("upper", m.get("lower"))
+                start, end = int(t["offsets"].get("start", 0)), int(t["offsets"].get("end", 0))
+                if end > start:
+                    out.append((start, end, round(lo), round(hi if hi is not None else lo)))
+    return sorted(out)
+
+
+def block_rate(rates, start: int, length: int) -> list[int] | None:
+    """The stroke-rate range covering most of a block, [lower, upper]; None when the class has none."""
+    time = defaultdict(int)
+    for a, b, lo, hi in rates:
+        overlap = min(b, start + length) - max(a, start)
+        if overlap > 0:
+            time[(lo, hi)] += overlap
+    return list(max(time, key=time.get)) if time else None
+
+
 def inspect(args) -> None:
     files = sorted(Path(args.cache, "classes").glob("*.json"))
     if args.id:
@@ -513,9 +539,11 @@ def index_entry(class_id: str, details: dict) -> dict | None:
     if not intervals:
         return None
     length = int(ride.get("duration") or 0) or max(a + b for a, b, _ in intervals)
-    steps = [[a, b, LEVEL_CODES.get(lbl)] for a, b, lbl in intervals if lbl in LEVEL_CODES]
+    rates = rate_targets(details)
+    # [start, length, level code, [lower, upper] spm or None]
+    steps = [[a, b, LEVEL_CODES.get(lbl), block_rate(rates, a, b)] for a, b, lbl in intervals if lbl in LEVEL_CODES]
     totals, longest = defaultdict(int), defaultdict(int)
-    for _, b, code in steps:
+    for _, b, code, _ in steps:
         totals[code] += b
         longest[code] = max(longest[code], b)
     none = max(0, length - sum(totals.values()))
@@ -528,7 +556,7 @@ def index_entry(class_id: str, details: dict) -> dict | None:
             "k": re.sub(r"^\d+ min ", "", title), "g": class_group(title),
             "r": round(rating, 1) if rating else None, "rn": ride.get("difficulty_rating_count") or 0,
             "p": steps, "s": {str(c): t for c, t in totals.items()}, "none": none,
-            "b": {str(c): t for c, t in longest.items()}, "x": sum(1 for _, _, c in steps if c == 3),
+            "b": {str(c): t for c, t in longest.items()}, "x": sum(1 for _, _, c, _ in steps if c == 3),
             "if": round(score, 3), "load": round(score ** 2 * length / 3600 * 100)}
 
 

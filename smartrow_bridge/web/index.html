@@ -179,6 +179,8 @@
   .cnums { display: flex; gap: 14px; text-align: right; flex: none; }
   .cnums b { display: block; font-size: clamp(16px, 2.8vmin, 24px); font-variant-numeric: tabular-nums; }
   .cgraph { display: block; width: 100%; height: 40px; }
+  .cgraph rect[data-info] { cursor: pointer; }
+  .cpick.on { color: var(--fg); }
   .cbtns { display: flex; gap: 8px; align-items: center; }
   #classes a { color: #5aa5f0; font-size: var(--label); }
   .ckey { display: flex; flex-wrap: wrap; gap: 12px; font-size: var(--label); color: var(--dim); }
@@ -992,11 +994,14 @@ function classGraph(classes) {
   let x0 = 0, bars = "";
   for (const c of classes) {
     let at = 0;
-    for (const [a, b, lv] of [...c.p, [c.len, 0, null]]) {
+    for (const [a, b, lv, rate] of [...c.p, [c.len, 0, null, null]]) {
       if (a > at) bars += `<rect x="${x0 + at}" y="${H - 2}" width="${a - at}" height="2" fill="${C.faint}"><title>no target ${clock(a - at)}</title></rect>`;
       if (lv !== null) {
         const h = H * LEVEL_HEIGHT[lv];
-        bars += `<rect x="${x0 + a}" y="${H - h}" width="${b}" height="${h}" fill="${LEVELS[lv][1]}"><title>${LEVELS[lv][0]} ${clock(b)}</title></rect>`;
+        const info = `${LEVELS[lv][0]} ${clock(b)} at ${clock(a)}${rate ? ` · ${rate[0]}–${rate[1]} spm` : ""}`;
+        // A tall invisible strip as well, so a thin block is easy to tap.
+        bars += `<rect x="${x0 + a}" y="${H - h}" width="${b}" height="${h}" fill="${LEVELS[lv][1]}"/>`
+          + `<rect x="${x0 + a}" y="0" width="${b}" height="${H}" fill="transparent" data-info="${info}"><title>${info}</title></rect>`;
       }
       at = Math.max(at, a + b);
     }
@@ -1017,6 +1022,21 @@ function takenLine(c) {
   return `<div class="ctaken">✓ Taken ${c.n}×${when ? ` · ${when}` : ""}</div>`;
 }
 
+// Peloton's stroke-rate target at each level in this class: the range it asks for most.
+function rateLine(c) {
+  const by = {};
+  for (const [, b, lv, rate] of c.p) {
+    if (!rate || lv < 0) continue;
+    const k = `${rate[0]}–${rate[1]}`;
+    (by[lv] = by[lv] || {})[k] = (by[lv][k] || 0) + b;
+  }
+  const parts = [0, 1, 2, 3].filter((lv) => by[lv]).map((lv) => {
+    const ranges = Object.entries(by[lv]).sort((x, y) => y[1] - x[1]);
+    return `${LEVELS[lv][0]} ${ranges[0][0]}${ranges.length > 1 ? "+" : ""}`;
+  });
+  return parts.length ? `Stroke rate (spm): ${parts.join(" · ")} · tap a block for its own` : "";
+}
+
 function classRow(c) {
   const blocks = (k) => c.p.filter((x) => x[2] === k).length;
   const totals = [0, 1, 2, 3].filter((k) => c.s[k]).map((k) => `${LEVELS[k][0]} ${clock(c.s[k])} (${blocks(k)})`).join(" · ");
@@ -1028,6 +1048,7 @@ function classRow(c) {
         <div><b>${c.load}</b><span class="csub">load</span></div>
         <div><b>${c.r ?? "–"}</b><span class="csub">members</span></div></div></div>
     ${classGraph(c)}
+    <div class="csub cpick">${rateLine(c)}</div>
     <div class="csub">${totals}${c.s["-1"] ? ` · Recovery ${clock(c.s["-1"])}` : ""}${c.none ? ` · no target ${clock(c.none)}` : ""}${c.x ? ` · ${c.x} Max sprint${c.x > 1 ? "s" : ""}` : ""}</div>
     ${takenLine(c)}
     <div class="cbtns"><button data-like="${c.id}">Similar</button>
@@ -1104,6 +1125,13 @@ $("cStack").addEventListener("toggle", () => { if ($("cStack").open) renderPairs
 $("cList").addEventListener("click", (e) => {
   const link = e.target.closest("a[data-session]");
   if (link) { e.preventDefault(); openSessionView(link.dataset.session); return; }
+  const block = e.target.closest("rect[data-info]");  // a skyline block: its level, length, start and stroke rate
+  if (block) {
+    const pick = block.closest(".crow").querySelector(".cpick");
+    pick.textContent = block.dataset.info;
+    pick.classList.add("on");
+    return;
+  }
   const b = e.target.closest("button[data-like]");
   if (!b) return;
   pelLike = pel.find((c) => c.id === b.dataset.like);
@@ -1696,7 +1724,9 @@ function glossary(s) {
       // tools/peloton_plans.py): the ceilings, though classes mostly use shorter blocks.
       " Each is meant to be holdable for about: Easy an hour; Moderate 20–30 min (a 5K); " +
       "Challenging 8–10 min (a 2K), though classes mostly use it for 30 s to 2 min; " +
-      "Max a minute at most, usually short sprints. I1, I2: each harder effort, found by the coach."],
+      "Max a minute at most, usually short sprints. Peloton\u2019s stroke rates rise only a little: about 20\u00a0spm " +
+      "Easy, 23 Moderate, 26 Challenging, 30 Max; the extra power comes from a harder push. " +  // 1,437 class plans
+      "I1, I2: each harder effort, found by the coach."],
     ["Finish", C.fg, `Share of the force in the second half of the drive, against ${my} usual at that level. ` +
       "\u22125% means 5% less there; within 5% is normal. A fading finish is the classic sign of tiring."],
     ["Length", C.fg, (s.avg_length_cm ?? 1) > 0 ? "How far the handle travels each stroke, against the Easy rowing just before."

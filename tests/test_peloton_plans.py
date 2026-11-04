@@ -119,6 +119,16 @@ class IndexTest(unittest.TestCase):
         self.assertAlmostEqual(e["if"], round(expected, 3))
         self.assertEqual(e["load"], round(expected ** 2 * 0.5 * 100))
 
+    def test_stroke_rate_per_block(self):
+        d = details("20 min Intervals Row", 20, [(60, 120, 0), (120, 150, 2), (150, 180, 2)])
+        tm = d["target_metrics_data"]["target_metrics"]
+        for t, (lo, hi) in zip(tm, [(18, 22), (24, 28), (26, 30)]):
+            t["metrics"].append({"name": "stroke_rate", "lower": float(lo), "upper": float(hi)})
+        tm[2]["offsets"]["end"] = 200  # the second Challenging piece is longer: its rate covers most of the block
+        e = pp.index_entry("abc", d)
+        self.assertEqual([x[3] for x in e["p"]], [[18, 22], [26, 30]])
+        self.assertEqual(pp.index_entry("abc", details("20 min Row", 20, [(60, 120, 0)]))["p"][0][3], None)
+
     def test_groups(self):
         self.assertEqual(pp.class_group("20 min Tabata Row"), "HIIT & Tabata")
         self.assertEqual(pp.class_group("30 min Intervals & Arms Row"), "Intervals")
