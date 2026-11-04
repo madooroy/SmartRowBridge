@@ -149,7 +149,7 @@
 
   /* Peloton classes, ranked by their class plans (tools/peloton_plans.py index) */
   #classes { overflow-y: auto; -webkit-user-select: text; user-select: text; padding: 3px; }  /* room for focus rings */
-  #classes .sessbar select { flex: none; min-width: 0; }  /* as wide as its longest choice; the search takes the rest */
+  #classes .sessbar input, #classes .sessbar select { flex: 1 1 0; min-width: 12em; }  /* search and order share the row equally */
   .cfilters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .cfilters select, .sessbar input, #cStack select { font: inherit; font-size: var(--label); color: var(--fg);
     background: var(--tile); border: 1px solid var(--faint); border-radius: 10px; padding: 6px 8px; }
