@@ -7,7 +7,9 @@ loaded middle of each drive. Filmed at 60 fps on 4 Nov 2026 against the flag (60
     flag = 0.94 x drive - 0.43 s   (r = 0.88, spread 0.10 s)
 so drive = (flag + 0.43) / 0.94: about 0.5 s more than the flag. The recovery is the rest of the
 stroke: the flag's on + off time is one whole stroke. Each stroke is good to about 0.1 s, so only
-medians over many strokes are reported. Not yet checked on video above about 24 spm.
+medians over many strokes are reported. Above about 24 spm the flag's shortfall seems smaller
+(4 Nov, two rows compared: about 0.25 s at 26-30 spm against 0.5 s at 20), so the estimate there
+runs long; such rhythms are marked rough until a filmed row with the screen flash settles it.
 
 A SmartRow handle's export measures drive time itself (the stroke log's drive time); when a stroke
 has it, that is used instead and the recovery is the stroke period less the drive.
@@ -28,6 +30,7 @@ PERIOD_TOL = 0.25  # a stroke whose flag cycle and stroke rate disagree by more 
 AIM_RATIO = 2.0  # the usual aim at low rates: recovery about twice the drive
 LOW_RATE_SPM = 24.0  # the aim is given only at or below this rate
 NEAR_AIM = 1.7  # from here the rhythm counts as close to the aim
+ROUGH_ABOVE_SPM = 24.0  # pulley estimates above this rate are marked rough (calibrated at 20 spm)
 
 
 def drive_from_flag(flag_s: float) -> float:
@@ -83,6 +86,10 @@ def session_rhythm(log: list[tuple], intervals: list[dict]) -> dict | None:
     return out if out["easy"] or efforts else None
 
 
+def _rough(x: dict) -> bool:
+    return x.get("source") == "pulley" and x["spm"] > ROUGH_ABOVE_SPM
+
+
 def _ratio(x: float) -> str:
     return f"1:{x:.0f}" if x == round(x) else f"1:{x:.1f}"
 
@@ -97,7 +104,7 @@ def rhythm_findings(rh: dict | None) -> list[str]:
         x and x.get("source") == "pulley" for x in [easy, *rh.get("efforts", [])]) else ""
     if easy:
         text = (f"Rhythm in Easy rowing at {easy['spm']:.0f} spm{estimated}: drive about {easy['drive_s']:.1f} s, "
-                f"recovery {easy['recovery_s']:.1f} s, {_ratio(easy['ratio'])}.")
+                f"recovery {easy['recovery_s']:.1f} s, {_ratio(easy['ratio'])}{' (rough at this rate)' if _rough(easy) else ''}.")
         estimated = ""
         if easy["spm"] <= LOW_RATE_SPM:
             if easy["ratio"] >= NEAR_AIM:
@@ -113,7 +120,7 @@ def rhythm_findings(rh: dict | None) -> list[str]:
     if efforts:
         if len(efforts) <= 4:
             parts = ", ".join(f"I{e['index']} {_ratio(e['ratio'])} at {e['spm']:.0f} spm "
-                              f"(drive {e['drive_s']:.1f} s)" for e in efforts)
+                              f"(drive {e['drive_s']:.1f} s{', rough' if _rough(e) else ''})" for e in efforts)
         else:
             lo, hi = min(e["ratio"] for e in efforts), max(e["ratio"] for e in efforts)
             slo, shi = min(e["spm"] for e in efforts), max(e["spm"] for e in efforts)

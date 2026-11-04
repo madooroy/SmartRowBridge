@@ -1326,7 +1326,8 @@ def _rhythm_thresholds() -> dict:
     from . import rhythm
     return {"flag_scale": rhythm.FLAG_SCALE, "flag_offset_s": rhythm.FLAG_OFFSET_S, "warmup_s": rhythm.WARMUP_S,
             "after_effort_s": rhythm.AFTER_EFFORT_S, "min_strokes": rhythm.MIN_STROKES,
-            "aim_ratio": rhythm.AIM_RATIO, "low_rate_spm": rhythm.LOW_RATE_SPM, "near_aim": rhythm.NEAR_AIM}
+            "aim_ratio": rhythm.AIM_RATIO, "low_rate_spm": rhythm.LOW_RATE_SPM, "near_aim": rhythm.NEAR_AIM,
+            "rough_above_spm": rhythm.ROUGH_ABOVE_SPM}
 
 
 def stall_marker(strokes, cue: str | None) -> dict | None:

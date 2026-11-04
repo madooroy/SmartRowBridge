@@ -54,6 +54,12 @@ class RhythmTest(unittest.TestCase):
         fast = {**easy, "spm": 28, "ratio": 1.1}
         self.assertNotIn("aim", rhythm.rhythm_findings({"easy": fast, "efforts": []})[0])
 
+    def test_rough_above_24_spm(self):
+        e = {"index": 1, "strokes": 30, "spm": 28, "drive_s": 1.2, "recovery_s": 0.9, "ratio": 0.75, "source": "pulley"}
+        self.assertIn("(drive 1.2 s, rough)", rhythm.rhythm_findings({"easy": None, "efforts": [e]})[0])
+        self.assertNotIn("rough", rhythm.rhythm_findings({"easy": None, "efforts": [{**e, "spm": 22}]})[0])
+        self.assertNotIn("rough", rhythm.rhythm_findings({"easy": None, "efforts": [{**e, "source": "handle"}]})[0])
+
     def test_nothing_without_drive_times(self):
         log = [row(t * 3.0, 20) for t in range(100)]
         self.assertIsNone(rhythm.session_rhythm(log, []))
