@@ -121,6 +121,32 @@ def keylock_response(notification: bytes) -> bytes:
 FORCE_UNIT_N = 16
 FORCE_SAMPLES = 24
 
+# Drive flag: on a V3 pulley, bit 0x10 of byte 3 (one of the distance digits, whose high nibble
+# decode_packet() drops) is set while the handle is being pulled out, and clears just before
+# the stroke's x/y/z curve (43 of 43 strokes in captures/sniff2.log, 122 of 122 on 4 Nov 2026).
+# It is off during holds at the catch and at the finish. Filmed at 60 fps against the same row,
+# it covers the loaded middle of the drive: the whole drive (catch to finish) is about 0.4-0.5 s
+# longer (flag = 0.94 x drive - 0.43 s at 20 spm, r = 0.88), so calibrate when showing it and
+# store the raw flag times. Records come every 0.09-0.12 s, which is the resolution of each edge.
+FLAG_BYTE = 3
+FLAG_BIT = 0x10
+FLAG_PAIR_S = 3.0  # a drive that ended longer ago than this before the stroke's 'b' record isn't its drive
+FLAG_GAP_S = 6.0  # flag off for longer than this is a pause, not a recovery
+
+
+def drive_flag(packet: bytes) -> bool | None:
+    """The pulley's drive flag from a raw record, or None when the record can't carry it.
+
+    Only V3's scrambled digits (high nibble 4 or 5) carry it; a plain ASCII digit (0x3_) would
+    always look "on".
+    """
+    if len(packet) != PACKET_LENGTH:
+        return None
+    b = packet[FLAG_BYTE]
+    if b & 0xE0 != 0x40:
+        return None
+    return bool(b & FLAG_BIT)
+
 
 def decode_force(payload: bytes) -> list[int]:
     """Force samples (N) from the 8 data bytes of an x/y/z record."""
@@ -141,6 +167,8 @@ class StrokeCurve:
     heart_rate_bpm: int = 0  # from the bridge's own strap connection, 0 = none
     distance_m: int = 0  # the pulley's distance when the stroke finished
     drive_s: float = 0.0  # drive time, only in exports that have it (the SmartRow handle's); 0 = not measured
+    flag_drive_s: float = 0.0  # how long the pulley's drive flag was on (raw, uncalibrated; see FLAG_BIT); 0 = none
+    flag_recovery_s: float = 0.0  # flag off from the previous drive to this one; 0 = none (first stroke, pause)
 
 
 @dataclass
@@ -169,6 +197,11 @@ class SmartRowParser:
         self.on_stroke: Callable[[StrokeCurve], None] | None = None
         self._curve_parts: list[list[int]] = []
         self._pending_curve: list[int] | None = None
+        self._flag_on = False
+        self._flag_start = 0.0
+        self._flag_recovery = 0.0
+        self._last_drive_end: float | None = None
+        self._drive: tuple[float, float, float] | None = None  # (flag time, recovery before it, end), not yet used
 
     def feed(self, packet: bytes, now: float | None = None) -> bool:
         """Consume one notification. Returns True if metrics changed."""
@@ -182,6 +215,7 @@ class SmartRowParser:
             return False
 
         now = time.monotonic() if now is None else now
+        self._track_flag(drive_flag(packet), now)
         p = decode_packet(packet)
         m = self.metrics
         m.distance_m = _atoi(p[1:6])
@@ -227,13 +261,31 @@ class SmartRowParser:
                 self._curve_parts = []
         return True
 
+    def _track_flag(self, on: bool | None, now: float) -> None:
+        """Time the drive flag's runs (measured from the first record with it on to the first without)."""
+        if on is None or on == self._flag_on:
+            return
+        self._flag_on = on
+        if on:
+            self._flag_start = now
+            gap = now - self._last_drive_end if self._last_drive_end is not None else None
+            self._flag_recovery = gap if gap is not None and gap <= FLAG_GAP_S else 0.0
+        else:
+            self._drive = (now - self._flag_start, self._flag_recovery, now)
+            self._last_drive_end = now
+
     def _emit_stroke(self, curve: list[int], work_j: float, now: float) -> None:
+        drive, self._drive = self._drive, None  # each flag run belongs to one stroke at most
         if self.on_stroke is None or not any(curve):
             return
+        flag_drive = flag_recovery = 0.0
+        if drive is not None and now - drive[2] <= FLAG_PAIR_S:
+            flag_drive, flag_recovery = round(drive[0], 3), round(drive[1], 3)
         m = self.metrics
         stroke = StrokeCurve(time=now, force_n=curve, power_w=m.power_w, stroke_rate_spm=m.stroke_rate_spm,
                              stroke_length_cm=m.stroke_length_cm, work_j=work_j, stroke_count=m.stroke_count,
-                             heart_rate_bpm=m.heart_rate_bpm, distance_m=m.distance_m)
+                             heart_rate_bpm=m.heart_rate_bpm, distance_m=m.distance_m,
+                             flag_drive_s=flag_drive, flag_recovery_s=flag_recovery)
         try:
             self.on_stroke(stroke)
         except Exception:  # noqa: BLE001 - coaching must never break parsing

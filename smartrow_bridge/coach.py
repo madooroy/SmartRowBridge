@@ -766,7 +766,8 @@ class IntervalCoach:
         self.trace: list[tuple[float, int, float]] = []  # (time, heart rate, power) per stroke
         # Every stroke, for the session's activity file and later analysis:
         # (time, distance m, power W, strokes/min, heart rate, stroke length cm, force curve N, drive s)
-        self.stroke_log: list[tuple[float, int, float, float, int, int, tuple[int, ...], float]] = []
+        # (time, distance, power, spm, heart rate, length, force curve, drive_s, flag_drive_s, flag_recovery_s)
+        self.stroke_log: list[tuple[float, int, float, float, int, int, tuple[int, ...], float, float, float]] = []
 
     # ------------------------------------------------------------ reference
 
@@ -831,7 +832,8 @@ class IntervalCoach:
         self.length_total += s.stroke_length_cm
         self.trace.append((s.time, s.heart_rate_bpm, stroke_power(s)))
         self.stroke_log.append((s.time, s.distance_m, stroke_power(s), s.stroke_rate_spm, s.heart_rate_bpm,
-                                s.stroke_length_cm, tuple(s.force_n), s.drive_s))
+                                s.stroke_length_cm, tuple(s.force_n), s.drive_s,
+                                s.flag_drive_s, s.flag_recovery_s))
         self.recent.append(s)
         smoothed = statistics.median(stroke_power(r) for r in self.recent)
         if not self.fresh_done and s.time - self.first_time >= FRESH_TO_S and (

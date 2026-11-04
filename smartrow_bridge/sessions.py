@@ -189,8 +189,12 @@ def distance_offset(distances: list[int]) -> int:
 
 
 # force_n: the stroke's force curve as the pulley sends it (24 samples, N, about every 5.8 cm of
-# handle travel from the catch; see coach.py). Files saved before it was added lack the column.
-STROKE_COLUMNS = ["t", "distance_m", "power_w", "spm", "heart_rate", "length_cm", "force_n"]
+# handle travel from the catch; see coach.py). drive_s: drive time measured by a SmartRow handle
+# (CSV replays only). flag_drive_s / flag_recovery_s: the pulley's drive flag, raw (see
+# protocol.FLAG_BIT; the whole drive is about 0.4-0.5 s longer). null = not measured. Files saved
+# before a column was added lack it.
+STROKE_COLUMNS = ["t", "distance_m", "power_w", "spm", "heart_rate", "length_cm", "force_n",
+                  "drive_s", "flag_drive_s", "flag_recovery_s"]
 
 
 def stroke_rows(coach: IntervalCoach) -> list[list]:
@@ -198,8 +202,12 @@ def stroke_rows(coach: IntervalCoach) -> list[list]:
     if not coach.stroke_log:
         return []
     t0 = coach.stroke_log[0][0]
-    return [[round(t - t0, 2), d, round(p, 1), round(spm, 1), hr, length, list(force)]
-            for t, d, p, spm, hr, length, force, *_ in coach.stroke_log]
+    def secs(row: tuple, i: int) -> float | None:
+        return round(row[i], 3) if len(row) > i and row[i] else None
+
+    return [[round(r[0] - t0, 2), r[1], round(r[2], 1), round(r[3], 1), r[4], r[5], list(r[6]),
+             secs(r, 7), secs(r, 8), secs(r, 9)]
+            for r in coach.stroke_log]
 
 
 def _write(path: Path, data: dict) -> None:
