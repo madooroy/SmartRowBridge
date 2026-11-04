@@ -1132,8 +1132,13 @@ class IntervalCoach:
             d["started_at_s"] = round(i.started_at - (self.first_time or i.started_at), 1)
         n = self.strokes_total
         hr = heart_rate_summary(self.trace, self.intervals, self.steady_power())
-        from . import steps  # (it imports this module)
+        from . import rhythm, steps  # (steps imports this module)
         ladders = steps.find_ladders(self.stroke_log)
+        rh = rhythm.session_rhythm(self.stroke_log, intervals)
+        for e in (rh or {}).get("efforts", []):
+            for d in intervals:
+                if d["index"] == e["index"]:
+                    d["rhythm"] = {k: v for k, v in e.items() if k != "index"}
         w_bal = steps.wbal(self.stroke_log, self.ftp, self.w_prime)
         if hr:
             for d, h in zip(intervals, hr.pop("intervals")):
@@ -1163,7 +1168,9 @@ class IntervalCoach:
             "w_prime": round(self.w_prime) if self.w_prime else None,
             "wbal": w_bal,
             "ladders": ladders,
+            "rhythm": rh,
             "findings": findings(intervals) + steps.ladder_findings(ladders) + easy_findings(self.easy_drift())
+            + rhythm.rhythm_findings(rh)
             + length_findings(self._length_note()) + heart_rate_findings(hr, intervals) + steps.wbal_findings(w_bal),
         }
 
@@ -1223,6 +1230,7 @@ class IntervalCoach:
                      "length_pct": [c.length_cue_pct, c.length_clear_pct],
                      "transition": [c.transition_cue, c.transition_clear]},
             "easy_drift_n": EASY_DRIFT_N, "drift_note": [DRIFT_NOTE_CM, DRIFT_NOTE_PCT],
+            "rhythm": _rhythm_thresholds(),
         }
 
     def live_drift(self) -> str | None:
@@ -1312,6 +1320,13 @@ class IntervalCoach:
                 "steady_curve": [round(v) for v in self.effort_ref()["curve"]],
             }
         return out
+
+
+def _rhythm_thresholds() -> dict:
+    from . import rhythm
+    return {"flag_scale": rhythm.FLAG_SCALE, "flag_offset_s": rhythm.FLAG_OFFSET_S, "warmup_s": rhythm.WARMUP_S,
+            "after_effort_s": rhythm.AFTER_EFFORT_S, "min_strokes": rhythm.MIN_STROKES,
+            "aim_ratio": rhythm.AIM_RATIO, "low_rate_spm": rhythm.LOW_RATE_SPM, "near_aim": rhythm.NEAR_AIM}
 
 
 def stall_marker(strokes, cue: str | None) -> dict | None:

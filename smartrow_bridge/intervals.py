@@ -155,6 +155,8 @@ def effort_line(i: dict) -> str:
         notes.append(f"stall on {i['stall_pct']}%")
     parts = [f"I{i['index']}" + (f" {i['intensity']}" if i.get("intensity") else ""),
              f"{_clock(i['duration_s'])} at {i['power_w']} W", ", ".join(notes) or "good"]
+    if i.get("rhythm"):
+        parts.append(f"rhythm 1:{i['rhythm']['ratio']:.1f}")
     if i.get("hr_peak"):
         parts.append(f"HR {i['hr_peak']}")
     return " \u00b7 ".join(parts)
