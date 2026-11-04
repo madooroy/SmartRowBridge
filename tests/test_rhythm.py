@@ -12,15 +12,16 @@ def row(t, spm, flag=0.0, rec=0.0, handle=0.0):
 
 class RhythmTest(unittest.TestCase):
     def test_drive_from_flag_matches_the_video(self):
-        # 4 Nov medians: flag 0.90 / 1.20 / 0.69 s against video 1.40 / 1.69 / 1.22 s
-        for flag, video in ((0.90, 1.40), (1.20, 1.69), (0.69, 1.22)):
-            self.assertAlmostEqual(rhythm.drive_from_flag(flag), video, delta=0.08)
+        # 4 Nov medians, both filmed rows: (flag, spm, video drive)
+        for flag, spm, video in ((0.90, 20, 1.40), (1.20, 20, 1.69), (0.90, 18.2, 1.44), (0.72, 24.1, 1.11),
+                                 (0.70, 28.6, 1.00), (0.70, 29.9, 0.96)):
+            self.assertAlmostEqual(rhythm.drive_from_flag(flag, spm), video, delta=0.08)
 
     def test_stroke_from_flag_and_from_handle(self):
         d, r, src = rhythm.stroke_rhythm(row(0, 20, flag=0.9, rec=2.1))
         self.assertEqual(src, "pulley")
         self.assertAlmostEqual(d + r, 3.0)
-        self.assertAlmostEqual(d, 1.415, places=2)
+        self.assertAlmostEqual(d, 0.9 + 0.92 - 0.022 * 20, places=2)
         d, r, src = rhythm.stroke_rhythm(row(0, 20, handle=1.0))
         self.assertEqual((round(d, 2), round(r, 2), src), (1.0, 2.0, "handle"))
         self.assertIsNone(rhythm.stroke_rhythm(row(0, 20)))
@@ -34,7 +35,8 @@ class RhythmTest(unittest.TestCase):
         efforts = [{"index": 1, "started_at_s": 300.0, "duration_s": 60}]
         rh = rhythm.session_rhythm(log, efforts)
         self.assertEqual(rh["easy"]["spm"], 20)
-        self.assertEqual(rh["easy"]["ratio"], round((3.0 - rhythm.drive_from_flag(0.9)) / rhythm.drive_from_flag(0.9), 2))
+        d = rhythm.drive_from_flag(0.9, 20)
+        self.assertEqual(rh["easy"]["ratio"], round((3.0 - d) / d, 2))
         self.assertEqual(rh["efforts"][0]["index"], 1)
         self.assertEqual(rh["efforts"][0]["spm"], 24)
         # Easy leaves out the warm-up (40 strokes before 120 s), the one 5 s before the effort,
@@ -43,8 +45,8 @@ class RhythmTest(unittest.TestCase):
         text = rhythm.rhythm_findings(rh)
         self.assertEqual(len(text), 2)
         self.assertIn("drive estimated from the pulley", text[0])
-        self.assertIn("1:1.1", text[0])
         self.assertIn("usual aim of 1:2 means a drive of about 1.0 s", text[0])
+        self.assertIn("1:1.2", text[0])
         self.assertNotIn("estimated", text[1])
         self.assertTrue(text[1].startswith("Rhythm in efforts: I1 1:"))
 
@@ -54,10 +56,10 @@ class RhythmTest(unittest.TestCase):
         fast = {**easy, "spm": 28, "ratio": 1.1}
         self.assertNotIn("aim", rhythm.rhythm_findings({"easy": fast, "efforts": []})[0])
 
-    def test_rough_above_24_spm(self):
-        e = {"index": 1, "strokes": 30, "spm": 28, "drive_s": 1.2, "recovery_s": 0.9, "ratio": 0.75, "source": "pulley"}
+    def test_rough_above_32_spm(self):
+        e = {"index": 1, "strokes": 30, "spm": 34, "drive_s": 1.2, "recovery_s": 0.9, "ratio": 0.75, "source": "pulley"}
         self.assertIn("(drive 1.2 s, rough)", rhythm.rhythm_findings({"easy": None, "efforts": [e]})[0])
-        self.assertNotIn("rough", rhythm.rhythm_findings({"easy": None, "efforts": [{**e, "spm": 22}]})[0])
+        self.assertNotIn("rough", rhythm.rhythm_findings({"easy": None, "efforts": [{**e, "spm": 28}]})[0])
         self.assertNotIn("rough", rhythm.rhythm_findings({"easy": None, "efforts": [{**e, "source": "handle"}]})[0])
 
     def test_nothing_without_drive_times(self):

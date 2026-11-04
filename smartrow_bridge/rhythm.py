@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Rhythm: how long the drive and the recovery take, and their ratio.
 
-The pulley doesn't send drive time, but its drive flag (protocol.FLAG_BIT) is on through the
-loaded middle of each drive. Filmed at 60 fps on 4 Nov 2026 against the flag (60 strokes at
-20 spm, normal, slow and quick drives), the whole drive, catch to finish, was
-    flag = 0.94 x drive - 0.43 s   (r = 0.88, spread 0.10 s)
-so drive = (flag + 0.43) / 0.94: about 0.5 s more than the flag. The recovery is the rest of the
-stroke: the flag's on + off time is one whole stroke. Each stroke is good to about 0.1 s, so only
-medians over many strokes are reported. Above about 24 spm the flag's shortfall seems smaller
-(4 Nov, two rows compared: about 0.25 s at 26-30 spm against 0.5 s at 20), so the estimate there
-runs long; such rhythms are marked rough until a filmed row with the screen flash settles it.
+The pulley doesn't send drive time, but its drive flag (protocol.FLAG_BIT) is on while the handle
+is loaded. Filmed at 60 fps with the Display HAT screen lit by the flag (sniff_pulley --flash,
+4 Nov 2026, 147 strokes at 18-30 spm, gentle and sharp catches):
+- the flag goes off at the finish (within 0.02 s, every rate);
+- it comes on 0.3-0.6 s after the catch, once the handle takes load: the missing part of the
+  drive is all at the catch, longer at low rates and with a gentle catch.
+So drive = flag + LAG_A - LAG_B x spm (0.48 s at 20 spm, 0.26 s at 30; per stroke within about
+0.08 s; checked against both filmed rows that day). The recovery is the rest of the stroke: the
+flag's on + off time is one whole stroke. Only medians over many strokes are reported.
 
 A SmartRow handle's export measures drive time itself (the stroke log's drive time); when a stroke
 has it, that is used instead and the recovery is the stroke period less the drive.
@@ -22,7 +22,8 @@ from __future__ import annotations
 
 import statistics
 
-FLAG_SCALE, FLAG_OFFSET_S = 0.94, 0.43  # flag = FLAG_SCALE x drive - FLAG_OFFSET_S (4 Nov 2026 video)
+LAG_A, LAG_B = 0.92, 0.022  # catch to flag on, s: LAG_A - LAG_B x spm (4 Nov 2026 flash video)
+LAG_MIN_S = 0.15
 WARMUP_S = 120.0  # Easy rhythm from here on (the first minutes are settling in)
 AFTER_EFFORT_S = 35.0  # strokes this soon after an effort are recovery from it, not Easy rowing
 MIN_STROKES = 10  # fewer strokes with a drive time: no rhythm reported
@@ -30,11 +31,11 @@ PERIOD_TOL = 0.25  # a stroke whose flag cycle and stroke rate disagree by more 
 AIM_RATIO = 2.0  # the usual aim at low rates: recovery about twice the drive
 LOW_RATE_SPM = 24.0  # the aim is given only at or below this rate
 NEAR_AIM = 1.7  # from here the rhythm counts as close to the aim
-ROUGH_ABOVE_SPM = 24.0  # pulley estimates above this rate are marked rough (calibrated at 20 spm)
+ROUGH_ABOVE_SPM = 32.0  # pulley estimates above this rate are marked rough (calibrated at 18-30 spm)
 
 
-def drive_from_flag(flag_s: float) -> float:
-    return (flag_s + FLAG_OFFSET_S) / FLAG_SCALE
+def drive_from_flag(flag_s: float, spm: float) -> float:
+    return flag_s + max(LAG_MIN_S, LAG_A - LAG_B * spm)
 
 
 def stroke_rhythm(row: tuple) -> tuple[float, float, str] | None:
@@ -45,7 +46,8 @@ def stroke_rhythm(row: tuple) -> tuple[float, float, str] | None:
     if handle and spm:
         period, drive, source = 60.0 / spm, handle, "handle"
     elif flag and flag_rec:
-        period, drive, source = flag + flag_rec, drive_from_flag(flag), "pulley"
+        period = flag + flag_rec
+        drive, source = drive_from_flag(flag, 60.0 / period), "pulley"
         if spm and abs(period * spm / 60.0 - 1) > PERIOD_TOL:
             return None  # e.g. a pause or a missed record between the two runs
     else:

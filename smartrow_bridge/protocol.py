@@ -122,12 +122,11 @@ FORCE_UNIT_N = 16
 FORCE_SAMPLES = 24
 
 # Drive flag: on a V3 pulley, bit 0x10 of byte 3 (one of the distance digits, whose high nibble
-# decode_packet() drops) is set while the handle is being pulled out, and clears just before
-# the stroke's x/y/z curve (43 of 43 strokes in captures/sniff2.log, 122 of 122 on 4 Nov 2026).
-# It is off during holds at the catch and at the finish. Filmed at 60 fps against the same row,
-# it covers the loaded middle of the drive: the whole drive (catch to finish) is about 0.4-0.5 s
-# longer (flag = 0.94 x drive - 0.43 s at 20 spm, r = 0.88), so calibrate when showing it and
-# store the raw flag times. Records come every 0.09-0.12 s, which is the resolution of each edge.
+# decode_packet() drops) is set while the handle is loaded, and clears at the finish, just before
+# the stroke's x/y/z curve (43 of 43 strokes in captures/sniff2.log, 122 of 122 and 155 of 155 on
+# 4 Nov 2026). It is off during holds. Filmed at 60 fps with the screen lit by the flag, it goes
+# off at the finish and comes on 0.3-0.6 s after the catch, once the handle takes load (see
+# rhythm.py for the drive time). Records come every 0.09-0.12 s, the resolution of each edge.
 FLAG_BYTE = 3
 FLAG_BIT = 0x10
 FLAG_PAIR_S = 3.0  # a drive that ended longer ago than this before the stroke's 'b' record isn't its drive
