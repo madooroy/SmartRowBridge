@@ -1289,6 +1289,8 @@ class IntervalCoach:
             if self.steady else [],
             "length_delta_cm": round(statistics.fmean(s.stroke_length_cm for s in self.easy_window)
                                      - self.baseline["length_cm"]) if self.baseline and self.easy_window else None,
+            # The Easy screen's rhythm bar (drive against recovery, last few strokes, low rates only).
+            "rhythm": _live_rhythm(self.stroke_log, now) if self.effort is None else None,
         }
         if out["intensity"] not in (None, "Recovery", "Easy"):
             out["intensity"] = "Easy"  # above Easy but not (yet) an effort
@@ -1320,6 +1322,11 @@ class IntervalCoach:
                 "steady_curve": [round(v) for v in self.effort_ref()["curve"]],
             }
         return out
+
+
+def _live_rhythm(log, now: float) -> dict | None:
+    from . import rhythm
+    return rhythm.live(log, now)
 
 
 def _rhythm_thresholds() -> dict:

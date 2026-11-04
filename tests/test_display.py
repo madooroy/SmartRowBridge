@@ -93,6 +93,20 @@ class ScreensTest(unittest.TestCase):
         for image in images:
             self.assertEqual(image.size, (320, 240))
 
+    def test_easy_screen_rhythm_bar(self):
+        st = coached()
+        st["coach"].update(stroke_curve=[0, 200, 400, 300, 100, 0], steady_curve=[0, 210, 390, 290, 90, 0],
+                           cue="good")
+        plain = screens.rowing_screen(st, NOW, UPTIME)
+        st["coach"]["rhythm"] = {"drive_s": 1.3, "recovery_s": 1.7, "ratio": 1.31, "aim": 2.0}
+        with_bar = screens.rowing_screen(st, NOW, UPTIME)
+        self.assertEqual(with_bar.size, (320, 240))
+        self.assertNotEqual(plain.tobytes(), with_bar.tobytes())
+        # the drive's blue runs from the left edge to 1.3 / 3.0 of the bar, past the 1:2 tick at 1/3
+        px = with_bar.getpixel((4 + int(312 * 0.40), 172))
+        self.assertEqual(px, screens.BLUE)
+        self.assertNotEqual(with_bar.getpixel((4 + int(312 * 0.50), 172)), screens.BLUE)
+
 
 @unittest.skipIf(app is None, "Pillow not installed")
 class ControllerTest(unittest.TestCase):

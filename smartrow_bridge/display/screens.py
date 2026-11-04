@@ -278,7 +278,10 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
         if cue == "good" and drift:
             cue = None
         text, colour = CUES.get(cue, ("", BLUE)) if cue else ("", BLUE)
-        _plot_curves(draw, (4, 80, WIDTH - 4, 179), coach["stroke_curve"], steady, colour, "both")
+        rhythm = coach.get("rhythm") if rowing else None
+        _plot_curves(draw, (4, 80, WIDTH - 4, 163 if rhythm else 179), coach["stroke_curve"], steady, colour, "both")
+        if rhythm:
+            _rhythm_bar(draw, (4, 166, WIDTH - 4, 179), rhythm)
         head = f"EASY  \u00b7  {format_time(m.get('elapsed_s', 0))}"
         if m.get("heart_rate_bpm"):
             head += f"  \u00b7  \u2665 {m['heart_rate_bpm']}"
@@ -339,6 +342,21 @@ CUES = {
 RATING_COLOURS = {"good": GREEN, "ok": AMBER, "short": RED}
 GOOD_FINISH_PCT, OK_FINISH_PCT = -5, -12  # same bands as smartrow_bridge.coach (GOOD_FINISH, OK_FINISH)
 METER_MIN_PCT, METER_MAX_PCT = -30, 15
+
+
+def _rhythm_bar(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], rhythm: dict) -> None:
+    """One stroke to scale: the drive (blue) then the recovery (grey), with a tick where the drive
+    would end at the aim (1:2). A recovery that grows moves the blue/grey edge toward the tick."""
+    x0, y0, x1, y1 = box
+    drive, recovery = rhythm["drive_s"], rhythm["recovery_s"]
+    w = x1 - x0
+    edge = x0 + w * drive / (drive + recovery)
+    draw.rounded_rectangle(box, radius=4, fill=TILE)
+    draw.rounded_rectangle((x0, y0, edge, y1), radius=4, fill=BLUE)
+    aim = x0 + w / (1 + rhythm.get("aim", 2.0))
+    draw.line((aim, y0 - 2, aim, y1 + 2), fill=FG, width=2)
+    text = f"drive {drive:.1f} s  \u00b7  1:{rhythm['ratio']:.1f}"
+    draw.text((x1 - 6, (y0 + y1) // 2), text, font=font(11), fill=DIM, anchor="rm")
 
 
 def finish_colour(pct: int | None) -> tuple:

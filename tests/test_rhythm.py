@@ -4,6 +4,8 @@ from smartrow_bridge import rhythm
 from smartrow_bridge.intervals import effort_line
 from tests.test_protocol import CAPTURE_DRIVE, load_capture
 
+CAPTURE_FLASH = CAPTURE_DRIVE.parent / "sniff-flash-2026-11-04.log"
+
 
 def row(t, spm, flag=0.0, rec=0.0, handle=0.0):
     """A stroke-log row: (time, distance, power, spm, hr, length, force, drive, flag drive, flag recovery)."""
@@ -62,6 +64,18 @@ class RhythmTest(unittest.TestCase):
         self.assertNotIn("rough", rhythm.rhythm_findings({"easy": None, "efforts": [{**e, "spm": 28}]})[0])
         self.assertNotIn("rough", rhythm.rhythm_findings({"easy": None, "efforts": [{**e, "source": "handle"}]})[0])
 
+    def test_live_bar(self):
+        log = [row(t * 3.0, 20, flag=0.82, rec=2.18) for t in range(10)]
+        bar = rhythm.live(log, now=27.5)
+        d = rhythm.drive_from_flag(0.82, 20)
+        self.assertEqual(bar, {"drive_s": round(d, 2), "recovery_s": round(3.0 - d, 2),
+                               "ratio": round((3.0 - d) / d, 2), "aim": 2.0})
+        self.assertIsNone(rhythm.live(log, now=27.0 + rhythm.LIVE_STALE_S + 1))  # stopped rowing
+        fast = [row(t * 2.0, 30, flag=0.7, rec=1.3) for t in range(10)]
+        self.assertIsNone(rhythm.live(fast, now=18.5))  # above 24 spm: 1:2 isn't the aim there
+        self.assertIsNone(rhythm.live([row(t * 3.0, 20) for t in range(10)], now=27.5))  # no flag
+        self.assertIsNone(rhythm.live([], now=0))
+
     def test_nothing_without_drive_times(self):
         log = [row(t * 3.0, 20) for t in range(100)]
         self.assertIsNone(rhythm.session_rhythm(log, []))
@@ -72,6 +86,23 @@ class RhythmTest(unittest.TestCase):
              "rhythm": {"ratio": 1.04}}
         self.assertIn("rhythm 1:1.0", effort_line(i))
         self.assertNotIn("rhythm", effort_line({k: v for k, v in i.items() if k != "rhythm"}))
+
+    @unittest.skipUnless(CAPTURE_FLASH.exists(), "capture not present")
+    def test_live_bar_in_the_coach_state(self):
+        from smartrow_bridge.coach import IntervalCoach
+        from smartrow_bridge.protocol import SmartRowParser
+        p, c = SmartRowParser(), IntervalCoach(ftp=185)
+        p.on_stroke = c.add
+        states = {}
+        for t, raw in load_capture(CAPTURE_FLASH):
+            p.feed(raw, now=t)
+            for mark in (100.0, 200.0):  # normal rowing at 20 spm; the 28 spm block
+                if mark not in states and t >= mark:
+                    states[mark] = c.state(t)
+        bar = states[100.0]["rhythm"]
+        self.assertAlmostEqual(bar["drive_s"], 1.25, delta=0.15)  # the video said 1.23 s
+        self.assertAlmostEqual(bar["drive_s"] + bar["recovery_s"], 3.0, delta=0.25)
+        self.assertIsNone(states[200.0]["rhythm"])  # 28 spm: no bar
 
     @unittest.skipUnless(CAPTURE_DRIVE.exists(), "capture not present")
     def test_live_path_reaches_the_session_record(self):

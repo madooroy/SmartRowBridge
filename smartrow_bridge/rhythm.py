@@ -70,6 +70,28 @@ def summarise(rows: list[tuple]) -> dict | None:
             "ratio": round(recovery / drive, 2), "source": got[0][1][2]}
 
 
+LIVE_STROKES = 5  # the screen's bar: median of the last few strokes (single strokes are only good to ~0.1 s)
+LIVE_MIN = 3  # of them with a drive time
+LIVE_STALE_S = 8.0  # no stroke for this long: no bar
+
+
+def live(log: list[tuple], now: float) -> dict | None:
+    """The Easy screen's rhythm bar: drive and recovery over the last few strokes, at low rates only
+    (where 1:2 is the aim); None otherwise."""
+    if not log or now - log[-1][0] > LIVE_STALE_S:
+        return None
+    got = [x for r in log[-LIVE_STROKES:] if (x := stroke_rhythm(r))]
+    if len(got) < LIVE_MIN:
+        return None
+    drive = statistics.median(x[0] for x in got)
+    recovery = statistics.median(x[1] for x in got)
+    spm = 60.0 / (drive + recovery)
+    if spm > LOW_RATE_SPM:
+        return None
+    return {"drive_s": round(drive, 2), "recovery_s": round(recovery, 2), "ratio": round(recovery / drive, 2),
+            "aim": AIM_RATIO}
+
+
 def session_rhythm(log: list[tuple], intervals: list[dict]) -> dict | None:
     """Rhythm of the Easy rowing and of each effort. intervals: the session's efforts (as_dict with
     started_at_s, seconds after the first stroke)."""
