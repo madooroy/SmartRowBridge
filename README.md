@@ -217,6 +217,8 @@ Common problems:
 | `smartrow_bridge/heartrate.py` | Optional heart rate strap, on the pulley's radio |
 | `smartrow_bridge/uploads.py`, `intervals.py`, `strava.py`, `fitfile.py` | Optional uploads: when and where, the two services, the session's FIT file |
 | `tools/coach_replay.py` | Runs SmartRow app CSV exports through the coach (and can save their summaries) |
+| `tools/pose_video.py` | Form from a side-on video: body angles and timing for every stroke (MediaPipe pose tracking; for a laptop, not the Pi; `pip install -r requirements-video.txt`). `--strokes SESSION.strokes.json` lines the clip up with the session automatically |
+| `tools/drive_flag.py` | Drive and recovery times from the pulley's drive flag in a `sniff_pulley.py` log |
 
 - **Pass-through.** Every pulley notification is forwarded to the clone first, unchanged and in order; parsing
   works on a copy. The SmartRow app's writes go back to the pulley unchanged.

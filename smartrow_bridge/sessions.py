@@ -231,7 +231,7 @@ def distance_offset(distances: list[int]) -> int:
 # force_n: the stroke's force curve as the pulley sends it (24 samples, N, about every 5.8 cm of
 # handle travel from the catch; see coach.py). drive_s: drive time measured by a SmartRow handle
 # (CSV replays only). flag_drive_s / flag_recovery_s: the pulley's drive flag, raw (see
-# protocol.FLAG_BIT; the whole drive is about 0.4-0.5 s longer). null = not measured. Files saved
+# protocol.FLAG_BIT; rhythm.py turns it into drive time). null = not measured. Files saved
 # before a column was added lack it.
 STROKE_COLUMNS = ["t", "distance_m", "power_w", "spm", "heart_rate", "length_cm", "force_n",
                   "drive_s", "flag_drive_s", "flag_recovery_s"]
