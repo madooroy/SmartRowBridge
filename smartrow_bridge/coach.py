@@ -111,7 +111,9 @@ LEAD_GAP_S, LEAD_STROKES = 30.0, 10  # a few pulls, then a pause this long: the 
 # an effort left out). Saved with the session; the next session (within FRESH_MAX_AGE_DAYS) judges
 # its Easy rowing against it from the start. Stroke length is calibrated at FRESH_TO_S: today's
 # becomes the reference unless it is more than LENGTH_SAME_CM shorter than the saved one; then the
-# saved one stays (so the cue speaks up) and the summary says so.
+# saved one stays (so the cue speaks up) and the summary says so: one short row is an off day. Shorter
+# LENGTH_ADOPT_ROWS rows running, within LENGTH_SAME_CM of each other, is a deliberate change (less
+# layback, Nov 2026): that length becomes the reference.
 FRESH_FROM_S, FRESH_TO_S = 120.0, 480.0
 # Too few by FRESH_TO_S (efforts early in the row take their strokes, and the strokes just after them):
 # keep collecting until there are FRESH_MIN, up to FRESH_LATEST_S. (Oct 29: a 15-minute row with
@@ -121,6 +123,7 @@ FRESH_MIN = 60  # strokes needed for a fresh Easy stroke
 PROVISIONAL_MIN = 30  # with nothing saved: fresh strokes before a provisional reference
 FRESH_MAX_AGE_DAYS = 30
 LENGTH_SAME_CM = 3.0
+LENGTH_ADOPT_ROWS = 2  # rows running clearly (and consistently) shorter before the shorter length is adopted
 
 # Your stroke from Challenging up is shaped differently from your Easy one, and that is not a fading
 # finish: the drive comes harder off the catch and the peak earlier, so less of the force falls in
@@ -916,6 +919,12 @@ class IntervalCoach:
             return today, {**saved, "length_cm": today["length_cm"]}, {"change_cm": round(diff), "kept": False}
         if diff >= -LENGTH_SAME_CM:  # within the margin: today's length (no cue for a cm or two)
             return today, {**saved, "length_cm": today["length_cm"]}, None
+        # Clearly shorter two rows running (last time's was kept and carried as measured_length_cm), and
+        # by about as much: a deliberate change, so adopt it (reference and the saved record).
+        last = saved.get("measured_length_cm")
+        if last is not None and abs(today["length_cm"] - last) <= LENGTH_SAME_CM:
+            return today, {**saved, "length_cm": today["length_cm"]}, \
+                {"change_cm": round(diff), "kept": False, "adopted_rows": LENGTH_ADOPT_ROWS}
         # clearly shorter: the saved length stays (and is carried to the next session), so the cue speaks up
         return {**today, "measured_length_cm": today["length_cm"], "length_cm": saved["length_cm"]}, \
             {**saved}, {"change_cm": round(diff), "kept": True}
@@ -1224,7 +1233,7 @@ class IntervalCoach:
             "variation_floor": VARIATION_FLOOR, "short_stroke_pct": SHORT_STROKE_PCT,
             "stall": {"flat": STALL_FLAT, "steep": STALL_STEEP, "flag_pct": STALL_FLAG_PCT, "flag_over": STALL_FLAG_OVER},
             "peak_spread": [PEAK_SPREAD_RATIO, PEAK_SPREAD_MIN], "drive_end_fraction": DRIVE_END_FRACTION,
-            "sample_cm": SAMPLE_CM,
+            "sample_cm": SAMPLE_CM, "length_same_cm": LENGTH_SAME_CM, "length_adopt_rows": LENGTH_ADOPT_ROWS,
             "cues": {"window": CUE_WINDOW, "min": CUE_MIN, "sensitivity": self.settings.sensitivity,
                      "finish": [c.finish_cue, c.finish_clear], "legs": [c.legs_cue, c.legs_clear],
                      "length_pct": [c.length_cue_pct, c.length_clear_pct],
@@ -1619,6 +1628,8 @@ def length_findings(note: dict | None) -> list[str]:
     cm = abs(note["change_cm"])
     if note["kept"]:
         return [f"Fresh Easy strokes were {cm} cm shorter than last time; the coach kept last time's length."]
+    if note.get("adopted_rows"):
+        return [f"Easy strokes were {cm} cm shorter {note['adopted_rows']} rows running: the new length reference."]
     return [f"Fresh Easy strokes were {cm} cm longer than last time: the new length reference."]
 
 

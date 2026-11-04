@@ -489,6 +489,43 @@ class EasyCueTest(unittest.TestCase):
         self.assertEqual((summary["fresh_easy"]["length_cm"], summary["fresh_easy"]["measured_length_cm"]),
                          (115, 110))
 
+    def _row_after(self, saved: dict, today_cm: float):
+        r = Rower(ftp=185)
+        r.coach = IntervalCoach(ftp=185, reference=lambda: saved)
+        r.row(180, 105, length=today_cm)
+        return r.coach
+
+    def test_shorter_two_rows_running_is_adopted(self):
+        # Row 1: 110 against 115: an off day, last time's length kept (and its own carried as measured).
+        row1 = self._calibrate(110).session_summary()["fresh_easy"]
+        self.assertEqual((row1["length_cm"], row1["measured_length_cm"]), (115, 110))
+        # Row 2 at 109: clearly shorter again, and within 3 cm of row 1: the new reference.
+        c = self._row_after(row1, 109)
+        self.assertEqual(c.baseline["length_cm"], 109)
+        summary = c.session_summary()
+        self.assertIn("Easy strokes were 6 cm shorter 2 rows running: the new length reference.", summary["findings"])
+        self.assertEqual(summary["fresh_easy"]["length_cm"], 109)
+        self.assertNotIn("measured_length_cm", summary["fresh_easy"])
+        self.assertEqual(summary["thresholds"]["length_adopt_rows"], 2)
+        # Row 3 back at 109: within the margin of the adopted length, quietly.
+        c = self._row_after(summary["fresh_easy"], 109)
+        self.assertEqual(c.baseline["length_cm"], 109)
+        self.assertIsNone(c.length_note)
+
+    def test_two_short_rows_that_differ_are_not_adopted(self):
+        row1 = self._calibrate(111).session_summary()["fresh_easy"]  # kept 115, measured 111
+        c = self._row_after(row1, 107)  # shorter again, but 4 cm off row 1: still an off day
+        self.assertEqual(c.baseline["length_cm"], 115)
+        fresh = c.session_summary()["fresh_easy"]
+        self.assertEqual((fresh["length_cm"], fresh["measured_length_cm"]), (115, 107))
+
+    def test_longer_after_a_short_row_is_adopted_at_once(self):
+        row1 = self._calibrate(110).session_summary()["fresh_easy"]
+        c = self._row_after(row1, 121)
+        self.assertEqual(c.baseline["length_cm"], 121)
+        self.assertIn("Fresh Easy strokes were 6 cm longer than last time: the new length reference.",
+                      c.session_summary()["findings"])
+
     def test_fresh_stroke_leaves_out_the_warm_up(self):
         r = Rower(ftp=185)
         r.row(40, 105, length=105)  # short warm-up strokes
