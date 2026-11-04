@@ -16,9 +16,13 @@ The pulley only streams after an init command, periodic polls and (V3) a KEYLOCK
 answer - normally sent by the SmartRow app. --drive (default on) sends them so
 this script sees live data on its own.
 
+--flash lights the Display HAT Mini's screen while the pulley's drive flag is on (dark
+otherwise), so a filmed row shows the flag next to the body, frame by frame. Stop the screen's
+own service first: sudo systemctl stop smartrow-display.
+
 Usage:
     sudo ~/venv/bin/python sniff_pulley.py [--adapter hci0] [--address MAC] [--duration 120]
-                                            [--log sniff.log] [--map gatt_map.json] [--no-drive]
+                                            [--log sniff.log] [--map gatt_map.json] [--no-drive] [--flash]
 """
 
 from __future__ import annotations
@@ -54,6 +58,32 @@ def keylock_response(notification: bytes) -> bytes:
     except ValueError:
         return b"#"
     return b"\r" + f"{(seed * 17923) // 256 & 0xFFFF:04x}".encode() + b"\r"
+
+
+class Flash:
+    """The Display HAT's screen as a light: white and lit while the drive flag is on, dark otherwise."""
+
+    def __init__(self) -> None:
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from PIL import Image
+
+        from smartrow_bridge.display.hat import DisplayHat
+
+        self.hat = DisplayHat(buttons=False, led=False)
+        self.hat.show(Image.new("RGB", (320, 240), (255, 255, 255)))
+        self.on = None
+        self.set(False)
+
+    def set(self, on: bool) -> None:
+        if on != self.on:
+            self.hat.backlight(on)
+            self.on = on
+
+    def feed(self, raw: bytes) -> None:
+        # bit 0x10 of byte 3 on a V3 record (high nibble 4 or 5); see smartrow_bridge.protocol.drive_flag
+        if len(raw) == 17 and raw[3] & 0xE0 == 0x40:
+            self.set(bool(raw[3] & 0x10))
 
 
 def ascii_view(data: bytes) -> str:
@@ -132,11 +162,20 @@ async def main() -> int:
     ap.add_argument("--duration", type=float, default=0, help="stop after N seconds of sniffing (0 = until Ctrl+C)")
     ap.add_argument("--log", help="also append all output to this file")
     ap.add_argument("--map", help="write the GATT map + advertisement as JSON to this file")
+    ap.add_argument("--flash", action="store_true",
+                    help="light the Display HAT screen while the drive flag is on (stop smartrow-display first)")
     ap.add_argument("--no-drive", dest="drive", action="store_false",
                     help="do not send init/poll/KEYLOCK; only listen")
     args = ap.parse_args()
 
     out = Output(args.log)
+    flash = None
+    if args.flash:
+        try:
+            flash = Flash()
+        except Exception as exc:  # noqa: BLE001
+            print(f"--flash: the screen isn't available ({exc}); is smartrow-display stopped?", file=sys.stderr)
+            return 1
     out(f"# SmartRow sniff started {datetime.now().isoformat(timespec='seconds')} on {args.adapter}")
 
     try:
@@ -186,6 +225,8 @@ async def main() -> int:
             nonlocal count, challenge_requested
             count += 1
             raw = bytes(data)
+            if flash:
+                flash.feed(raw)
             out(f"{time.monotonic() - start:9.3f}  0x{char.handle:04X} {char.uuid[4:8]}  len={len(raw):2d}  "
                 f"{raw.hex(' ')}  |{ascii_view(raw)}|")
             if b"V3." in raw and not challenge_requested:
@@ -237,6 +278,8 @@ async def main() -> int:
                     except Exception:  # noqa: BLE001
                         pass
         out(f"\nDisconnecting cleanly after {time.monotonic() - start:.1f} s, {count} notifications")
+    if flash:
+        flash.set(True)  # leave the screen lit for its own service
     return 0
 
 
