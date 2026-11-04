@@ -68,6 +68,8 @@ def main() -> None:
     args = ap.parse_args()
 
     records = read_records(args.log)
+    if len(records) < 2:
+        raise SystemExit(f"{args.log}: no pulley records in it (did the sniffer connect and row?)")
     runs = drive_runs(records)
     gaps = [b[0] - a[0] for a, b in zip(records, records[1:])]
     print(f"{len(records)} records, gap median {st.median(gaps):.3f} s; {len(runs)} flag runs, "

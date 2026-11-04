@@ -222,13 +222,17 @@ async def main() -> int:
                 commands.put_nowait((label, data))
 
         def notified(char: BleakGATTCharacteristic, data: bytearray) -> None:
-            nonlocal count, challenge_requested
+            nonlocal count, challenge_requested, flash
             count += 1
             raw = bytes(data)
-            if flash:
-                flash.feed(raw)
             out(f"{time.monotonic() - start:9.3f}  0x{char.handle:04X} {char.uuid[4:8]}  len={len(raw):2d}  "
                 f"{raw.hex(' ')}  |{ascii_view(raw)}|")
+            if flash:
+                try:
+                    flash.feed(raw)
+                except Exception as exc:  # noqa: BLE001 - the log matters more than the light
+                    out(f"# --flash stopped: {exc!r}")
+                    flash = None
             if b"V3." in raw and not challenge_requested:
                 challenge_requested = True
                 send("V3 firmware -> request KEYLOCK challenge", b"#")
