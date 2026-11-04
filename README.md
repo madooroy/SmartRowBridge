@@ -351,8 +351,8 @@ without a phone:
   show, reset when you start a new workout in the SmartRow app. If the session had already been uploaded,
   the screen says where, so you can delete it there.
 - **Buttons:** small tabs in the screen's corners show what each does: a power symbol on A, on B the screen
-  it switches to, on X once there is an interval to look back at (or *Hold: discard* before then), and a tick on Y
-  (*Hold: done*) once there is a session to finish.
+  it switches to and *Hold: drills* (*DRILLS ON* in amber once a session is marked), on X once there is an interval to look back at (or *Hold: discard* before then), and a tick on Y
+  (*Hold: end/submit*) once there is a session to finish.
 - **Screen sleep:** the screen goes dark after an hour with nothing happening: nothing connected (the
   pulley, the SmartRow app, a fitness app or the heart-rate strap), no rowing, no button, nothing left to
   upload. It stays on as long as any of those is connected. The LED stays on, so a dark screen with a lit LED is asleep, not switched off. Start rowing

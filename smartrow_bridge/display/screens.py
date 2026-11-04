@@ -115,7 +115,7 @@ def add_tab(image: Image.Image, corner: str, icon: str, label: str) -> Image.Ima
     return image
 
 
-def _button(draw: ImageDraw.ImageDraw, corner: str, icon: str, label: str) -> None:
+def _button(draw: ImageDraw.ImageDraw, corner: str, icon: str, label: str, colour=None) -> None:
     """A small tab in the screen corner next to a button: icon + word."""
     f = font(13)
     tab_h, r = 22, 7
@@ -128,16 +128,17 @@ def _button(draw: ImageDraw.ImageDraw, corner: str, icon: str, label: str) -> No
                             x0 + width if left else WIDTH + 8, y0 + tab_h if top else HEIGHT + 8),
                            radius=8, fill=TILE)
     _ICONS[icon](draw, x0 + 8 + r, y0 + tab_h // 2, r, FG)
-    draw.text((x0 + 8 + 2 * r + 6, y0 + tab_h // 2), label, font=f, fill=FG, anchor="lm")
+    draw.text((x0 + 8 + 2 * r + 6, y0 + tab_h // 2), label, font=f, fill=colour or FG, anchor="lm")
 
 
-def _hints(draw: ImageDraw.ImageDraw, view: str, x_label: str | None = None) -> None:
-    """A: hold to switch off. B: go to the other screen. X (optional): the last interval."""
+def _hints(draw: ImageDraw.ImageDraw, view: str, x_label: str | None = None, drill: bool = False) -> None:
+    """A: hold to switch off. B: go to the other screen; held: drills on/off. X (optional): the last interval."""
     _button(draw, "A", "power", "Hold: off")
-    if view == "status":
-        _button(draw, "B", "rowing", "Rowing")
+    if view == "status":  # short: the web page's address sits beside it (the hold works here too)
+        _button(draw, "B", "rowing", "Drills on" if drill else "Rowing", AMBER if drill else FG)
     else:
-        _button(draw, "B", "status", "Status")
+        _button(draw, "B", "status", "Status \u00b7 " + ("DRILLS ON" if drill else "Hold: drills"),
+                AMBER if drill else FG)
     if x_label:
         _button(draw, "X", "curve", x_label)
 
@@ -174,7 +175,7 @@ def format_time(seconds: int) -> str:
 def status_screen(status: dict | None, now: float, uptime: float, address: str = "") -> Image.Image:
     image, draw = _canvas()
     state = bridge_state(status, now, uptime)
-    _hints(draw, "status")
+    _hints(draw, "status", drill=bool((status or {}).get("drill")))
     if address:
         # One line (host and IP) or two (the web page's address by name and by IP), bottom right,
         # clear of the B tab: the first line brightest, so it reads at a glance.
@@ -244,7 +245,7 @@ def status_screen(status: dict | None, now: float, uptime: float, address: str =
 def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image:
     image, draw = _canvas()
     coach = (status or {}).get("coach") or {}
-    _hints(draw, "rowing", "Last" if coach.get("last") else None)
+    _hints(draw, "rowing", "Last" if coach.get("last") else None, bool((status or {}).get("drill")))
     if bridge_state(status, now, uptime) != "ok":
         _centered(draw, [("No data", 28, True, DIM), ("B shows the status", 16, False, DIM)])
         return image
@@ -448,7 +449,7 @@ def _mini_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct: 
 def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
     """During an effort: time and watts, a finish meter, and one cue."""
     image, draw = _canvas()
-    _hints(draw, "rowing")
+    _hints(draw, "rowing", drill=bool((status or {}).get("drill")))
     live = status["coach"]["live"]
     label = f"{live['intensity'].upper()}  \u00b7  {live['index']}" if live.get("intensity") else f"INTERVAL {live['index']}"
     draw.text((WIDTH - 6, 4), label, font=font(15, True), fill=DIM, anchor="rt")
@@ -480,7 +481,7 @@ def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
 def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
     """After an effort: its average curve against steady, and three numbers."""
     image, draw = _canvas()
-    _hints(draw, "rowing", "Close")
+    _hints(draw, "rowing", "Close", bool((status or {}).get("drill")))
     last = status["coach"]["last"]
     legs_late = bool(last.get("legs_late"))
     if last.get("balance") is not None:  # the same rule as the bars: green inside the cue markers

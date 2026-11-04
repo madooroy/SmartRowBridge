@@ -288,7 +288,7 @@ def preview(directory: str) -> None:
     rowing_y = c.step(with_session(st("connected", "SmartRow-34", True, True, True, **rowing)), now, up,
                       {"A": False, "B": False, "X": False, "Y": False}).image
     interval_y = screens.add_tab(screens.interval_screen(coached(live("good", full, 2, 4, 0.2, 1.5)), now, up),
-                                 "Y", "check", "Hold: done")
+                                 "Y", "check", "Hold: end/submit")
     fin = {"token": "t", "session": "2026-10-28T0702"}
     going = {**st("connected"), "finish": fin,
              "uploads": uploads({"intervals.icu activity": "sent", "Strava": "waiting"}, sending="Strava")}
@@ -304,6 +304,10 @@ def preview(directory: str) -> None:
         "22-finished-sent": screens.finish_screen(done, fin["session"], True),
         "23-off-uploading-first": screens.upload_off_screen(going, False),
         "24-off-closing-offline": screens.upload_off_screen(offline, True),
+        "25-hold-b-drills": screens.hold_screen(0.6, "Keep holding: drills on"),
+        "26-drills-on": screens.drill_screen(True),
+        "27-rowing-drills-on": c.step({**with_session(st("connected", "SmartRow-34", True, True, True, **rowing)),
+                                       "drill": True}, now, up, {"A": False, "B": False, "X": False, "Y": False}).image,
     })
     for name, image in shots.items():
         image.save(out / f"{name}.png")

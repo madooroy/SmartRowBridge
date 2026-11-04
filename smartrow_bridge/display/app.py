@@ -374,7 +374,7 @@ class Controller:
         if self.view == "rowing":
             image = self._rowing_image(status, now, uptime, x_tap and fresh)
             if fresh and self.screen != "summary" and _session_open(status):
-                image = screens.add_tab(image, "Y", "check", "Hold: done")
+                image = screens.add_tab(image, "Y", "check", "Hold: end/submit")
             coach = (status or {}).get("coach") or {}
             if fresh and self.screen == "rowing" and not coach.get("last") \
                     and coach.get("session_strokes", 0) > 0:
