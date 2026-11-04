@@ -177,6 +177,17 @@ DRILL_KEEPS = ("strokes", "rowing_s", "avg_power_w", "avg_length_cm", "heart_rat
                "hr_zones", "settings")
 
 
+RECORD_KEEPS = ("version", "id", "source", "started_at", "ended_at", "saved_at", "complete", "finished",
+                "distance_m", "elapsed_s", "uploads")
+
+
+def as_drill(record: dict) -> dict:
+    """The record (or summary) of a drills session: what was rowed, without the coach's analysis."""
+    out = {k: record[k] for k in (*RECORD_KEEPS, *DRILL_KEEPS) if k in record}
+    out.update(drill=True, intervals=[], findings=[DRILL_TEXT])
+    return out
+
+
 def build_record(coach: IntervalCoach, started_at: float, saved_at: float, complete: bool,
                  distance_m: int, elapsed_s: int, source: str = "bridge", session: str | None = None,
                  ended_at: float | None = None, drill: bool = False) -> dict:
@@ -189,8 +200,7 @@ def build_record(coach: IntervalCoach, started_at: float, saved_at: float, compl
     if ended_at is None:
         ended_at = started_at + summary.get("rowing_s", 0)
     if drill:  # drills (B held on the screen): uploaded, but not analysed
-        summary = {k: summary[k] for k in DRILL_KEEPS if k in summary}
-        summary.update(drill=True, intervals=[], findings=[DRILL_TEXT])
+        summary = as_drill(summary)
     return {
         "version": VERSION,
         "id": session or session_id(started_at),

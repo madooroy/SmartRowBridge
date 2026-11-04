@@ -160,6 +160,25 @@ class RecorderTest(unittest.TestCase):
         self.assertNotIn("drill", record)
         self.assertEqual(len(record["intervals"]), 4)
 
+    def test_marked_as_drills_after_the_fact(self):
+        from unittest import mock
+        from smartrow_bridge import uploads
+        r = saturday()
+        path = self.recorder(r).update(RowingMetrics(distance_m=6000), mono_now=r.t, wall_now=1_800_000_000.0)
+        sid = path.stem
+        settings = mock.Mock(session_dir=str(self.dir))
+        with mock.patch.object(uploads, "_update", return_value=0) as upd:
+            self.assertEqual(uploads._drill(settings, sid), 0)
+            upd.assert_not_called()  # not uploaded yet: nothing to rewrite
+            record = sessions.read_session(str(self.dir), sid)
+            self.assertTrue(record["drill"])
+            self.assertEqual(record["intervals"], [])
+            self.assertEqual(record["distance_m"], 6000)
+            sessions.save(self.dir, {**record, "uploads": {"strava": {"activity_id": 7}}})
+            uploads._drill(settings, sid)
+            upd.assert_called_once_with(settings, sid, None, None)
+        self.assertEqual(sessions.read_session(str(self.dir), sid)["uploads"], {"strava": {"activity_id": 7}})
+
     def test_stroke_rows_carry_drive_times(self):
         r = saturday()
         log = r.coach.stroke_log

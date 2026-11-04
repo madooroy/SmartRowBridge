@@ -344,7 +344,11 @@ without a phone:
   with "Worked on drills today. No force-curve analysis performed." in place of the coach's report: no
   efforts, no findings, nothing learned for later sessions, and it is left out of the Progress trends (its
   time and distance still count in the weekly totals). You can do it before you start (it applies to the
-  session about to start), while rowing, or at the end before holding Y. Hold B again to undo.
+  session about to start), while rowing, or at the end before holding Y (or, without Y, within about 7
+  minutes of the last stroke, when it uploads by itself). Hold B again to undo. Forgot? Mark it afterwards
+  and rewrite what was uploaded:
+  `sudo /opt/smartrow-bridge/venv/bin/python -m smartrow_bridge.uploads --drill SESSION` (the session id,
+  e.g. `2026-11-05T0603`, from `--status`). intervals.icu keeps any efforts it had already marked.
 - **Discard:** rowed a warm-up you don't want kept? Hold button **X** for 2 seconds. The Pi deletes that
   session, so it is neither kept nor uploaded, and starts a new one when you row on. (A quick tap of X still
   brings back the interval summary.) The pulley's own metres, which the SmartRow app and the rowing screen

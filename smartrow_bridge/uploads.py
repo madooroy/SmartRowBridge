@@ -403,6 +403,21 @@ def _update(settings: Settings, session: str, intervals_id: str | None, strava_i
     return status
 
 
+def _drill(settings: Settings, session: str) -> int:
+    """Mark a saved session as drills after the fact, and rewrite what was already uploaded."""
+    record = sessions.read_session(settings.session_dir, session)
+    if record is None:
+        print(f"No saved session {session} in {settings.session_dir}", file=sys.stderr)
+        return 1
+    sessions.save(settings.session_dir, sessions.as_drill(record))
+    print(f"Session {session} is now drills: no analysis kept")
+    sent = _mark(record, "intervals_activity") or _mark(record, "strava")
+    if not sent:
+        print("Not uploaded yet: it goes as drills when it is sent.")
+        return 0
+    return _update(settings, session, None, None)
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="smartrow-uploads", description=__doc__.splitlines()[0])
     group = p.add_mutually_exclusive_group(required=True)
@@ -412,6 +427,8 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--tcx", nargs=2, metavar=("ID", "OUT"), help="write a session's TCX file (Strava's)")
     group.add_argument("--update", metavar="ID", help="rewrite the activities a session was sent as (description, "
                        "intervals) from the session as it is now, without uploading again")
+    group.add_argument("--drill", metavar="ID", help="mark a saved session as drills (forgot to hold B) and "
+                       "rewrite its uploads: no analysis, the drills description")
     p.add_argument("--to", choices=("intervals", "strava"), help="with --send: only this destination")
     p.add_argument("--intervals-id", help="with --update: the intervals.icu activity (e.g. i203354284), "
                    "if not the one the session was sent as")
@@ -423,6 +440,8 @@ def main(argv: list[str] | None = None) -> int:
         return _status(settings)
     if args.update:
         return _update(settings, args.update, args.intervals_id, args.strava_id)
+    if args.drill:
+        return _drill(settings, args.drill)
     out_file = args.fit or args.tcx
     session = out_file[0] if out_file else args.send
     record = sessions.read_session(settings.session_dir, session)
