@@ -307,6 +307,8 @@ def main() -> None:
     ap.add_argument("--model", help="pose model file (default: download Google's heavy model once)")
     ap.add_argument("--out", help="folder for per-stroke CSV and JSON")
     args = ap.parse_args()
+    if args.strokes and not Path(args.strokes).is_file():  # check now, not after an hour of tracking
+        ap.error(f"no strokes file {args.strokes}")
 
     model = model_path(args.model)
     everything = []
