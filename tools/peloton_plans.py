@@ -12,6 +12,8 @@ that cache. Use it gently (one request a second by default) and for your own ana
     python3 tools/peloton_plans.py analyse --minutes 60            # longest first: 60, 45, 30 ...
     python3 tools/peloton_plans.py index                           # the Pi's Classes page (20 min and up)
     python3 tools/peloton_plans.py update                          # weekly: new classes, your history, the index
+    python3 tools/peloton_plans.py drills                          # drill/technique classes in the catalogue (no token)
+    python3 tools/peloton_plans.py fetch --drills                  # then download just their plans
 
 Your token: sign in at members.onepeloton.com in a browser, open the developer tools (F12),
 Network tab, reload, click any request to api.onepeloton.com and copy the value of its
@@ -140,6 +142,9 @@ def fetch(args) -> None:
         if not rides:
             raise SystemExit("No rowing classes came back. Check the token, or run inspect on a class id.")
         listing.write_text(json.dumps(rides), encoding="utf-8")
+    if getattr(args, "drills", False):
+        rides = [r for r in rides if drill_match(r)]
+        print(f"Drill and technique classes only (title or description): {len(rides)}")
     lengths = Counter(class_minutes(r) for r in rides)
     print("Classes by length: " + ", ".join(f"{m} min: {n}" for m, n in sorted(lengths.items(), reverse=True)))
     wanted = set(args.minutes) if args.minutes else set(lengths)
@@ -509,6 +514,106 @@ personal analysis.</small></p>
 </body></html>"""
 
 
+# ------------------------------------------------------------------ drill and technique classes
+
+# Words that make a class a drill/technique class when they are in its title. The same words found
+# only in the description are reported apart: a normal class may say "we'll work on form" too.
+DRILL_WORDS = re.compile(
+    r"\b(drills?|technique|form|beginners?|learn(ing)?( to row)?|fundamentals|foundations?|basics|intro"
+    r"|introduction|skills?|how to row|sequenc(e|ing)|stroke mechanics|pick drill)\b", re.I)
+# Which form point a drill class trains, from its title and description (several can apply).
+FORM_TAGS = [
+    ("recovery order", r"arms,? (and )?body|body,? (and )?arms|arms away|body over|sequenc|pick drill|reverse pick"
+                       r"|pause drill|pauses?\b|hands (away|past)|arms only"),
+    ("finish & layback", r"\bfinish|lay ?back|lean(ing)? back|body angle|11 o.?clock"),
+    ("catch & reach", r"\bcatch|\breach|compression|1 o.?clock|shins? vertical"),
+    ("rhythm & ratio", r"\bratio|rhythm|timing|slide control|tempo|1:2|2:1|rush(ing)? the slide|don.t rush"),
+    ("legs & drive", r"legs only|leg drive|\bdrive\b|push(ing)? (with|through) (the|your) legs|half slide"),
+]
+STOP_WORDS = {"min", "row", "rowing", "the", "and", "with", "a", "of", "to", "for", "in", "on", "&", "-", "x"}
+
+
+def drill_match(ride: dict) -> str:
+    """"title" when a drill word is in the class's title, "description" when only in its description, else ""."""
+    if DRILL_WORDS.search(ride.get("title") or ""):
+        return "title"
+    if DRILL_WORDS.search(ride.get("description") or ""):
+        return "description"
+    return ""
+
+
+def form_tags(ride: dict) -> list[str]:
+    text = f"{ride.get('title') or ''} {ride.get('description') or ''}"
+    return [name for name, pattern in FORM_TAGS if re.search(pattern, text, re.I)]
+
+
+def _instructor_names(cache: Path, wanted: set) -> dict:
+    """{instructor id: name}, from the class replies already cached (the catalogue has ids only)."""
+    names = {}
+    for f in Path(cache, "classes").glob("*.json"):
+        if not wanted - set(names):
+            break
+        ride = (_read_json(f, {}) or {}).get("ride") or {}
+        who = ride.get("instructor") or {}
+        if ride.get("instructor_id") and who.get("name"):
+            names[ride["instructor_id"]] = who["name"]
+    return names
+
+
+def drills(args) -> None:
+    """Find the drill and technique classes in the cached catalogue (no token needed): how many at each
+    length, which form point each trains, which already have their plan cached, and the title words of
+    the short classes that weren't matched (to spot names the word list misses). Writes drills.csv."""
+    cache = Path(args.cache)
+    rides = _read_json(cache / "catalogue.json", None)
+    if not rides:
+        raise SystemExit(f"No catalogue in {cache}: run fetch (or update) once first.")
+    found = [(r, drill_match(r)) for r in rides]
+    found = [(r, how) for r, how in found if how]
+    names = _instructor_names(cache, {r.get("instructor_id") for r, _ in found} - {None})
+    rows = []
+    for r, how in found:
+        who = (r.get("instructor") or {}).get("name") or names.get(r.get("instructor_id"), "")
+        aired = time.strftime("%Y-%m-%d", time.gmtime(int(r.get("original_air_time") or 0)))
+        rows.append({"id": r.get("id", ""), "minutes": class_minutes(r), "aired": aired,
+                     "title": r.get("title", ""), "instructor": who, "matched": how,
+                     "form": "; ".join(form_tags(r)), "plan cached": (cache / "classes" / f"{r.get('id')}.json").exists(),
+                     "description": " ".join((r.get("description") or "").split())})
+    rows.sort(key=lambda x: (x["matched"] != "title", x["minutes"], x["aired"]), reverse=False)
+    by_title = [x for x in rows if x["matched"] == "title"]
+    by_desc = [x for x in rows if x["matched"] == "description"]
+    print(f"{len(rides)} rowing classes in the catalogue: {len(by_title)} drill/technique by title, "
+          f"{len(by_desc)} more by description only.")
+    for label, group in (("By title", by_title), ("By description only", by_desc)):
+        lengths = Counter(x["minutes"] for x in group)
+        if lengths:
+            print(f"  {label}: " + ", ".join(f"{m} min: {n}" for m, n in sorted(lengths.items())))
+    tags = Counter(t for x in rows for t in x["form"].split("; ") if t)
+    if tags:
+        print("  Form points (title or description): " + ", ".join(f"{t} {n}" for t, n in tags.most_common()))
+    print(f"  Plans already cached: {sum(x['plan cached'] for x in rows)} of {len(rows)}")
+    print("\nDrill/technique classes by title:")
+    for x in by_title:
+        print(f"  {x['minutes']:>3} min  {x['aired']}  {x['title']}" + (f"  ({x['instructor']})" if x["instructor"] else "")
+              + (f"  [{x['form']}]" if x["form"] else ""))
+    if by_desc:
+        print(f"\nBy description only (first {min(len(by_desc), args.show)} of {len(by_desc)}; all in drills.csv):")
+        for x in by_desc[:args.show]:
+            print(f"  {x['minutes']:>3} min  {x['aired']}  {x['title']}" + (f"  [{x['form']}]" if x["form"] else ""))
+    matched = {x["id"] for x in rows}
+    words = Counter(w for r in rides if class_minutes(r) <= 15 and r.get("id") not in matched
+                    for w in re.findall(r"[a-z][a-z'&+:]*", (r.get("title") or "").lower()) if w not in STOP_WORDS)
+    print("\nTitle words of the other classes of 15 min or less (names the word list may miss):")
+    print("  " + ", ".join(f"{w} {n}" for w, n in words.most_common(40)))
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    with open(out / "drills.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0]) if rows else ["id"])
+        w.writeheader()
+        w.writerows(rows)
+    print(f"\nWrote {out / 'drills.csv'}. To download their plans: fetch --drills (needs a token).")
+
+
 # ------------------------------------------------------------------ the index for the Pi's Classes page
 
 # Where the Pi's web page reads it (smartrow_bridge.web serves it as /peloton/classes.json). install.sh
@@ -659,6 +764,8 @@ def main(argv=None) -> None:
     f.add_argument("--cookie", action="store_true", help="sign in with a peloton_session_id cookie instead")
     f.add_argument("--minutes", type=int, nargs="+", help="only these class lengths, e.g. --minutes 60 45")
     f.add_argument("--refresh", action="store_true", help="list the catalogue again (new classes)")
+    f.add_argument("--drills", action="store_true",
+                   help="only the drill and technique classes (see the drills command), at every length")
     i = sub.add_parser("inspect", help="show what a cached class plan looks like")
     i.add_argument("--cache", default="peloton-cache")
     i.add_argument("--id", help="a class id (default: the first cached)")
@@ -666,6 +773,10 @@ def main(argv=None) -> None:
     a.add_argument("--cache", default="peloton-cache")
     a.add_argument("--out", default="peloton-report")
     a.add_argument("--minutes", type=int, nargs="+", help="only these class lengths")
+    d = sub.add_parser("drills", help="find the drill and technique classes in the cached catalogue (no token)")
+    d.add_argument("--cache", default="peloton-cache")
+    d.add_argument("--out", default="peloton-report", help="folder for drills.csv")
+    d.add_argument("--show", type=int, default=30, help="how many description-only matches to print")
     x = sub.add_parser("index", help="write the class list the Pi's Classes page reads")
     x.add_argument("--cache", default="peloton-cache")
     x.add_argument("--out", default=PUBLISHED)
@@ -685,7 +796,7 @@ def main(argv=None) -> None:
     u.add_argument("--sessions", default=SESSIONS)
     args = p.parse_args(argv)
     {"fetch": fetch, "inspect": inspect, "analyse": analyse, "index": index, "update": update,
-     "history": history}[args.cmd](args)
+     "history": history, "drills": drills}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -729,6 +729,12 @@ linked to the Pi's own session of that row when the start times match), and clas
 bookmarked in the Peloton app a ★; the Classes screen can filter on both and order by recently
 taken. `update` (or `history`) reads your workout history.
 
+Drill and technique classes: `python3 tools/peloton_plans.py drills` (no token) lists them from the
+cached catalogue at every length, with the form point each seems to train (recovery order, finish
+and layback, catch and reach, rhythm and ratio, legs and drive) and the title words of the other
+short classes, to spot names it missed; it writes `peloton-report/drills.csv`.
+`fetch --drills` then downloads only their plans. They aren't on the Classes screen yet.
+
 `fetch`, `history` and `update` ask for a token (hidden; never printed or saved): sign in at
 members.onepeloton.com, press F12, Network, reload, filter on `api.onepeloton`, click a `me`
 request, and copy the value of its `authorization` header after `Bearer `. It lasts 48 hours.

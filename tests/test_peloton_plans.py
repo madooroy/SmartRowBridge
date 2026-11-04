@@ -186,3 +186,75 @@ class TakenAndBookmarksTest(unittest.TestCase):
             self.assertEqual(pp.fetch_history(FakeClient(), Path(tmp)), 3)
             self.assertEqual(json.loads(Path(tmp, "history.json").read_text()),
                              [{"ride": "a", "start": 5}, {"ride": "b", "start": 4}, {"ride": "c", "start": 3}])
+
+
+class DrillsTest(unittest.TestCase):
+    CATALOGUE = [
+        {"id": "d1", "title": "10 min Rowing Form Drills", "duration": 600, "original_air_time": 1700000000,
+         "instructor_id": "i1", "description": "Arms, body, then legs: a pick drill with pauses at the finish."},
+        {"id": "d2", "title": "5 min Catch Technique", "duration": 300, "original_air_time": 1700100000,
+         "instructor_id": "i2", "description": "Reach long at the catch, shins vertical."},
+        {"id": "d3", "title": "20 min Pop Row", "duration": 1200, "original_air_time": 1700200000,
+         "instructor_id": "i1", "description": "We'll finish with a drill on stroke rate."},
+        {"id": "n1", "title": "10 min Rush Row", "duration": 600, "original_air_time": 1700300000,
+         "description": "Hits from Rush."},
+        {"id": "n2", "title": "30 min Performance Row", "duration": 1800, "description": "Push hard."},
+    ]
+
+    def test_match_and_tags(self):
+        c = {r["id"]: r for r in self.CATALOGUE}
+        self.assertEqual([pp.drill_match(c[k]) for k in ("d1", "d2", "d3", "n1", "n2")],
+                         ["title", "title", "description", "", ""])
+        self.assertEqual(pp.form_tags(c["d1"]), ["recovery order", "finish & layback"])
+        self.assertEqual(pp.form_tags(c["d2"]), ["catch & reach"])
+        self.assertEqual(pp.form_tags(c["n1"]), [])  # the band, not rushing the slide
+
+    def test_drills_writes_csv_with_instructors_from_the_cache(self):
+        import csv
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp, "c")
+            (cache / "classes").mkdir(parents=True)
+            (cache / "catalogue.json").write_text(json.dumps(self.CATALOGUE))
+            d = details("10 min Rowing Form Drills", 10, [])
+            d["ride"].update(instructor_id="i1", instructor={"name": "Coach One"})
+            (cache / "classes" / "d1.json").write_text(json.dumps(d))
+
+            class A:
+                pass
+            args = A()
+            args.cache, args.out, args.show = str(cache), str(Path(tmp, "out")), 30
+            with redirect_stdout(io.StringIO()) as printed:
+                pp.drills(args)
+            rows = list(csv.DictReader(open(Path(tmp, "out", "drills.csv"), encoding="utf-8")))
+            self.assertEqual([r["id"] for r in rows], ["d2", "d1", "d3"])  # title matches first, short first
+            d1 = rows[1]
+            self.assertEqual((d1["instructor"], d1["plan cached"], d1["matched"]), ("Coach One", "True", "title"))
+            self.assertIn("2 drill/technique by title, 1 more by description only", printed.getvalue())
+            self.assertIn("rush 1", printed.getvalue())  # unmatched short-class title words, to spot missed names
+
+    def test_fetch_drills_only(self):
+        from unittest import mock
+        asked = []
+
+        class FakeClient:
+            def __init__(self, *a, **k):
+                pass
+
+            def get(self, path, **params):
+                asked.append(path)
+                return details("x", 10, [(0, 60, 1)])
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(pp, "Client", FakeClient), \
+                mock.patch.object(pp.getpass, "getpass", lambda *a: "secret"):
+            Path(tmp, "catalogue.json").write_text(json.dumps(self.CATALOGUE))
+
+            class A:
+                pass
+            args = A()
+            args.cache, args.cookie, args.delay, args.max, args.refresh = tmp, False, 0, None, False
+            args.minutes, args.drills = None, True
+            with mock.patch("builtins.print"):
+                pp.fetch(args)
+            self.assertEqual(sorted(asked), ["/api/ride/d1/details", "/api/ride/d2/details", "/api/ride/d3/details"])
