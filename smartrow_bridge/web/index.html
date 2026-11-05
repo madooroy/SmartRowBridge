@@ -307,6 +307,14 @@
         <details class="dd" id="cWhoDD"><summary id="cWhoSum">All instructors</summary>
           <div class="ddmenu" id="cWho" aria-label="Instructors"></div></details>
         <select id="cGroup" aria-label="Class type"></select>
+        <select id="cPart" aria-label="Part of the stroke" hidden>
+          <option value="">Every part of the stroke</option>
+          <option value="Recovery">The recovery</option>
+          <option value="Catch">The catch</option>
+          <option value="Drive">The drive</option>
+          <option value="Finish">The finish</option>
+          <option value="Whole stroke">Whole stroke</option>
+        </select>
         <select id="cHard" aria-label="Challenging and Max">
           <option value="">Challenging + Max: any</option>
           <option value="le10">at most 10% of the class</option>
@@ -942,6 +950,9 @@ async function checkClasses() {
   catch (e) { /* no index: no button */ }
 }
 
+// Peloton's drill classes (Form & Drills, Form Fixer): mostly 10 min, filtered by the part of the stroke
+// they work on, and left out of the two-class builder.
+const DRILLS = "Form & drills";
 const clock = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
 const hardShare = (c) => ((c.s["2"] || 0) + (c.s["3"] || 0)) / c.len;
 const shares = (c) => [0, 1, 2, 3].map((k) => (c.s[k] || 0) / c.len);
@@ -963,7 +974,8 @@ async function openClassesView() {
       .map((w) => `<label><input type="checkbox" value="${esc(w)}">${esc(w)} <span class="csub">${counts[w]}</span></label>`).join("")
       + `<button id="cWhoAll" type="button">All instructors</button>`;
     $("cGroup").innerHTML = opt("", "All class types") + [...new Set(pel.map((c) => c.g))].sort().map((g) => opt(g, g)).join("");
-    const sums = [...new Set(pel.flatMap((a) => pel.map((b) => a.m + b.m)))].filter((m) => m >= 40).sort((a, b) => a - b);
+    const full = pel.filter((c) => c.g !== DRILLS);
+    const sums = [...new Set(full.flatMap((a) => full.map((b) => a.m + b.m)))].filter((m) => m >= 40).sort((a, b) => a - b);
     $("sLen").innerHTML = sums.map((m) => `<option value="${m}" ${m === 50 ? "selected" : ""}>${m} min in all</option>`).join("");
     $("cKey").innerHTML = Object.values(LEVELS).map(([n, col]) => `<span><i style="background:${col}"></i>${n}</span>`).join("")
       + `<span><i style="height:2px;background:${C.faint}"></i>no target</span><span>- - - Challenging</span>`;
@@ -978,8 +990,9 @@ async function openClassesView() {
 function classFilter(ignoreLength = false) {
   const lens = [...$("cLen").querySelectorAll("input:checked")].map((x) => +x.value);
   const who = [...$("cWho").querySelectorAll("input:checked")].map((x) => x.value), group = $("cGroup").value, hard = $("cHard").value, max = $("cMax").value;
-  const q = $("cSearch").value.trim().toLowerCase(), taken = $("cTaken").value;
+  const q = $("cSearch").value.trim().toLowerCase(), taken = $("cTaken").value, part = $("cPart").value;
   return (c) => (!taken || (taken === "yes" ? c.n > 0 : taken === "no" ? !c.n : c.fav)) && (ignoreLength || lens.includes(c.m)) && (!who.length || who.includes(c.i)) && (!group || c.g === group)
+    && (group !== DRILLS || !part || c.fp === part)
     && (!hard || (hard === "le10" ? hardShare(c) <= 0.1 : hard === "le20" ? hardShare(c) <= 0.2 : hardShare(c) >= 0.2))
     && (!max || (max === "none" ? !c.x : c.x > 0)) && (!q || c.t.toLowerCase().includes(q) || c.i.toLowerCase().includes(q));
 }
@@ -1043,7 +1056,7 @@ function classRow(c) {
   const d = new Date(c.d * 1000);
   return `<div class="tile crow">
     <div class="ctop"><div><div class="ctitle">${c.fav ? `<span class="cstar" title="Bookmarked in Peloton">★</span> ` : ""}${esc(c.t)}</div>
-      <div class="csub">${esc(c.i)} · ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} · ${esc(c.g)}</div></div>
+      <div class="csub">${esc(c.i)} · ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} · ${esc(c.g)}${c.fp ? ` · ${c.fp === "Whole stroke" ? "whole stroke" : `the ${c.fp.toLowerCase()}`}` : ""}</div></div>
       <div class="cnums"><div><b>${c.if.toFixed(2)}</b><span class="csub">intensity</span></div>
         <div><b>${c.load}</b><span class="csub">load</span></div>
         <div><b>${c.r ?? "–"}</b><span class="csub">members</span></div></div></div>
@@ -1083,7 +1096,7 @@ function renderClasses() {
 // Two classes back to back that add up to the chosen length, easier first, at the chosen intensity.
 function renderPairs() {
   const total = +$("sLen").value, [lo, hi] = $("sHow").value.split(",").map(Number), endFirst = $("sEnd").checked;
-  const pool = pel.filter(classFilter(true)), mid = (lo + Math.min(hi, 1)) / 2, found = [];
+  const pool = pel.filter(classFilter(true)).filter((c) => c.g !== DRILLS), mid = (lo + Math.min(hi, 1)) / 2, found = [];
   for (const a of pool) {
     if (endFirst && a.g !== "Endurance") continue;
     for (const b of pool) {
@@ -1110,7 +1123,16 @@ function renderPairs() {
 
 $("classesBtn").addEventListener("click", openClassesView);
 $("cBack").addEventListener("click", closeSessionView);
-for (const id of ["cSort", "cWho", "cGroup", "cHard", "cMax", "cTaken"]) $(id).addEventListener("change", () => { pelShown = 100; renderClasses(); });
+$("cGroup").addEventListener("change", () => {
+  const drills = $("cGroup").value === DRILLS;
+  $("cPart").hidden = !drills;
+  if (!drills) $("cPart").value = "";
+  else {  // tick the drill classes' lengths so they show (10 min is off by default)
+    const lens = new Set(pel.filter((c) => c.g === DRILLS).map((c) => String(c.m)));
+    for (const x of $("cLen").querySelectorAll("input")) if (lens.has(x.value)) x.checked = true;
+  }
+});
+for (const id of ["cSort", "cWho", "cGroup", "cPart", "cHard", "cMax", "cTaken"]) $(id).addEventListener("change", () => { pelShown = 100; renderClasses(); });
 $("cSearch").addEventListener("input", () => { pelShown = 100; renderClasses(); });
 $("cLen").addEventListener("change", () => { pelShown = 100; renderClasses(); });
 $("cWho").addEventListener("click", (e) => {

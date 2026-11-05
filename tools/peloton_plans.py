@@ -10,7 +10,7 @@ that cache. Use it gently (one request a second by default) and for your own ana
     python3 tools/peloton_plans.py inspect                         # what one class plan looks like
     python3 tools/peloton_plans.py fetch --minutes 60              # then one class length at a time,
     python3 tools/peloton_plans.py analyse --minutes 60            # longest first: 60, 45, 30 ...
-    python3 tools/peloton_plans.py index                           # the Pi's Classes page (20 min and up)
+    python3 tools/peloton_plans.py index                           # the Pi's Classes page (20 min and up; drills 5 min and up)
     python3 tools/peloton_plans.py update                          # weekly: new classes, your history, the index
     python3 tools/peloton_plans.py drills                          # drill/technique classes in the catalogue (no token)
     python3 tools/peloton_plans.py fetch --drills                  # then download just their plans
@@ -542,9 +542,14 @@ def drill_match(ride: dict) -> str:
     return ""
 
 
+PART_TAGS = {"Recovery": "recovery order", "Catch": "catch & reach", "Drive": "legs & drive", "Finish": "finish & layback"}
+
+
 def form_tags(ride: dict) -> list[str]:
     text = f"{ride.get('title') or ''} {ride.get('description') or ''}"
-    return [name for name, pattern in FORM_TAGS if re.search(pattern, text, re.I)]
+    tags = [name for name, pattern in FORM_TAGS if re.search(pattern, text, re.I)]
+    part = PART_TAGS.get(stroke_part(ride.get("title") or ""))  # "Form & Drills: The Recovery"
+    return tags if not part or part in tags else [part] + tags
 
 
 def _instructor_names(cache: Path, wanted: set) -> dict:
@@ -637,14 +642,29 @@ LEVEL_CODES = {name: code for code, name in PELOTON_LEVELS.items()}
 LEVEL_WEIGHT = {-1: 0.45, 0: 0.55, 1: 0.78, 2: 1.0, 3: 1.3}
 NO_TARGET_WEIGHT = 0.45
 INDEX_MIN_MINUTES = 20
-GROUPS = [("Endurance", ("endurance",)), ("Intervals", ("interval",)), ("HIIT & Tabata", ("hiit", "tabata")),
-          ("Beginner & form", ("beginner", "form", "drill", "technique", "learn")),
+# Drill classes come first: "Form & Drills Row: The Drive" is a drill class whatever else its title says.
+DRILL_GROUP = "Form & drills"
+GROUPS = [(DRILL_GROUP, ("form & drills", "form and drills", "form fixer", "intro to form", "drill", "technique")),
+          ("Endurance", ("endurance",)), ("Intervals", ("interval",)), ("HIIT & Tabata", ("hiit", "tabata")),
+          ("Beginner", ("beginner", "form", "learn")),
           ("Warm-up & cool-down", ("warm up", "warm-up", "cool down", "cool-down"))]
 
 
 def class_group(title: str) -> str:
     t = title.lower()
     return next((g for g, words in GROUPS if any(w in t for w in words)), "Music & themes")
+
+
+# The part of the stroke a drill class works on. Peloton's Form & Drills descriptions are all the same
+# text, so the title ("Form & Drills: The Recovery") is the only place it is said.
+STROKE_PARTS = ("Recovery", "Catch", "Drive", "Finish")
+DRILL_MIN_MINUTES = 5  # drill classes are kept in the index from this length (most are 10 min)
+
+
+def stroke_part(title: str) -> str:
+    """"Recovery", "Catch", "Drive" or "Finish" when a drill class's title names one, else "Whole stroke"."""
+    m = re.search(r"\b(" + "|".join(STROKE_PARTS) + r")\b", title.split(":", 1)[-1] if ":" in title else "", re.I)
+    return m.group(1).capitalize() if m else "Whole stroke"
 
 
 def index_entry(class_id: str, details: dict) -> dict | None:
@@ -670,6 +690,7 @@ def index_entry(class_id: str, details: dict) -> dict | None:
     return {"id": class_id, "t": title, "i": (ride.get("instructor") or {}).get("name") or "",
             "d": int(ride.get("original_air_time") or 0), "m": class_minutes(ride), "len": length,
             "k": re.sub(r"^\d+ min ", "", title), "g": class_group(title),
+            **({"fp": stroke_part(title)} if class_group(title) == DRILL_GROUP else {}),
             "r": round(rating, 1) if rating else None, "rn": ride.get("difficulty_rating_count") or 0,
             "p": steps, "s": {str(c): t for c, t in totals.items()}, "none": none,
             "b": {str(c): t for c, t in longest.items()}, "x": sum(1 for _, _, c, _ in steps if c == 3),
@@ -711,7 +732,9 @@ def build_index(cache: Path, min_minutes: int = INDEX_MIN_MINUTES, sessions_dir=
     out = []
     for f in sorted(Path(cache, "classes").glob("*.json")):
         details = json.loads(f.read_text(encoding="utf-8"))
-        if class_minutes(details.get("ride") or {}) < min_minutes:
+        ride = details.get("ride") or {}
+        short = DRILL_MIN_MINUTES if class_group(ride.get("title", "")) == DRILL_GROUP else min_minutes
+        if class_minutes(ride) < min(min_minutes, short):
             continue
         entry = index_entry(f.stem, details)
         if not entry:

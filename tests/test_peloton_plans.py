@@ -134,6 +134,28 @@ class IndexTest(unittest.TestCase):
         self.assertEqual(pp.class_group("30 min Intervals & Arms Row"), "Intervals")
         self.assertEqual(pp.class_group("30 min 2000s Row"), "Music & themes")
 
+    def test_drill_classes_group_and_stroke_part(self):
+        self.assertEqual(pp.class_group("10 min Form & Drills Row: The Drive"), "Form & drills")
+        self.assertEqual(pp.class_group("20 min Form Fixer Row"), "Form & drills")
+        self.assertEqual(pp.class_group("20 min Advanced Beginner Row"), "Beginner")
+        self.assertEqual(pp.stroke_part("10 min Form & Drills: The Recovery"), "Recovery")
+        self.assertEqual(pp.stroke_part("10 min Form & Drills Row: Recovery"), "Recovery")
+        self.assertEqual(pp.stroke_part("10 min Form & Drills Row"), "Whole stroke")
+        e = pp.index_entry("abc", details("10 min Form & Drills: The Catch", 10, [(60, 300, 0)]))
+        self.assertEqual((e["g"], e["fp"]), ("Form & drills", "Catch"))
+        self.assertNotIn("fp", pp.index_entry("abc", details("30 min Pop Row", 30, [(0, 600, 1)])))
+        self.assertEqual(pp.form_tags({"title": "10 min Form & Drills: The Recovery", "description": "Boilerplate."}),
+                         ["recovery order"])
+
+    def test_index_keeps_short_drill_classes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp, "c")
+            (cache / "classes").mkdir(parents=True)
+            for cid, title, m in (("a", "10 min Form & Drills: The Recovery", 10), ("b", "10 min Pop Row", 10),
+                                  ("c", "30 min Pop Row", 30)):
+                (cache / "classes" / f"{cid}.json").write_text(json.dumps(details(title, m, [(0, 300, 0)])))
+            self.assertEqual(sorted(e["id"] for e in pp.build_index(cache, 20, None)), ["a", "c"])
+
     def test_index_skips_short_classes_and_writes_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp, "c")
