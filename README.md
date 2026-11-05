@@ -763,7 +763,7 @@ Rows, settings and the Pi's own changes live only on the Pi. `tools/backup_pi.sh
 file (no sudo needed), never with the intervals.icu key, Strava tokens, saved Wi-Fi passwords or SSH keys:
 
 ```
-bash ~/smartrow-bridge/tools/backup_pi.sh            # add --peloton to include the Peloton class cache
+bash ~/smartrow-bridge/tools/backup_pi.sh            # --no-peloton leaves out the Peloton class cache
 ```
 
 It keeps the last 5 in `~/smartrow-backups`. Copy the newest to a computer, e.g. from a Windows folder:

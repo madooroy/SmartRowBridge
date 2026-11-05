@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Back up what lives only on the Pi into one dated file, for copying to the laptop:
 #
-#   bash ~/smartrow-bridge/tools/backup_pi.sh            # -> ~/smartrow-backups/pi-backup-YYYY-MM-DD-HHMM.tar.gz
-#   bash ~/smartrow-bridge/tools/backup_pi.sh --peloton  # also the Peloton class cache (~100+ MB; it can be
-#                                                         # downloaded again, so it is left out by default)
+#   bash ~/smartrow-bridge/tools/backup_pi.sh               # -> ~/smartrow-backups/pi-backup-YYYY-MM-DD-HHMM.tar.gz
+#   bash ~/smartrow-bridge/tools/backup_pi.sh --no-peloton  # without the Peloton class cache (~100+ MB),
+#                                                            # for a small, quick backup of the rows
 #
 # In it: the rows (/var/lib/smartrow-bridge: sessions, strokes, the sessions log, the Classes index),
 # the bridge settings (/etc/default/smartrow-bridge), the Pi's own changes outside git (boot config,
-# NetworkManager drop-ins, the service files), logs in your home folder, the Peloton reports, and a
+# NetworkManager drop-ins, the service files), logs in your home folder, the Peloton class cache
+# (it takes a while to download again, and needs a token) and reports, and a
 # MANIFEST.txt saying what the code was (git commit, any local edits) and what is in the file.
 #
 # Never in it: the intervals.icu key and Strava tokens (/etc/smartrow-bridge, root-only), saved Wi-Fi
@@ -22,11 +23,11 @@ ROOT="${SRB_BACKUP_ROOT:-}"            # tests only: read everything under this 
 REPO="${SRB_BACKUP_REPO:-$HOME/smartrow-bridge}"
 OUT_DIR="${SRB_BACKUP_DIR:-$HOME/smartrow-backups}"
 KEEP=5
-PELOTON=0
+PELOTON=1
 for arg in "$@"; do
     case "$arg" in
-        --peloton) PELOTON=1 ;;
-        -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+        --no-peloton) PELOTON=0 ;;
+        -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
         *) echo "Unknown option: $arg (try --help)" >&2; exit 2 ;;
     esac
 done
@@ -89,7 +90,7 @@ find "$dest" \( -path '*/smartrow-bridge/intervals.key' -o -name 'strava.json' -
     rows=0
     for s in "${sessions[@]}"; do [[ "$s" == *.strokes.json ]] || rows=$((rows + 1)); done
     echo "Rows (session records): $rows"
-    echo "Peloton class cache included: $([[ $PELOTON == 1 ]] && echo yes || echo 'no (--peloton to include)')"
+    echo "Peloton class cache included: $([[ $PELOTON == 1 ]] && echo yes || echo 'no (--no-peloton)')"
     echo "Left out on purpose: /etc/smartrow-bridge (intervals.icu key, Strava tokens), saved Wi-Fi passwords, SSH keys."
     if (( ${#missing[@]} )); then
         echo "Not copied:"

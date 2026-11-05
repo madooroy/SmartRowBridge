@@ -38,7 +38,7 @@ class BackupPiTest(unittest.TestCase):
             (home / ".ssh" / "id_ed25519").write_text("secret")
             env = dict(os.environ, HOME=str(home), SRB_BACKUP_ROOT=str(root),
                        SRB_BACKUP_REPO=str(home / "smartrow-bridge"), SRB_BACKUP_DIR=str(home / "backups"))
-            out = subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True)
+            out = subprocess.run(["bash", str(SCRIPT), "--no-peloton"], env=env, capture_output=True, text=True)
             self.assertEqual(out.returncode, 0, out.stderr)
             self.assertIn("rows: 1", out.stdout)
             [archive] = list((home / "backups").glob("pi-backup-*.tar.gz"))
@@ -55,8 +55,8 @@ class BackupPiTest(unittest.TestCase):
                 self.assertNotIn(never, joined)
             self.assertIn("Rows (session records): 1", manifest)
             self.assertIn("Left out on purpose", manifest)
-            # --peloton adds the class cache
-            subprocess.run(["bash", str(SCRIPT), "--peloton"], env=env, check=True, capture_output=True)
+            # by default the class cache is in it (it takes a while to download again)
+            subprocess.run(["bash", str(SCRIPT)], env=env, check=True, capture_output=True)
             newest = max((home / "backups").glob("pi-backup-*.tar.gz"), key=lambda p: p.stat().st_mtime)
             with tarfile.open(newest) as t:
                 self.assertTrue(any("peloton-cache/catalogue.json" in n for n in t.getnames()))
