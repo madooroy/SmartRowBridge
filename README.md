@@ -736,7 +736,9 @@ short classes, to spot names it missed; it writes `peloton-report/drills.csv`.
 `fetch --drills` then downloads only their plans. After `index`, the Classes screen lists them as the
 "Form & drills" class type (Peloton's Form & Drills, Form Fixer and Intro to Form classes, kept from 5 min
 although other classes start at 20), with a filter for the part of the stroke the title names (the
-recovery, catch, drive or finish). They are left out of the two-class builder.
+recovery, catch, drive or finish). The two-class builder can start with a drill class (any, or one part of
+the stroke) followed by a full class: the second follows the class type chosen above, any type while that is
+Form & drills. Choosing Form & drills (and a part) sets the builder to start with that drill.
 
 `fetch`, `history` and `update` ask for a token (hidden; never printed or saved): sign in at
 members.onepeloton.com, press F12, Network, reload, filter on `api.onepeloton`, click a `me`

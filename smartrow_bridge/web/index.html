@@ -344,9 +344,19 @@
             <option value="0.70,0.76">hard (0.70 to 0.76)</option>
             <option value="0.76,9">very hard (0.76 and up)</option>
           </select>
-          <label class="chip"><input type="checkbox" id="sEnd" checked>start with an Endurance class</label>
+          <select id="sFirst" aria-label="First class">
+            <option value="">start with any class</option>
+            <option value="end" selected>start with an Endurance class</option>
+            <option value="drill">start with a drill class</option>
+            <option value="drill:Recovery">start with a drill: the recovery</option>
+            <option value="drill:Catch">start with a drill: the catch</option>
+            <option value="drill:Drive">start with a drill: the drive</option>
+            <option value="drill:Finish">start with a drill: the finish</option>
+            <option value="drill:Whole stroke">start with a drill: whole stroke</option>
+          </select>
         </div>
-        <div class="hint">Pairs that add up to the length, easier class first, from the instructors ticked above.</div>
+        <div class="hint">Pairs that add up to the length, from the instructors ticked above. Without a drill, the easier class
+          comes first. After a drill, the second class follows the class type chosen above (any type while that is Form &amp; drills).</div>
         <div id="cPairs"></div>
       </details>
       <div class="hint" id="cLike" hidden></div>
@@ -974,8 +984,8 @@ async function openClassesView() {
       .map((w) => `<label><input type="checkbox" value="${esc(w)}">${esc(w)} <span class="csub">${counts[w]}</span></label>`).join("")
       + `<button id="cWhoAll" type="button">All instructors</button>`;
     $("cGroup").innerHTML = opt("", "All class types") + [...new Set(pel.map((c) => c.g))].sort().map((g) => opt(g, g)).join("");
-    const full = pel.filter((c) => c.g !== DRILLS);
-    const sums = [...new Set(full.flatMap((a) => full.map((b) => a.m + b.m)))].filter((m) => m >= 40).sort((a, b) => a - b);
+    const full = pel.filter((c) => c.g !== DRILLS), firsts = full.concat(pel.filter((c) => c.g === DRILLS));
+    const sums = [...new Set(firsts.flatMap((a) => full.map((b) => a.m + b.m)))].filter((m) => m >= 40).sort((a, b) => a - b);
     $("sLen").innerHTML = sums.map((m) => `<option value="${m}" ${m === 50 ? "selected" : ""}>${m} min in all</option>`).join("");
     $("cKey").innerHTML = Object.values(LEVELS).map(([n, col]) => `<span><i style="background:${col}"></i>${n}</span>`).join("")
       + `<span><i style="height:2px;background:${C.faint}"></i>no target</span><span>- - - Challenging</span>`;
@@ -987,9 +997,9 @@ async function openClassesView() {
   renderClasses();
 }
 
-function classFilter(ignoreLength = false) {
+function classFilter(ignoreLength = false, ignoreGroup = false) {
   const lens = [...$("cLen").querySelectorAll("input:checked")].map((x) => +x.value);
-  const who = [...$("cWho").querySelectorAll("input:checked")].map((x) => x.value), group = $("cGroup").value, hard = $("cHard").value, max = $("cMax").value;
+  const who = [...$("cWho").querySelectorAll("input:checked")].map((x) => x.value), group = ignoreGroup ? "" : $("cGroup").value, hard = $("cHard").value, max = $("cMax").value;
   const q = $("cSearch").value.trim().toLowerCase(), taken = $("cTaken").value, part = $("cPart").value;
   return (c) => (!taken || (taken === "yes" ? c.n > 0 : taken === "no" ? !c.n : c.fav)) && (ignoreLength || lens.includes(c.m)) && (!who.length || who.includes(c.i)) && (!group || c.g === group)
     && (group !== DRILLS || !part || c.fp === part)
@@ -1095,12 +1105,17 @@ function renderClasses() {
 
 // Two classes back to back that add up to the chosen length, easier first, at the chosen intensity.
 function renderPairs() {
-  const total = +$("sLen").value, [lo, hi] = $("sHow").value.split(",").map(Number), endFirst = $("sEnd").checked;
-  const pool = pel.filter(classFilter(true)).filter((c) => c.g !== DRILLS), mid = (lo + Math.min(hi, 1)) / 2, found = [];
-  for (const a of pool) {
-    if (endFirst && a.g !== "Endurance") continue;
+  const total = +$("sLen").value, [lo, hi] = $("sHow").value.split(",").map(Number), first = $("sFirst").value;
+  const drillFirst = first.startsWith("drill"), part = first.split(":")[1];
+  // The second class: the filters above, but never a drill, and after a drill any type while the type is Form & drills.
+  const pool = pel.filter(classFilter(true, drillFirst && $("cGroup").value === DRILLS)).filter((c) => c.g !== DRILLS);
+  const who = [...$("cWho").querySelectorAll("input:checked")].map((x) => x.value);
+  const firsts = drillFirst ? pel.filter((c) => c.g === DRILLS && (!part || c.fp === part) && (!who.length || who.includes(c.i)))
+    : pool.filter((c) => first !== "end" || c.g === "Endurance");
+  const mid = (lo + Math.min(hi, 1)) / 2, found = [];
+  for (const a of firsts) {
     for (const b of pool) {
-      if (a === b || a.m + b.m !== total || a.if > b.if) continue;
+      if (a === b || a.m + b.m !== total || (!drillFirst && a.if > b.if)) continue;
       const v = Math.sqrt((a.if ** 2 * a.len + b.if ** 2 * b.len) / (a.len + b.len));
       if (v >= lo && v < hi) found.push([Math.abs(v - mid), v, a, b]);
     }
@@ -1126,12 +1141,14 @@ $("cBack").addEventListener("click", closeSessionView);
 $("cGroup").addEventListener("change", () => {
   const drills = $("cGroup").value === DRILLS;
   $("cPart").hidden = !drills;
+  if (drills) $("sFirst").value = "drill" + ($("cPart").value ? `:${$("cPart").value}` : "");
   if (!drills) $("cPart").value = "";
   else {  // tick the drill classes' lengths so they show (10 min is off by default)
     const lens = new Set(pel.filter((c) => c.g === DRILLS).map((c) => String(c.m)));
     for (const x of $("cLen").querySelectorAll("input")) if (lens.has(x.value)) x.checked = true;
   }
 });
+$("cPart").addEventListener("change", () => { $("sFirst").value = "drill" + ($("cPart").value ? `:${$("cPart").value}` : ""); });
 for (const id of ["cSort", "cWho", "cGroup", "cPart", "cHard", "cMax", "cTaken"]) $(id).addEventListener("change", () => { pelShown = 100; renderClasses(); });
 $("cSearch").addEventListener("input", () => { pelShown = 100; renderClasses(); });
 $("cLen").addEventListener("change", () => { pelShown = 100; renderClasses(); });
@@ -1142,7 +1159,7 @@ $("cWho").addEventListener("click", (e) => {
 });
 document.addEventListener("click", (e) => { if (!e.target.closest("#cWhoDD")) $("cWhoDD").open = false; });
 $("cMore").addEventListener("click", () => { pelShown += 100; renderClasses(); });
-for (const id of ["sLen", "sHow", "sEnd"]) $(id).addEventListener("change", renderPairs);
+for (const id of ["sLen", "sHow", "sFirst"]) $(id).addEventListener("change", renderPairs);
 $("cStack").addEventListener("toggle", () => { if ($("cStack").open) renderPairs(); });
 $("cList").addEventListener("click", (e) => {
   const link = e.target.closest("a[data-session]");
