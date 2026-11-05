@@ -1,3 +1,5 @@
 # Tested with bleak 3.0.2 and bumble 0.0.235 on Raspberry Pi OS (Debian 13, Python 3.13).
 bleak>=0.22
 bumble>=0.0.190
+# Activity files for the optional intervals.icu / Strava uploads (pure Python)
+fit-tool==0.9.16

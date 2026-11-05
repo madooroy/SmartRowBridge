@@ -8,3 +8,8 @@ __pycache__/
 *.pyc
 __pycache__/
 *.log
+
+# Other rowers' exports, replays and pictures: private, shared with us for testing only.
+friend-data/
+peloton-cache/
+peloton-report/

@@ -1,0 +1,5 @@
+# Optional: form from side-on video (tools/pose_video.py). For a laptop or desktop, not the Pi.
+# The pose model itself is downloaded once from storage.googleapis.com on first use.
+mediapipe>=0.10.14
+opencv-python-headless>=4.8
+numpy>=1.26

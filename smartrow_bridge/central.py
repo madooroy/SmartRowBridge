@@ -24,6 +24,7 @@ _SKIP_SERVICES = {
 
 RETRY_DELAY_S = 5
 CONNECT_TIMEOUT_S = 10.0
+WRITE_TIMEOUT_S = 5.0  # a write that takes longer is given up, so later writes aren't held up
 WRITE_GAP_S = 0.03  # spacing between single-byte command writes
 
 NotifyCallback = Callable[[str, int, bytes], None]  # (char uuid, handle, raw data)
@@ -49,6 +50,7 @@ class PulleyLink:
         self.exclude_addresses = {a.upper() for a in exclude_addresses}
         self.on_notify = on_notify
         self.on_connected: Callable[[], None] = lambda: None
+        self.scan_lock = asyncio.Lock()  # shared with the heart rate strap: one scan at a time
 
         self._client: BleakClient | None = None
         self._disconnected = asyncio.Event()
@@ -78,8 +80,9 @@ class PulleyLink:
                 found.set_result((device, adv))
 
         log.info("Scanning on %s for the SmartRow pulley...", self.adapter)
-        async with BleakScanner(detected, adapter=self.adapter):
-            return await found
+        async with self.scan_lock:
+            async with BleakScanner(detected, adapter=self.adapter):
+                return await found
 
     async def _connect(self, device: BLEDevice) -> BleakClient:
         self._disconnected.clear()
@@ -170,8 +173,8 @@ class PulleyLink:
                 log.debug("Dropping write to handle %d while disconnected", handle)
                 continue
             try:
-                await self._client.write_gatt_char(handle, data, response=response)
-            except Exception as exc:  # noqa: BLE001
+                await asyncio.wait_for(self._client.write_gatt_char(handle, data, response=response), WRITE_TIMEOUT_S)
+            except Exception as exc:  # noqa: BLE001 - including a write that hangs
                 log.warning("Write to pulley failed: %s", exc)
             if len(data) == 1:
                 await asyncio.sleep(WRITE_GAP_S)
@@ -183,7 +186,16 @@ class PulleyLink:
             client = self._client
             while True:
                 if client is not None and client.is_connected:
-                    await self._subscribe(client)
+                    try:
+                        await self._subscribe(client)
+                    except Exception as exc:  # noqa: BLE001 - BlueZ can refuse right after a reconnect
+                        log.warning("Subscribing to the pulley failed: %s; reconnecting", _describe(exc))
+                        try:
+                            await client.disconnect()
+                        except Exception:  # noqa: BLE001
+                            pass
+                        client = None
+                if client is not None and client.is_connected:
                     self.on_connected()
                     # BlueZ can fire a disconnect callback right after connecting while the
                     # link stays up (seen on a cold boot: data kept flowing). Only a link

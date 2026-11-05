@@ -1,0 +1,1094 @@
+import unittest
+
+from smartrow_bridge import coach
+from smartrow_bridge.coach import IntervalCoach, back_share
+from smartrow_bridge.protocol import StrokeCurve
+
+# Average curves (N) from a real 45-minute session: steady rowing, an effort that kept
+# its shape, and one whose strokes went 2-3 % shorter (same shape over fewer samples: the
+# samples are spaced by distance).
+STEADY = [131, 210, 286, 344, 389, 422, 445, 465, 467, 455, 430, 401, 375, 340, 295, 246, 196, 148, 104, 68, 32,
+          7, 0, 0]
+FULL = [143, 232, 325, 401, 467, 520, 566, 593, 612, 604, 575, 537, 502, 461, 402, 337, 272, 211, 153, 100, 63, 28,
+        0, 0]
+SHORT = [176, 295, 414, 512, 593, 656, 696, 714, 701, 666, 613, 550, 492, 416, 339, 269, 203, 146, 95, 51, 14, 2,
+         0, 0]
+# The steady shape with the back half of the drive weakened (30 % less force there): a fading finish.
+FADED = [round(v * (0.7 if 11 <= i <= 19 else 1)) for i, v in enumerate(STEADY)]
+# Steady shape pushed 3 samples later: the force builds later in the drive (a late push).
+LATE = [40, 80, 131, 210, 286, 344, 389, 422, 445, 465, 467, 455, 430, 401, 375, 340, 295, 246, 196, 148, 104, 68,
+        32, 7]
+RATE = 21.0
+PERIOD = 60 / RATE
+
+
+class Rower:
+    """Feeds strokes to a coach, 21 spm."""
+
+    def __init__(self, settings: coach.CoachSettings = coach.DEFAULT_SETTINGS, ftp=None) -> None:
+        self.coach = IntervalCoach(settings, ftp=ftp)
+        self.t = 0.0
+        self.count = 0
+        self.summaries = []
+
+    def row(self, n: int, watts: float, curve=STEADY, length: int = 115) -> None:
+        for _ in range(n):
+            self.t += PERIOD
+            self.count += 1
+            work = watts * 60 / RATE
+            s = StrokeCurve(time=self.t, force_n=list(curve), stroke_rate_spm=RATE, stroke_length_cm=length,
+                            work_j=work, stroke_count=self.count)
+            summary = self.coach.add(s)
+            if summary:
+                self.summaries.append(summary)
+
+    def state(self) -> dict:
+        return self.coach.state(self.t)
+
+
+class CoachTest(unittest.TestCase):
+    def test_back_share(self):
+        self.assertAlmostEqual(back_share(STEADY), 0.39, places=2)  # of its own drive
+        self.assertAlmostEqual(back_share(FADED) / back_share(STEADY), 0.82, places=2)
+        self.assertGreater(back_share(SHORT) / back_share(STEADY), 0.94)  # shorter, not fading
+        self.assertEqual(back_share([0] * 24), 0.0)
+
+    def test_warmup_then_steady(self):
+        r = Rower()
+        r.row(10, 110)
+        self.assertEqual(r.state()["mode"], "warmup")
+        r.row(30, 110)
+        st = r.state()
+        self.assertEqual(st["mode"], "steady")
+        self.assertEqual(st["steady_power_w"], 110)
+        self.assertIsNone(st["last"])
+
+    def test_effort_detected_summarised_and_logged(self):
+        r = Rower()
+        r.row(60, 110)
+        with self.assertLogs("smartrow_bridge.coach", "INFO") as logs:
+            r.row(21, 152, FULL, length=119)  # 1 minute
+            self.assertEqual(r.state()["mode"], "interval")
+            r.row(15, 110)
+        self.assertEqual(len(r.summaries), 1)
+        s = r.summaries[0]
+        self.assertEqual(s.strokes, 21)  # the hard strokes only: start back-dated, easy ones dropped
+        self.assertAlmostEqual(s.duration_s, 60, delta=1)
+        self.assertAlmostEqual(s.power_w, 152, delta=1)
+        self.assertEqual(s.rating, "good")
+        self.assertEqual(s.length_delta_cm, 4)
+        self.assertIn("Interval 1: 1:00, 21 strokes, 152 W", logs.output[0])
+        st = r.state()
+        self.assertEqual(st["mode"], "steady")
+        self.assertTrue(st["show_summary"])
+        self.assertEqual(st["last"]["index"], 1)
+        self.assertEqual(st["steady_power_w"], 110)  # the effort never taught the steady reference
+
+    def test_summary_goes_away(self):
+        r = Rower()
+        r.row(60, 110)
+        r.row(21, 152, FULL)
+        r.row(10, 110)
+        self.assertTrue(r.state()["show_summary"])
+        r.row(30, 110)
+        st = r.state()
+        self.assertFalse(st["show_summary"])
+        self.assertEqual(st["last"]["index"], 1)  # still there for the X button
+
+    def test_short_burst_is_not_an_interval(self):
+        r = Rower()
+        r.row(60, 110)
+        r.row(5, 170)
+        r.row(20, 110)
+        self.assertEqual(r.summaries, [])
+
+    def test_slow_warmup_does_not_start_an_interval(self):
+        """Warming up at 75 W before settling at 96 W is not an effort."""
+        r = Rower()
+        for watts in (70, 75, 80, 85, 90, 94):
+            r.row(10, watts)
+        r.row(300, 96)
+        self.assertEqual(r.summaries, [])
+        self.assertEqual(r.state()["mode"], "steady")
+
+    def test_long_rise_becomes_the_new_steady(self):
+        r = Rower()
+        r.row(60, 100)
+        r.row(120, 135)  # > 5 minutes harder: a new pace, not an interval
+        self.assertEqual(r.summaries, [])
+        self.assertEqual(r.state()["mode"], "steady")
+        self.assertGreater(r.state()["steady_power_w"], 125)
+
+    def test_live_cue_finish(self):
+        r = Rower()
+        r.row(60, 110)
+        r.row(3, 155, FADED, length=112)
+        self.assertIsNone(r.state()["live"]["cue"])  # too early to judge
+        self.assertIsNone(r.state()["live"]["finish_pct"])
+        r.row(8, 155, FADED, length=112)
+        live = r.state()["live"]
+        self.assertEqual(live["cue"], "finish")
+        self.assertLess(live["finish_pct"], -12)
+        self.assertEqual(live["length_delta_cm"], -3)
+        self.assertEqual(live["index"], 1)
+        self.assertEqual(len(live["curve"]), 24)
+        r.row(30, 155, FADED, length=112)
+        r.row(15, 110)
+        self.assertEqual(r.summaries[0].rating, "short")
+        self.assertLess(r.summaries[0].finish_pct, -12)
+
+    def test_live_cue_legs(self):
+        r = Rower()
+        r.row(60, 110)
+        r.row(12, 150, LATE)
+        self.assertEqual(r.state()["live"]["cue"], "legs")
+        with self.assertLogs("smartrow_bridge.coach", "INFO") as logs:
+            r.row(10, 150, LATE)
+            r.row(15, 110)
+        s = r.summaries[0]
+        self.assertTrue(s.legs_late)
+        self.assertTrue(s.as_dict()["legs_late"])
+        self.assertIn("late push", logs.output[0])
+
+    def test_shape_is_measured_on_the_strokes_own_drive(self):
+        """The samples are spaced by distance: a shorter stroke ends sooner, which is LONGER STROKES, not
+        a weaker finish or a later push."""
+        # Real: Saturday's efforts with strokes 2-3 % shorter, against steady.
+        self.assertLess(coach.drive_end(SHORT), coach.drive_end(STEADY))
+        self.assertGreater(coach.back_share(SHORT) / coach.back_share(STEADY), 1 - (1 - coach.FINISH_CUE) / 2)
+        self.assertLess(abs(coach.drive_lateness(SHORT, STEADY)), coach.LEGS_CUE)
+        self.assertLess(abs(coach.drive_lateness(FULL, STEADY)), coach.LEGS_CUE)
+        self.assertGreater(coach.drive_lateness(LATE, STEADY), coach.LEGS_CUE)
+
+    def test_live_cue_good_and_length(self):
+        r = Rower()
+        r.row(60, 110)
+        r.row(12, 152, FULL, length=118)
+        self.assertEqual(r.state()["live"]["cue"], "good")
+        r.row(10, 152, FULL, length=110)
+        self.assertEqual(r.state()["live"]["cue"], "length")
+
+    def test_stopping_ends_the_effort(self):
+        r = Rower()
+        r.row(60, 110)
+        r.row(20, 152, FULL)
+        st = r.coach.state(r.t + coach.GAP_S + 1)
+        self.assertEqual(st["mode"], "steady")
+        self.assertEqual(st["last"]["strokes"], 20)
+
+    def test_new_session_starts_over(self):
+        r = Rower()
+        r.row(60, 110)
+        r.row(21, 152, FULL)
+        r.row(15, 110)
+        r.count = 0  # SmartRow app started a new session
+        r.row(1, 110)
+        st = r.state()
+        self.assertEqual((st["mode"], st["intervals"], st["last"]), ("warmup", 0, None))
+
+
+class FtpTest(unittest.TestCase):
+    def test_long_effort_counts_with_an_ftp(self):
+        """A 6-minute effort: a new steady pace without an FTP, an interval with one."""
+        for ftp, found in ((None, 0), (185, 1)):
+            r = Rower(ftp=ftp)
+            r.row(60, 105)
+            r.row(130, 145)  # about 6 minutes at 21 spm
+            r.row(30, 105)
+            self.assertEqual(len(r.summaries), found, ftp)
+        self.assertEqual(r.summaries[0].as_dict()["ftp_pct"], 78)
+        self.assertIn("Efforts: 1 Moderate (145 W).", coach.findings([{**r.summaries[0].as_dict(), "started_at_s": 0}]))
+
+    def test_warmup_below_the_floor_is_not_an_effort(self):
+        r = Rower(ftp=185)
+        r.row(40, 80)  # easy start
+        r.row(200, 105)  # into steady rowing: 31 % more, but under Moderate (67 % of FTP)
+        self.assertEqual(r.summaries, [])
+        self.assertIsNone(r.state().get("live"))
+
+    def test_upper_easy_steady_with_an_ftp_still_finds_the_effort(self):
+        """Steady at 64% of FTP put steady + 10% above the start: efforts ended as soon as they began."""
+        r = Rower(ftp=250)
+        r.row(80, 160)
+        c = r.coach
+        self.assertLess(c._end_at(), c._start_at(c.steady_power()) - 7)
+        r.row(60, 200)  # about 3 minutes, Moderate
+        r.row(40, 160)
+        self.assertEqual(len(r.summaries), 1)
+        self.assertGreater(r.summaries[0].as_dict()["duration_s"], 150)
+
+    def test_fixed_ftp_setting(self):
+        from smartrow_bridge.bridge import _fixed_ftp
+        self.assertEqual(_fixed_ftp("185"), 185.0)
+        for unset in ("", "auto", "off", "0"):
+            self.assertIsNone(_fixed_ftp(unset))
+
+
+class LiveDriftTest(unittest.TestCase):
+    def test_a_fade_against_the_fresh_stroke_is_noted(self):
+        r = Rower(ftp=185)
+        r.row(220, 105)  # past the fresh stroke (2 to 8 min) and 60 strokes beyond it
+        self.assertIsNone(r.state()["drift"])
+        r.row(60, 105, length=111)  # 4 cm shorter than the fresh stroke
+        self.assertEqual(r.state()["drift"], "Easy: strokes 4 cm shorter than at the start")
+        r.row(60, 105, curve=FADED)  # length back, finish lighter
+        self.assertRegex(r.state()["drift"], r"^Easy: finish \d+% lighter than at the start$")
+
+    def test_quiet_for_small_changes_longer_strokes_and_during_efforts(self):
+        r = Rower(ftp=185)
+        r.row(220, 105)
+        r.row(60, 105, length=113)  # 2 cm: within the scatter
+        self.assertIsNone(r.state()["drift"])
+        r.row(60, 105, length=121)  # longer: nothing to fix
+        self.assertIsNone(r.state()["drift"])
+        r.row(60, 105, length=110)
+        self.assertIsNotNone(r.state()["drift"])
+        r.row(10, 150)
+        self.assertIsNone(r.state()["drift"])  # an effort: the interval screen, not this
+
+    def test_not_before_the_fresh_stroke_is_done(self):
+        r = Rower(ftp=185)
+        r.row(100, 105, length=105)
+        self.assertIsNone(r.state()["drift"])
+
+
+class ThresholdsTest(unittest.TestCase):
+    def test_saved_with_the_session_and_follow_the_settings(self):
+        import json
+        t = IntervalCoach(ftp=185).session_summary()["thresholds"]
+        json.dumps(t)  # it goes into the session file
+        self.assertEqual((t["stall"]["flat"], t["local_easy"], t["cues"]["sensitivity"]), (coach.STALL_FLAT, 40, "normal"))
+        high = IntervalCoach(coach.CoachSettings(sensitivity="high")).session_summary()["thresholds"]
+        self.assertEqual(high["cues"]["finish"], [coach.SENSITIVITY["high"].finish_cue, coach.SENSITIVITY["high"].finish_clear])
+
+
+class FtpReadOnceTest(unittest.TestCase):
+    def test_read_once_retrying_until_online(self):
+        import asyncio
+        import types
+        from unittest import mock
+        from smartrow_bridge import bridge, intervals
+        zones = {"tops": [130, 150, 165, 175, 185], "names": ["Z1", "Z2", "Z3", "Z4", "Z5"]}
+        answers = [OSError("offline"), {"ftp": 185.0, "max_hr": 185, "hr_zones": zones}]
+        calls = []
+
+        def fake(key):
+            calls.append(key)
+            a = answers.pop(0)
+            if isinstance(a, Exception):
+                raise a
+            return a
+
+        b = types.SimpleNamespace(cfg=types.SimpleNamespace(intervals_key_file="x"), coach=IntervalCoach())
+        with mock.patch.object(intervals, "rowing_settings", fake), mock.patch.object(intervals, "read_key", lambda f: "k"), \
+                mock.patch.object(bridge, "FTP_RETRY_S", 0.01), self.assertLogs("smartrow_bridge.bridge"):
+            asyncio.run(bridge.Bridge._ftp_loop(b))  # returns once it has an answer
+        self.assertEqual((len(calls), b.coach.ftp), (2, 185.0))
+        self.assertEqual(b.coach.hr_zones, {**zones, "max_hr": 185})
+        self.assertEqual(b.coach.session_summary()["hr_zones"]["tops"][-1], 185)
+
+    def test_a_refused_key_is_retried_only_hourly(self):
+        import asyncio
+        import types
+        import urllib.error
+        from unittest import mock
+        from smartrow_bridge import bridge, intervals
+        answers = [urllib.error.HTTPError("u", 401, "Unauthorized", {}, None), {"ftp": 185.0, "max_hr": None, "hr_zones": None}]
+        waits = []
+
+        async def sleep(s):
+            waits.append(s)
+
+        def fake(key):
+            a = answers.pop(0)
+            if isinstance(a, Exception):
+                raise a
+            return a
+
+        b = types.SimpleNamespace(cfg=types.SimpleNamespace(intervals_key_file="x"), coach=IntervalCoach())
+        with mock.patch.object(intervals, "rowing_settings", fake), \
+                mock.patch.object(intervals, "read_key", lambda f: "k"), mock.patch.object(bridge.asyncio, "sleep", sleep), \
+                self.assertLogs("smartrow_bridge.bridge"):
+            asyncio.run(bridge.Bridge._ftp_loop(b))
+        self.assertEqual(waits, [bridge.FTP_REFUSED_RETRY_S])
+
+    def test_rowing_settings_from_intervals_icu(self):
+        from unittest import mock
+        from smartrow_bridge import intervals
+        me = {"sportSettings": [{"types": ["Ride"], "ftp": 250, "hr_zones": [1, 2]},
+                                {"types": ["Rowing", "VirtualRow"], "ftp": 180, "indoor_ftp": 185, "max_hr": 182, "w_prime": 19300,
+                                 "hr_zones": [128, 146, 155, 164, 170, 175, 182],
+                                 "hr_zone_names": ["Recovery", "Aerobic", "Tempo", "SubThreshold",
+                                                   "SuperThreshold", "Aerobic Capacity", "Anaerobic"]}]}
+        with mock.patch.object(intervals, "_request", lambda *a, **k: me):
+            got = intervals.rowing_settings("k")
+            self.assertEqual(intervals.rowing_ftp("k"), 185.0)
+        self.assertEqual((got["ftp"], got["max_hr"], got["hr_zones"]["tops"][0], got["hr_zones"]["names"][-1],
+                          got["w_prime"]), (185.0, 182, 128, "Anaerobic", 19300.0))
+        with mock.patch.object(intervals, "_request", lambda *a, **k: {"sportSettings": []}):
+            self.assertEqual(intervals.rowing_settings("k"), {"ftp": None, "w_prime": None, "max_hr": None,
+                                                                 "hr_zones": None})
+
+    def test_fixed_ftp_still_reads_the_heart_rate_zones(self):
+        import asyncio
+        import types
+        from unittest import mock
+        from smartrow_bridge import bridge, intervals
+        b = types.SimpleNamespace(cfg=types.SimpleNamespace(intervals_key_file="x"), coach=IntervalCoach(ftp=170))
+        answer = {"ftp": 185.0, "max_hr": None, "hr_zones": {"tops": [140, 160], "names": []}}
+        with mock.patch.object(intervals, "rowing_settings", lambda k: answer), \
+                mock.patch.object(intervals, "read_key", lambda f: "k"), self.assertLogs("smartrow_bridge.bridge"):
+            asyncio.run(bridge.Bridge._ftp_loop(b, read_ftp=False))
+        self.assertEqual((b.coach.ftp, b.coach.hr_zones["tops"]), (170, [140, 160]))  # the FTP set here stays
+
+
+class IntensityTest(unittest.TestCase):
+    def test_challenging_judged_against_its_usual_shape(self):
+        """A 10 % lighter finish is usual at Challenging, so it reads as on target (+3 %); the same
+        at Moderate is reported as lighter (-7 %: within "ok", so no cue yet, but not absorbed)."""
+        lighter = [round(v * (0.88 if 11 <= i <= 19 else 1)) for i, v in enumerate(STEADY)]  # ~10 % less back half
+        for watts, expected, finish in ((190, 0.90, 3), (145, 1.0, -7)):
+            r = Rower(ftp=185)
+            r.row(80, 105)
+            r.row(20, watts, lighter)
+            live = r.state()["live"]
+            self.assertEqual(live["cue"], "good", watts)
+            self.assertEqual((r.coach.expected(live["intensity"]), live["finish_pct"]), (expected, finish), watts)
+
+    def test_usual_finish_learned_from_saved_rows(self):
+        import tempfile
+        import time as _time
+        from smartrow_bridge import sessions
+        with tempfile.TemporaryDirectory() as d:
+            now = _time.time()
+            for k, ratio in enumerate((0.82, 0.86, 0.84, 0.95)):
+                started = now - (k + 1) * 86400
+                sessions.save(d, {"id": sessions.session_id(started), "started_at": started,
+                                  "fresh_easy": saved_stroke() if k == 0 else None,
+                                  "intervals": [{"intensity": "Challenging", "easy_finish_ratio": ratio,
+                                                 "reference": "local"},
+                                                {"intensity": "Moderate", "easy_finish_ratio": 0.99,
+                                                 "reference": "local"},
+                                                # judged against the fresh stroke (before Oct 29): not learned from
+                                                {"intensity": "Max", "easy_finish_ratio": 0.70}]})
+            self.assertEqual(sessions.learned_finish(d, now), {"Challenging": 0.85, "Moderate": 0.99})
+            ref = sessions.latest_fresh_easy(d, now)
+            self.assertEqual(ref["expect"]["Challenging"], 0.85)
+            c = IntervalCoach(ftp=185, reference=lambda: ref)
+            self.assertEqual((c.expected("Challenging"), c.expected("Max")), (0.85, 0.85))
+
+    def test_effort_that_steps_up_is_split(self):
+        r = Rower(ftp=185)
+        r.row(80, 105)
+        r.row(50, 145)  # Moderate ...
+        r.row(20, 190)  # ... then Challenging
+        r.row(20, 105)
+        self.assertEqual([(s.intensity, s.strokes) for s in r.summaries[-1:]], [("Challenging", 20)])
+        self.assertEqual([s.intensity for s in r.coach.intervals], ["Moderate", "Challenging"])
+        self.assertAlmostEqual(r.coach.intervals[0].strokes, 50, delta=2)
+
+    def test_short_surge_stays_in_the_effort(self):
+        r = Rower(ftp=185)
+        r.row(80, 105)
+        r.row(30, 145)
+        r.row(8, 190)  # a short push: not a step
+        r.row(30, 145)
+        r.row(20, 105)
+        self.assertEqual([s.intensity for s in r.coach.intervals], ["Moderate"])
+
+    def test_stray_pulls_before_a_pause_are_dropped(self):
+        r = Rower()
+        r.row(1, 60)
+        r.t += 100  # setting up: a pull on the handle, then the class starts
+        r.row(5, 105)
+        self.assertEqual(r.coach.strokes_total, 5)
+        self.assertAlmostEqual(r.coach.first_time, r.t - 4 * PERIOD)
+
+    def test_bands_in_watts(self):
+        self.assertEqual(coach.bands_text(185, None), "Recovery under 81 W, Easy 81\u2013124 W, "
+                         "Moderate 124\u2013165 W, Challenging 165\u2013209 W, Max over 209 W")
+        self.assertTrue(coach.bands_text(None, 100).startswith("Recovery under 80 W, Easy 80\u2013122 W"))
+        self.assertEqual(coach.bands_text(None, None), "")
+
+    def test_labels_by_percent_of_ftp(self):
+        c = IntervalCoach(ftp=185)
+        for watts, label in ((70, "Recovery"), (100, "Easy"), (145, "Moderate"), (185, "Challenging"),
+                             (230, "Max")):
+            self.assertEqual(c.intensity(watts), label, watts)
+
+    def test_no_time_limit_with_an_ftp(self):
+        self.assertEqual(IntervalCoach(ftp=185).max_effort_s, float("inf"))
+        self.assertEqual(IntervalCoach().max_effort_s, 300)
+        r = Rower(ftp=185)
+        r.row(60, 105)
+        r.row(400, 150)  # about 19 minutes at Moderate
+        r.row(30, 105)
+        self.assertEqual(len(r.summaries), 1)
+        self.assertEqual(r.summaries[0].as_dict()["intensity"], "Moderate")
+        self.assertGreater(r.summaries[0].duration_s, 18 * 60)
+
+    def test_easy_and_recovery_in_state(self):
+        r = Rower(ftp=185)
+        r.row(60, 105)
+        self.assertEqual(r.state()["intensity"], "Easy")
+        r.row(20, 60)
+        self.assertEqual(r.state()["intensity"], "Recovery")
+        self.assertIsNone(r.state()["cue"])  # no cues in Recovery
+
+
+def saved_stroke(length=115.0, curve=STEADY):
+    return {"curve": list(map(float, curve)), "back_share": back_share(curve), "length_cm": length, "strokes": 80}
+
+
+class EasyCueTest(unittest.TestCase):
+    def test_nothing_saved_learns_todays_fresh_stroke(self):
+        r = Rower(ftp=185)
+        r.row(40, 105)  # the warm-up: no Easy cues in the first 2 minutes
+        self.assertIsNone(r.state()["cue"])
+        self.assertTrue(r.state()["warming_up"])
+        r.row(40, 105)  # 30 strokes after 2:00: a provisional reference
+        self.assertEqual(r.state()["cue"], "good")
+        self.assertEqual(r.state()["easy_reference"], "today")
+        r.row(10, 105, FADED)
+        self.assertEqual(r.state()["cue"], "finish")
+        r.row(10, 105, length=110)
+        self.assertEqual(r.state()["cue"], "length")
+
+    def test_last_sessions_stroke_from_the_start(self):
+        r = Rower(ftp=185)
+        r.coach = IntervalCoach(ftp=185, reference=lambda: saved_stroke())
+        r.row(40, 105)
+        self.assertIsNone(r.state()["cue"])  # still warming up
+        self.assertEqual(r.state()["easy_reference"], "last session")
+        r.row(10, 105)
+        self.assertEqual(r.state()["cue"], "good")  # at 2:00, no learning needed
+        r.row(10, 105, FADED)
+        self.assertEqual(r.state()["cue"], "finish")
+
+    def _calibrate(self, today_cm, saved_cm=115.0):
+        r = Rower(ftp=185)
+        r.coach = IntervalCoach(ftp=185, reference=lambda: saved_stroke(saved_cm))
+        r.row(180, 105, length=today_cm)  # past 8:00
+        return r.coach
+
+    def test_length_calibration(self):
+        c = self._calibrate(113)  # within 3 cm: today's length, quietly
+        self.assertEqual(c.baseline["length_cm"], 113)
+        self.assertIsNone(c.length_note)
+        self.assertEqual(c.session_summary()["fresh_easy"]["length_cm"], 113)
+        c = self._calibrate(121)  # clearly longer: the new reference, and saved for next time
+        self.assertEqual(c.baseline["length_cm"], 121)
+        self.assertIn("Fresh Easy strokes were 6 cm longer than last time: the new length reference.",
+                      c.session_summary()["findings"])
+        self.assertEqual(c.session_summary()["fresh_easy"]["length_cm"], 121)
+        c = self._calibrate(110)  # clearly shorter: last time's stays, so the cue speaks up
+        self.assertEqual(c.baseline["length_cm"], 115)
+        summary = c.session_summary()
+        self.assertIn("Fresh Easy strokes were 5 cm shorter than last time; the coach kept last time's length.",
+                      summary["findings"])
+        self.assertEqual((summary["fresh_easy"]["length_cm"], summary["fresh_easy"]["measured_length_cm"]),
+                         (115, 110))
+
+    def _row_after(self, saved: dict, today_cm: float):
+        r = Rower(ftp=185)
+        r.coach = IntervalCoach(ftp=185, reference=lambda: saved)
+        r.row(180, 105, length=today_cm)
+        return r.coach
+
+    def test_shorter_two_rows_running_is_adopted(self):
+        # Row 1: 110 against 115: an off day, last time's length kept (and its own carried as measured).
+        row1 = self._calibrate(110).session_summary()["fresh_easy"]
+        self.assertEqual((row1["length_cm"], row1["measured_length_cm"]), (115, 110))
+        # Row 2 at 109: clearly shorter again, and within 3 cm of row 1: the new reference.
+        c = self._row_after(row1, 109)
+        self.assertEqual(c.baseline["length_cm"], 109)
+        summary = c.session_summary()
+        self.assertIn("Easy strokes were 6 cm shorter 2 rows running: the new length reference.", summary["findings"])
+        self.assertEqual(summary["fresh_easy"]["length_cm"], 109)
+        self.assertNotIn("measured_length_cm", summary["fresh_easy"])
+        self.assertEqual(summary["thresholds"]["length_adopt_rows"], 2)
+        # Row 3 back at 109: within the margin of the adopted length, quietly.
+        c = self._row_after(summary["fresh_easy"], 109)
+        self.assertEqual(c.baseline["length_cm"], 109)
+        self.assertIsNone(c.length_note)
+
+    def test_two_short_rows_that_differ_are_not_adopted(self):
+        row1 = self._calibrate(111).session_summary()["fresh_easy"]  # kept 115, measured 111
+        c = self._row_after(row1, 107)  # shorter again, but 4 cm off row 1: still an off day
+        self.assertEqual(c.baseline["length_cm"], 115)
+        fresh = c.session_summary()["fresh_easy"]
+        self.assertEqual((fresh["length_cm"], fresh["measured_length_cm"]), (115, 107))
+
+    def test_longer_after_a_short_row_is_adopted_at_once(self):
+        row1 = self._calibrate(110).session_summary()["fresh_easy"]
+        c = self._row_after(row1, 121)
+        self.assertEqual(c.baseline["length_cm"], 121)
+        self.assertIn("Fresh Easy strokes were 6 cm longer than last time: the new length reference.",
+                      c.session_summary()["findings"])
+
+    def test_fresh_stroke_leaves_out_the_warm_up(self):
+        r = Rower(ftp=185)
+        r.row(40, 105, length=105)  # short warm-up strokes
+        r.row(140, 105, length=118)
+        fresh = r.coach.session_summary()["fresh_easy"]
+        self.assertEqual(fresh["length_cm"], 118)
+        self.assertGreaterEqual(fresh["strokes"], 60)
+
+    def test_latest_fresh_easy_from_saved_sessions(self):
+        import tempfile
+        import time as _time
+        from smartrow_bridge import sessions
+        with tempfile.TemporaryDirectory() as d:
+            now = _time.time()
+            for days_ago, fresh in ((40, saved_stroke(110)), (10, saved_stroke(118)), (2, None)):
+                started = now - days_ago * 86400
+                record = {"id": sessions.session_id(started), "started_at": started, "fresh_easy": fresh}
+                sessions.save(d, record)
+            self.assertEqual(sessions.latest_fresh_easy(d, now)["length_cm"], 118)  # skips the one without
+            self.assertIsNone(sessions.latest_fresh_easy(d, now + 25 * 86400))  # older than a month
+
+
+class PeakTest(unittest.TestCase):
+    def test_peak_position(self):
+        curve = [0] * 24
+        curve[6] = 100
+        curve[19] = 10  # the drive ends at sample 19 (samples are spaced by distance)
+        self.assertAlmostEqual(coach.peak_position(curve), 6 / 19 * 100)
+        flat = [0] * 24
+        flat[6] = flat[7] = flat[8] = 100  # a flat top: its middle
+        flat[19] = 10
+        self.assertAlmostEqual(coach.peak_position(flat), 7 / 19 * 100)
+        self.assertEqual(coach.peak_position([0] * 24), 0.0)
+
+    def test_peak_wanders_only_on_a_clear_change(self):
+        base = dict(index=1, duration_s=60, strokes=20, power_w=150, stroke_rate_spm=22, length_cm=115, peak_n=600,
+                    back_share=0.3, steady_back_share=0.3, steady_length_cm=115, curve=[1] * 24,
+                    steady_curve=[1] * 24, first_third_back_share=0.3, last_third_back_share=0.3,
+                    steady_peak_at_pct=35, steady_peak_spread_pct=3.0)
+        self.assertFalse(coach.IntervalSummary(**base, peak_spread_pct=4.0).peak_wanders)  # within the scatter
+        self.assertTrue(coach.IntervalSummary(**base, peak_spread_pct=7.0).peak_wanders)
+        d = coach.IntervalSummary(**base, peak_spread_pct=7.0).as_dict()
+        self.assertEqual((d["peak_spread_pct"], d["steady_peak_spread_pct"], d["peak_wanders"]), (7.0, 3.0, True))
+        text = " ".join(coach.findings([{**d, "rating": "good"}]))
+        self.assertIn("force peak landed less consistently from stroke to stroke in I1", text)
+
+
+class LocalReferenceTest(unittest.TestCase):
+    def test_efforts_judged_against_the_easy_rowing_just_before(self):
+        # The fresh Easy stroke (saved) has the full finish; over the row the Easy stroke fades, and an
+        # effort rowed the same way is not called short: the fade is the Easy rowing's, reported apart.
+        r = Rower(ftp=185)
+        r.coach = IntervalCoach(ftp=185, reference=lambda: saved_stroke())
+        r.row(200, 105)  # into the row, Easy, the saved shape
+        r.row(80, 105, curve=FADED)  # the Easy stroke has faded
+        r.row(30, 150, curve=FADED)  # an effort, rowed as the Easy rowing around it
+        r.row(20, 105, curve=FADED)
+        last = r.coach.intervals[-1]
+        self.assertEqual(last.rating, "good")
+        self.assertEqual(last.finish_pct, 0)
+        self.assertEqual(last.as_dict()["reference"], "local")
+
+    def test_early_effort_uses_the_saved_stroke(self):
+        r = Rower(ftp=185)
+        r.coach = IntervalCoach(ftp=185, reference=lambda: saved_stroke())
+        r.row(40, 105, curve=FADED)  # still in the warm-up: no Easy strokes after it yet
+        self.assertEqual(r.coach.effort_ref()["back_share"], saved_stroke()["back_share"])
+        r.row(30, 150, curve=FADED)  # an effort before there are SHAPE_MIN Easy strokes after the warm-up
+        r.row(20, 105, curve=FADED)
+        self.assertEqual(r.coach.intervals[-1].as_dict()["reference"], "fresh")  # so it mustn't teach the finish
+
+    def test_without_a_saved_stroke_an_early_effort_is_marked_so(self):
+        r = Rower(ftp=185)
+        r.row(40, 105)
+        r.row(30, 150)
+        r.row(20, 105)
+        self.assertEqual(r.coach.intervals[-1].as_dict()["reference"], "steady")
+
+    def test_zero_stroke_rate_does_not_lose_the_effort(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        for _ in range(30):  # a pulley that reports no rate: power alone still finds the effort
+            r.t += PERIOD
+            r.count += 1
+            r.coach.add(StrokeCurve(time=r.t, force_n=list(FULL), stroke_rate_spm=0, stroke_length_cm=119,
+                                    work_j=150 * 60 / RATE, stroke_count=r.count, power_w=150))
+        r.row(20, 105)
+        self.assertEqual(len(r.coach.intervals), 1)
+
+
+class ConsistencyTest(unittest.TestCase):
+    def test_curve_variation(self):
+        def s(curve):
+            return StrokeCurve(time=0, force_n=list(curve))
+        self.assertEqual(coach.curve_variation([s(STEADY)] * 5), 0.0)
+        self.assertEqual(coach.curve_variation([s(STEADY)]), 0.0)
+        self.assertGreater(coach.curve_variation([s(STEADY), s(LATE), s(STEADY)]), 0.1)
+        # scaled to each stroke's own peak: a harder stroke of the same shape doesn't count
+        self.assertAlmostEqual(coach.curve_variation([s(STEADY), s([2 * v for v in STEADY])]), 0.0)
+
+    def rowed(self, effort):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        effort(r)
+        r.row(20, 105)
+        return r.coach.intervals[-1]
+
+    def test_even_effort(self):
+        i = self.rowed(lambda r: r.row(30, 150))
+        self.assertFalse(i.uneven)
+        self.assertEqual((i.short_strokes, i.as_dict()["uneven"]), (0, False))
+
+    def test_strokes_cut_short_make_it_uneven(self):
+        def effort(r):
+            for k in range(30):
+                r.row(1, 150, length=80 if k % 6 == 5 else 115)
+        i = self.rowed(effort)
+        self.assertTrue(i.uneven)
+        self.assertEqual((i.short_strokes, round(i.shortest_cm)), (5, 80))
+        text = " ".join(coach.findings([{**i.as_dict()}]))
+        self.assertIn("I1 was uneven", text)
+        self.assertIn("5 strokes cut short (shortest 80 cm)", text)
+
+    def test_changing_shape_makes_it_uneven(self):
+        def effort(r):
+            for k in range(30):
+                r.row(1, 150, curve=LATE if k % 2 else STEADY)
+        i = self.rowed(effort)
+        self.assertTrue(i.uneven)
+        self.assertGreaterEqual(i.variation_ratio, coach.UNEVEN_VARIATION)
+
+
+# The steady shape with a stall just after the peak: the force falls, holds for two samples, falls again.
+STALLED = list(STEADY)
+STALLED[11:14] = [360, 356, 354]
+
+
+class TransitionTest(unittest.TestCase):
+    def test_stall_at(self):
+        self.assertEqual(coach.stall_at(STALLED), 11)
+        self.assertEqual(coach.stall_span(STALLED), (11, 13))
+        for smooth in (STEADY, FULL, SHORT, FADED, LATE):
+            self.assertIsNone(coach.stall_at(smooth))
+        self.assertIsNone(coach.stall_at([0] * 24))
+        pct, cm = coach.stall_stats([StrokeCurve(time=0, force_n=list(c)) for c in (STALLED, STEADY)])
+        self.assertEqual((pct, round(cm)), (50.0, round(12 * coach.SAMPLE_CM)))
+
+    def test_cue_and_summary(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(10, 150)
+        self.assertEqual(r.state()["live"]["cue"], "good")
+        r.row(8, 150, curve=STALLED)
+        self.assertEqual(r.state()["live"]["cue"], "transition")
+        r.row(20, 105)
+        i = r.coach.intervals[-1]
+        self.assertTrue(i.transition)
+        d = i.as_dict()
+        self.assertEqual((d["stall_pct"], d["steady_stall_pct"], d["transition"]), (44, 0, True))  # 8 stalled of the 18 strokes
+        text = " ".join(coach.findings([d]))
+        self.assertIn("The force stalled just after the peak", text)
+        self.assertIn("legs-to-back from back-to-arms", text)
+
+    def test_a_few_stalls_are_not_flagged(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        for k in range(30):
+            r.row(1, 150, curve=STALLED if k % 10 == 9 else STEADY)
+        r.row(20, 105)
+        self.assertFalse(r.coach.intervals[-1].transition)
+
+    def test_not_in_easy_rowing(self):
+        # Easy force is too low for the pulley's 16 N steps to tell a stall from rounding, so the
+        # Easy cue never says transition, however stalled the strokes: the stalls are still counted.
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(40, 105, curve=STALLED)
+        self.assertNotEqual(r.coach.easy_cue, "transition")
+        self.assertGreater(coach.stall_stats(list(r.coach.steady)[-40:])[0], 90)  # % of strokes stalled
+
+    def test_marker(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(10, 150, curve=STALLED)
+        self.assertEqual(r.state()["live"]["stall"], {"sample": 11, "until": 13, "now": True})
+        r.row(1, 150)  # this stroke is smooth: the recent strokes' spot, dimmed
+        self.assertEqual(r.state()["live"]["stall"], {"sample": 11, "until": 13, "now": False})
+        r.row(8, 150)
+        self.assertIsNone(r.state()["live"]["stall"])  # the cue has cleared
+
+
+class EffortEndTest(unittest.TestCase):
+    def test_a_dip_does_not_end_the_effort(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(20, 150)
+        r.row(2, 100)  # two weak strokes (a short one, a breath)
+        r.row(20, 150)
+        r.row(20, 105)
+        self.assertEqual([i.strokes for i in r.coach.intervals], [42])  # the dip stays in it
+
+    def test_strokes_after_a_dip_go_to_the_next_effort(self):
+        # The 5-stroke median lags: when a 4-stroke dip ends the effort, the latest strokes may be hard
+        # again. They belong to the next effort only (Oct 31: counted in both, intervals.icu refused).
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(20, 150)
+        r.row(4, 110)  # the dip
+        r.row(30, 150)
+        r.row(20, 105)
+        a, b = r.coach.intervals
+        self.assertEqual((a.strokes, b.strokes), (20, 30))
+        self.assertLess(a.started_at + a.duration_s, b.started_at + 0.01)
+
+    def test_a_real_drop_still_ends_it(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(20, 150)
+        r.row(30, 105)
+        self.assertEqual(len(r.coach.intervals), 1)
+        self.assertEqual(r.coach.intervals[0].strokes, 20)
+
+
+class FreshStrokeTest(unittest.TestCase):
+    def test_early_efforts_still_leave_a_fresh_stroke(self):
+        # Efforts in minutes 2-8 take most of the Easy strokes there: keep collecting, up to 12 minutes.
+        r = Rower(ftp=185)
+        r.row(45, 105)
+        for _ in range(3):
+            r.row(20, 150)
+            r.row(25, 105)
+        self.assertLess(len(r.coach.fresh), coach.FRESH_MIN)
+        self.assertFalse(r.coach.fresh_done)  # past 8 minutes, still collecting
+        r.row(100, 105)
+        self.assertTrue(r.coach.fresh_done)
+        self.assertIsNotNone(r.coach.fresh_result)
+
+    def test_recovery_counts_from_the_first_easy_stroke(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(20, 150)
+        while not r.coach.intervals:  # Easy strokes until the effort is over
+            r.row(1, 105)
+        self.assertEqual(r.coach.recovery_left, coach.RECOVERY_STROKES - (coach.END_CONFIRM - 1))
+
+
+class WaitingTextTest(unittest.TestCase):
+    def test_back_to_easy_after_an_effort(self):
+        r = Rower(ftp=185)
+        r.coach = IntervalCoach(ftp=185, reference=lambda: saved_stroke())
+        self.assertEqual(r.state()["waiting"], "warming up")
+        r.row(200, 105)
+        r.row(20, 150)
+        r.row(5, 105)  # recovery strokes: no cue yet
+        st = r.state()
+        self.assertIsNone(st["cue"])
+        self.assertEqual(st["waiting"], "back to Easy")
+
+    def test_learning_only_without_a_reference(self):
+        r = Rower(ftp=185)
+        r.row(45, 105)  # past the warm-up, nothing saved, too few fresh strokes yet
+        self.assertEqual(r.state()["waiting"], "learning your Easy stroke")
+
+
+class SettingsTest(unittest.TestCase):
+    def test_defaults_are_the_calibrated_values(self):
+        d = coach.CoachSettings()
+        self.assertEqual((d.start_ratio, d.end_ratio, d.max_effort_s), (1.2, 1.1, 300.0))
+        self.assertEqual(d.cues, coach.SENSITIVITY["normal"])
+        self.assertEqual(d.cues.finish_cue, 0.88)
+
+    def test_bad_sensitivity_is_refused(self):
+        with self.assertRaises(ValueError):
+            coach.CoachSettings(sensitivity="extreme")
+
+    def test_sensitivity_levels_are_ordered(self):
+        low, normal, high = (coach.SENSITIVITY[k] for k in ("low", "normal", "high"))
+        self.assertLess(low.finish_cue, normal.finish_cue)
+        self.assertLess(normal.finish_cue, high.finish_cue)
+        self.assertGreater(low.legs_cue, normal.legs_cue)
+        self.assertGreater(normal.legs_cue, high.legs_cue)
+        self.assertGreater(low.length_cue_pct, high.length_cue_pct)
+        for t in (low, normal, high):  # hysteresis: clearing is always easier than cueing
+            self.assertLess(t.finish_cue, t.finish_clear)
+            self.assertGreater(t.legs_cue, t.legs_clear)
+            self.assertGreater(t.length_cue_pct, t.length_clear_pct)
+
+    def test_smaller_surges_with_a_lower_start(self):
+        """+12 % surges: missed at the default 20 %, found at 10 %."""
+        for start, found in ((20.0, 0), (10.0, 1)):
+            r = Rower(coach.CoachSettings(start_pct=start, start_min_w=10))
+            r.row(60, 110)
+            r.row(21, 123, FULL)
+            r.row(15, 110)
+            self.assertEqual(len(r.summaries), found, start)
+
+    def test_longer_pieces_with_a_higher_limit(self):
+        """A 6-minute piece: a new steady pace by default, an interval with a 10-minute limit."""
+        for limit, found in ((300.0, 0), (600.0, 1)):
+            r = Rower(coach.CoachSettings(max_effort_s=limit))
+            r.row(60, 110)
+            r.row(126, 150, FULL)  # 6 minutes at 21 spm
+            r.row(15, 110)
+            self.assertEqual(len(r.summaries), found, limit)
+
+    def test_high_sensitivity_speaks_up_sooner(self):
+        """A mildly fading finish (-10 %): no cue at normal, a cue at high."""
+        mild = [round(v * (0.82 if 11 <= i <= 19 else 1)) for i, v in enumerate(STEADY)]
+        ratio = back_share(mild) / back_share(STEADY)
+        self.assertTrue(0.88 < ratio < 0.91, ratio)
+        for sensitivity, cue in (("normal", "good"), ("high", "finish")):
+            r = Rower(coach.CoachSettings(sensitivity=sensitivity))
+            r.row(60, 110)
+            r.row(12, 152, mild)
+            self.assertEqual(r.state()["live"]["cue"], cue, sensitivity)
+
+    def test_session_history_in_state(self):
+        r = Rower()
+        r.row(60, 110)
+        for _ in range(3):
+            r.row(21, 152, FULL)
+            r.row(25, 110)
+        history = r.state()["history"]
+        self.assertEqual([h["index"] for h in history], [1, 2, 3])
+        self.assertNotIn("curve", history[0])  # the list stays small: no curves
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class SmallStallTest(unittest.TestCase):
+    def test_reported_with_its_trend_but_not_flagged(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        for k in range(30):  # clean at first, then a stall on every third stroke
+            r.row(1, 150, curve=STALLED if k >= 10 and k % 3 == 0 else STEADY)
+        r.row(20, 105)
+        i = r.coach.intervals[-1]
+        d = i.as_dict()
+        self.assertFalse(d["transition"])
+        self.assertTrue(d["small_stall"])
+        self.assertEqual(d["stall_thirds"][0], 0)
+        self.assertGreater(d["stall_thirds"][2], 25)
+        text = " ".join(coach.findings([d]))
+        self.assertIn("A small stall just after the peak in I1 (", text)
+        self.assertIn("rising through I1 (from 0% in the first third", text)
+        from smartrow_bridge import intervals
+        self.assertIn("small stall on", intervals.effort_line(d))
+
+    def test_clean_effort_says_nothing(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(30, 150)
+        r.row(20, 105)
+        d = r.coach.intervals[-1].as_dict()
+        self.assertFalse(d["small_stall"])
+        self.assertNotIn("small stall", " ".join(coach.findings([d])))
+
+
+class SecondRowerTest(unittest.TestCase):
+    """What a second rower's export (a newer SmartRow device, a longer stroke) showed up."""
+
+    def test_cut_off_curves_leave_the_finish_unread(self):
+        long_stroke = [v if i < 18 else max(v, 300) for i, v in enumerate(STEADY)]  # still pulling at the last sample
+        self.assertTrue(coach.cut_off(long_stroke))
+        self.assertFalse(coach.cut_off(STEADY))
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(30, 150, curve=long_stroke)
+        r.row(20, 105)
+        d = r.coach.intervals[-1].as_dict()
+        self.assertEqual((d["rating"], d["finish_known"]), ("unknown", False))
+        text = " ".join(coach.findings([d]))
+        self.assertIn("cut off before the end of the drive", text)
+        self.assertNotIn("kept its shape", text)  # nothing judged, nothing claimed
+        from smartrow_bridge import intervals
+        self.assertIn("finish not read", intervals.effort_line(d))
+
+    def test_no_stroke_length_in_the_export(self):
+        r = Rower(ftp=185)
+        r.row(200, 105, length=0)
+        r.row(30, 150, length=0)
+        r.row(20, 105, length=0)
+        d = r.coach.intervals[-1].as_dict()
+        self.assertFalse(d["length_known"])
+        self.assertIn("The effort kept its shape:", " ".join(coach.findings([d])))  # not "shape and length"
+
+    def test_a_stall_also_in_easy_rowing_is_habitual_not_small(self):
+        base = {"index": 1, "rating": "good", "finish_pct": 0, "duration_s": 60, "power_w": 150, "intensity": "Moderate",
+                "length_delta_cm": 0, "stall_cm": 90, "steady_power_w": 100}
+        efforts = [{**base, "index": k + 1, "stall_pct": p, "steady_stall_pct": 95, "transition": False,
+                    "small_stall": False, "habitual_stall": True} for k, p in enumerate((92, 45, 38, 46, 29))]
+        text = " ".join(coach.findings(efforts))
+        self.assertIn("A stall just after the peak on many strokes in all 5 efforts (29–92%), as in the Easy "
+                      "rowing between them (95%)", text)
+        self.assertNotIn("small stall", text)
+
+    def test_small_means_under_the_flag(self):
+        r = Rower(ftp=185)
+        r.row(200, 105)
+        r.row(30, 150, curve=STALLED)
+        r.row(20, 105)
+        i = r.coach.intervals[-1]
+        self.assertTrue(i.transition)
+        self.assertFalse(i.small_stall or i.habitual_stall)
+
+    def test_many_efforts_are_summarised(self):
+        base = {"rating": "ok", "finish_pct": -7, "duration_s": 60, "power_w": 150, "intensity": "Moderate",
+                "length_delta_cm": 0, "steady_power_w": 100}
+        text = " ".join(coach.findings([{**base, "index": k + 1} for k in range(9)]))
+        self.assertIn("The finish eased a little in all 9 efforts (−7%)", text)
+        self.assertNotIn("I1, I2", text)
+
+
+class HardStartTest(unittest.TestCase):
+    def test_a_row_that_starts_with_a_threshold_block(self):
+        # A friend's 16 Oct: 20 min at FTP from the first stroke, then recovery and short surges.
+        r = Rower(ftp=160)
+        r.row(400, 162)  # about 19 minutes at threshold, no warm-up
+        r.row(80, 70)  # recovery
+        r.row(20, 115)  # a Moderate surge
+        r.row(30, 70)
+        efforts = r.coach.intervals
+        self.assertEqual([i.intensity for i in efforts], ["Challenging", "Moderate"])
+        first = efforts[0].as_dict()
+        self.assertEqual((first["rating"], first["no_reference"]), ("unknown", True))
+        self.assertFalse(first["legs_late"] or first["uneven"] or first["transition"] or first["peak_wanders"])
+        self.assertLess(r.coach.steady_power(), 100)  # the Easy reference is the recovery, not the threshold block
+        text = " ".join(coach.findings([e.as_dict() for e in efforts]))
+        self.assertIn("I1 came before any Easy rowing", text)
+
+    def test_a_steady_row_below_challenging_is_still_the_reference(self):
+        r = Rower(ftp=160)
+        r.row(400, 111)  # Moderate by FTP, but the whole row: the steady pace, not an effort
+        self.assertEqual(r.coach.intervals, [])
+
+
+class OverEffortTest(unittest.TestCase):
+    """Each effort against its own first third: needs no Easy rowing before it."""
+
+    @staticmethod
+    def strokes(parts, drive=0.0):  # [(n, watts, curve, length)] in order
+        out, t = [], 0.0
+        for n, watts, curve, length in parts:
+            for _ in range(n):
+                t += PERIOD
+                out.append(StrokeCurve(time=t, force_n=list(curve), stroke_rate_spm=RATE, stroke_length_cm=length,
+                                       work_j=watts * 60 / RATE, stroke_count=len(out) + 1, drive_s=drive))
+        return out
+
+    def test_too_short_to_split(self):
+        self.assertIsNone(coach.over_effort(self.strokes([(20, 150, STEADY, 115)])))
+
+    def test_held(self):
+        o = coach.over_effort(self.strokes([(60, 150, STEADY, 115)], drive=0.9))
+        self.assertTrue(o["held"])
+        self.assertEqual(o["change"]["power_pct"], 0.0)
+        self.assertEqual(o["change"]["drive_s"], 0.0)  # the handle's drive time, when the export has it
+        self.assertEqual(len(o["thirds"][0]["curve"]), 24)
+
+    def test_finish_and_power_slip(self):
+        o = coach.over_effort(self.strokes([(40, 150, STEADY, 115), (20, 135, FADED, 115)]))
+        self.assertEqual(o["slipped"], ["power fell", "finish faded"])
+        self.assertIsNone(o["change"]["drive_s"])  # the pulley has no drive time
+
+    def test_shorter_strokes(self):
+        o = coach.over_effort(self.strokes([(40, 150, STEADY, 120), (20, 150, STEADY, 115)]))
+        self.assertEqual(o["slipped"], ["strokes shorter"])
+
+    def test_a_hard_start_is_judged_over_the_effort(self):
+        r = Rower(ftp=160)
+        r.row(300, 162)  # threshold from the first stroke
+        r.row(80, 70)
+        first = r.coach.intervals[0].as_dict()
+        self.assertTrue(first["no_reference"])
+        self.assertTrue(first["over"]["held"])
+        text = " ".join(coach.findings([first]))
+        self.assertIn("judged over the effort instead", text)
+        self.assertIn("Over I1, first third to last: power −0%", text.replace("+0%", "−0%"))
+        self.assertIn("held", text)
+        from smartrow_bridge import intervals
+        self.assertIn("held over it", intervals.effort_line({**first, "hr_peak": None}))
+
+    def test_a_fade_is_told(self):
+        i = {"index": 2, "duration_s": 230, "rating": "good", "finish_pct": 0, "power_w": 140, "intensity": "Moderate",
+             "over": coach.over_effort(self.strokes([(40, 150, STEADY, 115), (20, 150, FADED, 115)]))}
+        text = " ".join(coach.findings([i]))
+        self.assertIn("I2 faded over the effort (first third to last): finish −", text)
+        from smartrow_bridge import intervals
+        self.assertRegex(intervals.effort_line(i), r"finish \u2212\d+% over it")
+
+    def test_a_build_is_not_a_hold(self):
+        # A ladder step-up inside one effort: power rises by design.
+        o = coach.over_effort(self.strokes([(20, 140, STEADY, 115), (20, 160, STEADY, 115), (20, 180, STEADY, 115)]))
+        self.assertTrue(o["built"])
+        self.assertFalse(o["held"])
+        i = {"index": 1, "duration_s": 300, "rating": "good", "finish_pct": 0, "power_w": 160, "intensity": "Challenging",
+             "over": o}
+        self.assertIn("I1 built from its first third to its last", " ".join(coach.findings([i])))
+        from smartrow_bridge import intervals
+        self.assertIn("built over it (power +", intervals.effort_line(i))
+
+
+class StepsTest(unittest.TestCase):
+    """Ladders found by their steady steps, and W'bal (steps.py)."""
+
+    @staticmethod
+    def log(plan, drive=0.9):  # [(seconds, watts)]: one stroke every 2.5 s
+        out, t = [], 0.0
+        for secs, watts in plan:
+            for _ in range(int(secs / 2.5)):
+                rate = 18 + watts / 20
+                out.append((t, 0, float(watts), rate, 100 + watts // 3, 0, tuple(STEADY), drive))
+                t += 2.5
+        return out
+
+    def test_a_ladder(self):
+        from smartrow_bridge import steps
+        plan = [(120, w) for w in (120, 140, 160, 180, 200)] + [(180, 80)]
+        ladders = steps.find_ladders(self.log(plan))
+        self.assertEqual(len(ladders), 1)
+        lad = ladders[0]
+        self.assertEqual([round(s["power_w"]) for s in lad["steps"]], [120, 140, 160, 180, 200])
+        self.assertTrue(lad["up"])
+        self.assertEqual(lad["change"]["by"], "rate")  # the same force curve: power from rate alone
+        self.assertIn("A ladder of 5 steps, 120\u2192200 W", steps.ladder_findings(ladders)[0])
+
+    def test_intervals_are_not_a_ladder(self):
+        from smartrow_bridge import steps
+        plan = [(300, 100), (240, 145), (180, 100), (240, 145), (180, 100)]
+        self.assertEqual(steps.find_ladders(self.log(plan)), [])
+
+    def test_an_uneven_warm_up_is_not_a_ladder(self):
+        from smartrow_bridge import steps
+        plan = [(60, 60), (60, 100), (300, 110), (60, 150), (120, 100)]
+        self.assertEqual(steps.find_ladders(self.log(plan)), [])
+
+    def test_wbal(self):
+        from smartrow_bridge import steps
+        log = self.log([(120, 160), (120, 210), (300, 100)])
+        self.assertIsNone(steps.wbal(log, 160, None))
+        w = steps.wbal(log, 160, 20000)
+        self.assertAlmostEqual(w["min_pct"], 70, delta=2)  # 50 W over CP for 120 s: 6 kJ of 20
+        self.assertAlmostEqual(w["min_at_s"], 240, delta=5)
+        self.assertGreater(w["end_pct"], w["min_pct"])  # refilling below CP
+        self.assertIn("fell to", steps.wbal_findings(w)[0])
+        self.assertIn("stayed full", steps.wbal_findings(steps.wbal(self.log([(300, 100)]), 160, 20000))[0])
+
+    def test_the_bridge_setting(self):
+        from smartrow_bridge import bridge
+        self.assertEqual(bridge.w_prime_joules("19.3"), 19300)
+        self.assertEqual(bridge.w_prime_joules("19300"), 19300)
+        self.assertIsNone(bridge.w_prime_joules("off"))
+        self.assertIsNone(bridge.w_prime_joules(""))
+
+
+class StallBumpTest(unittest.TestCase):
+    def test_up_mid_effort_and_down_again_is_not_rising(self):
+        base = {"duration_s": 200, "rating": "good", "finish_pct": 0, "power_w": 145, "intensity": "Moderate",
+                "small_stall": True}
+        bump = {**base, "index": 3, "stall_pct": 23, "stall_thirds": [23, 32, 14]}
+        rise = {**base, "index": 1, "stall_pct": 17, "stall_thirds": [8, 19, 23]}
+        text = " ".join(coach.findings([rise, bump]))
+        self.assertIn("rising through I1 (from 8% in the first third to 23% in the last)", text)
+        self.assertIn("up mid-effort and down again by the end in I3 (23\u219232\u219214% by thirds)", text)
