@@ -655,13 +655,14 @@ class IntervalSummary:
         m, s = divmod(round(self.duration_s), 60)
         label = f" {self.intensity}" if self.intensity else ""
         return (f"Interval {self.index}: {m}:{s:02d}, {self.strokes} strokes, {self.power_w:.0f} W{label}, "
-                f"{self.stroke_rate_spm:.1f} spm, length {self.length_cm:.0f} cm ({self.length_delta_cm:+.0f}), "
-                f"peak {self.peak_n:.0f} N at {self.peak_at_pct:.0f}% \u00b1{self.peak_spread_pct:.1f} "
+                f"{self.stroke_rate_spm:.1f} spm, "
+                + (f"length {self.length_cm:.0f} cm ({self.length_delta_cm:+.0f}), " if self.length_known else "length not measured, ")
+                + f"peak {self.peak_n:.0f} N at {self.peak_at_pct:.0f}% \u00b1{self.peak_spread_pct:.1f} "
                 f"(Easy {self.steady_peak_at_pct:.0f}% \u00b1{self.steady_peak_spread_pct:.1f}), "
                 f"finish {self.finish_pct:+d}% vs usual {self.intensity or 'Easy'} ({self.rating}), "
                 f"over the effort {round((self.last_third_back_share / (self.first_third_back_share or 1) - 1) * 100):+d}%, "
-                f"strokes varied x{self.variation_ratio:.2f} Easy, length \u00b1{self.length_sd_cm:.1f} cm "
-                f"(Easy \u00b1{self.steady_length_sd_cm:.1f})"
+                f"strokes varied x{self.variation_ratio:.2f} Easy"
+                + (f", length \u00b1{self.length_sd_cm:.1f} cm (Easy \u00b1{self.steady_length_sd_cm:.1f})" if self.length_known else "")
                 + (f", {self.short_strokes} cut short (shortest {self.shortest_cm:.0f} cm)" if self.short_strokes else "")
                 + (", UNEVEN" if self.uneven else "")
                 + f", stall after the peak on {self.stall_pct:.0f}% (Easy {self.steady_stall_pct:.0f}%)"
@@ -1087,8 +1088,13 @@ class IntervalCoach:
             return 1.0, 0.0, 0.0
         if cut_off_pct(window) >= CUT_OFF_PCT:
             ratio = 1.0  # the end of the drive is missing: no finish cue on a cut-off curve
-        ref_len = ref["length_cm"] or 1
-        short_by_pct = (ref_len - statistics.fmean(s.stroke_length_cm for s in window)) / ref_len * 100
+        # Stroke length not measured (newer SmartRow exports: every length 0): no length judgement at all.
+        # (A stand-in of 1 cm here once made every stroke "100 % shorter", so LONGER STROKES always fired.)
+        now_len = statistics.fmean(s.stroke_length_cm for s in window)
+        if ref["length_cm"] > 0 and now_len > 0:
+            short_by_pct = (ref["length_cm"] - now_len) / ref["length_cm"] * 100
+        else:
+            short_by_pct = 0.0
         return ratio, drive_lateness(curve, ref["curve"]), short_by_pct
 
     def _judge(self, previous: str | None, ratio: float, late: float, short_by_pct: float, stalls: int = 0) -> str:

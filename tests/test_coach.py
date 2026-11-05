@@ -168,6 +168,18 @@ class CoachTest(unittest.TestCase):
         r.row(10, 152, FULL, length=110)
         self.assertEqual(r.state()["live"]["cue"], "length")
 
+    def test_no_length_cue_when_length_is_not_measured(self):
+        # Newer SmartRow exports have no stroke length: every length is 0. Nothing about length may be
+        # judged (a stand-in once made every stroke "100 % shorter", so LONGER STROKES always fired).
+        r = Rower()
+        r.row(60, 110, length=0)
+        r.row(22, 152, FULL, length=0)
+        self.assertEqual(r.state()["live"]["cue"], "good")
+        st = r.coach.state(r.t + coach.GAP_S + 1)  # the effort ends
+        self.assertFalse(st["last"]["length_known"])
+        self.assertIn("length not measured", r.coach.intervals[-1].log_line())
+        self.assertNotIn("length \u00b1", r.coach.intervals[-1].log_line())
+
     def test_stopping_ends_the_effort(self):
         r = Rower()
         r.row(60, 110)
