@@ -136,7 +136,7 @@ class IndexTest(unittest.TestCase):
 
     def test_drill_classes_group_and_stroke_part(self):
         self.assertEqual(pp.class_group("10 min Form & Drills Row: The Drive"), "Form & drills")
-        self.assertEqual(pp.class_group("20 min Form Fixer Row"), "Form & drills")
+        self.assertEqual(pp.class_group("20 min Form Fixer Row"), "Form fixer")
         self.assertEqual(pp.class_group("20 min Advanced Beginner Row"), "Beginner")
         self.assertEqual(pp.stroke_part("10 min Form & Drills: The Recovery"), "Recovery")
         self.assertEqual(pp.stroke_part("10 min Form & Drills Row: Recovery"), "Recovery")

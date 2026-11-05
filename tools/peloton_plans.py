@@ -644,7 +644,9 @@ NO_TARGET_WEIGHT = 0.45
 INDEX_MIN_MINUTES = 20
 # Drill classes come first: "Form & Drills Row: The Drive" is a drill class whatever else its title says.
 DRILL_GROUP = "Form & drills"
-GROUPS = [(DRILL_GROUP, ("form & drills", "form and drills", "form fixer", "intro to form", "drill", "technique")),
+# Form Fixer is a full workout with two instructors correcting form as you row, not a drill class.
+GROUPS = [("Form fixer", ("form fixer",)),
+          (DRILL_GROUP, ("form & drills", "form and drills", "intro to form", "drill", "technique")),
           ("Endurance", ("endurance",)), ("Intervals", ("interval",)), ("HIIT & Tabata", ("hiit", "tabata")),
           ("Beginner", ("beginner", "form", "learn")),
           ("Warm-up & cool-down", ("warm up", "warm-up", "cool down", "cool-down"))]
