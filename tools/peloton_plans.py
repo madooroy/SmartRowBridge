@@ -575,9 +575,16 @@ def drills(args) -> None:
     for r, how in found:
         who = (r.get("instructor") or {}).get("name") or names.get(r.get("instructor_id"), "")
         aired = time.strftime("%Y-%m-%d", time.gmtime(int(r.get("original_air_time") or 0)))
+        cached = cache / "classes" / f"{r.get('id')}.json"
+        targeted = None
+        if cached.exists():  # how much of the class has a pace target (drills often have none)
+            d = _read_json(cached, {})
+            length = int((d.get("ride") or {}).get("duration") or r.get("duration") or 0)
+            secs = sum(b for _, b, _ in plan(d, PELOTON_LEVELS))
+            targeted = round(100 * min(secs, length) / length) if length else None
         rows.append({"id": r.get("id", ""), "minutes": class_minutes(r), "aired": aired,
                      "title": r.get("title", ""), "instructor": who, "matched": how,
-                     "form": "; ".join(form_tags(r)), "plan cached": (cache / "classes" / f"{r.get('id')}.json").exists(),
+                     "form": "; ".join(form_tags(r)), "plan cached": cached.exists(), "targets %": "" if targeted is None else targeted,
                      "description": " ".join((r.get("description") or "").split())})
     rows.sort(key=lambda x: (x["matched"] != "title", x["minutes"], x["aired"]), reverse=False)
     by_title = [x for x in rows if x["matched"] == "title"]
@@ -592,10 +599,14 @@ def drills(args) -> None:
     if tags:
         print("  Form points (title or description): " + ", ".join(f"{t} {n}" for t, n in tags.most_common()))
     print(f"  Plans already cached: {sum(x['plan cached'] for x in rows)} of {len(rows)}")
+    shares = [x["targets %"] for x in rows if x["targets %"] != ""]
+    if shares:
+        print(f"  Of those, pace targets for: none of the class {sum(1 for t in shares if t == 0)}, "
+              f"under half {sum(1 for t in shares if 0 < t < 50)}, half or more {sum(1 for t in shares if t >= 50)}")
     print("\nDrill/technique classes by title:")
     for x in by_title:
         print(f"  {x['minutes']:>3} min  {x['aired']}  {x['title']}" + (f"  ({x['instructor']})" if x["instructor"] else "")
-              + (f"  [{x['form']}]" if x["form"] else ""))
+              + (f"  targets {x['targets %']}%" if x["targets %"] != "" else "") + (f"  [{x['form']}]" if x["form"] else ""))
     if by_desc:
         print(f"\nBy description only (first {min(len(by_desc), args.show)} of {len(by_desc)}; all in drills.csv):")
         for x in by_desc[:args.show]:

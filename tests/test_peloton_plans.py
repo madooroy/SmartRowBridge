@@ -217,7 +217,7 @@ class DrillsTest(unittest.TestCase):
             cache = Path(tmp, "c")
             (cache / "classes").mkdir(parents=True)
             (cache / "catalogue.json").write_text(json.dumps(self.CATALOGUE))
-            d = details("10 min Rowing Form Drills", 10, [])
+            d = details("10 min Rowing Form Drills", 10, [(0, 150, 0)])  # a quarter of the class has a target
             d["ride"].update(instructor_id="i1", instructor={"name": "Coach One"})
             (cache / "classes" / "d1.json").write_text(json.dumps(d))
 
@@ -230,7 +230,10 @@ class DrillsTest(unittest.TestCase):
             rows = list(csv.DictReader(open(Path(tmp, "out", "drills.csv"), encoding="utf-8")))
             self.assertEqual([r["id"] for r in rows], ["d2", "d1", "d3"])  # title matches first, short first
             d1 = rows[1]
-            self.assertEqual((d1["instructor"], d1["plan cached"], d1["matched"]), ("Coach One", "True", "title"))
+            self.assertEqual((d1["instructor"], d1["plan cached"], d1["matched"], d1["targets %"]),
+                             ("Coach One", "True", "title", "25"))
+            self.assertEqual(rows[0]["targets %"], "")  # not cached
+            self.assertIn("none of the class 0, under half 1, half or more 0", printed.getvalue())
             self.assertIn("2 drill/technique by title, 1 more by description only", printed.getvalue())
             self.assertIn("rush 1", printed.getvalue())  # unmatched short-class title words, to spot missed names
 
