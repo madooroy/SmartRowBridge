@@ -379,7 +379,7 @@
 // Mirrors smartrow_bridge/display/screens.py: same bands, cues and curve drawing.
 const C = { bg: "#000", fg: "#f0f0f0", dim: "#878787", faint: "#464646", tile: "#1a1a1a",
             green: "#46cd5f", amber: "#f5af2d", red: "#eb4b41", gap: "#d7d7d7",
-            blue: "#5aa5f0" };  // blue: the force curve during steady rowing (no cue; steady is the reference)
+            blue: "#5aa5f0", drill: "#b48cf0" };  // drill: the drill stretches of a class on its skyline  // blue: the force curve during steady rowing (no cue; steady is the reference)
 const GOOD_PCT = -5, OK_PCT = -12, METER_MIN = -30, METER_MAX = 15, FORCE_HALF = 12;
 const STALE_S = 5, RECALL_S = 20, POLL_MS = 1000, POLL_TIMEOUT_MS = 3000;
 // Two words: what to do, and the part of the stroke; never a muscle (see coach.py).
@@ -988,6 +988,7 @@ async function openClassesView() {
     const sums = [...new Set(firsts.flatMap((a) => full.map((b) => a.m + b.m)))].filter((m) => m >= 40).sort((a, b) => a - b);
     $("sLen").innerHTML = sums.map((m) => `<option value="${m}" ${m === 50 ? "selected" : ""}>${m} min in all</option>`).join("");
     $("cKey").innerHTML = Object.values(LEVELS).map(([n, col]) => `<span><i style="background:${col}"></i>${n}</span>`).join("")
+      + `<span><i style="background:${C.drill};opacity:.6"></i>drill</span>`
       + `<span><i style="height:2px;background:${C.faint}"></i>no target</span><span>- - - Challenging</span>`;
   }
   reviewing = true;
@@ -1013,22 +1014,31 @@ function classFilter(ignoreLength = false, ignoreGroup = false) {
 const LEVEL_HEIGHT = { "-1": 0.28, 0: 0.42, 1: 0.62, 2: 0.82, 3: 1 };
 function classGraph(classes) {
   classes = [].concat(classes);
-  const H = 40, joint = 40, total = classes.reduce((t, c) => t + c.len, 0) + joint * (classes.length - 1);
+  // Each class drawn over its rowing window (w: from Peloton's start and end of rowing; older indexes: 0 to len).
+  const win = (c) => c.w || [0, c.len];
+  const H = 40, joint = 40, total = classes.reduce((t, c) => t + win(c)[1] - win(c)[0], 0) + joint * (classes.length - 1);
   let x0 = 0, bars = "";
   for (const c of classes) {
-    let at = 0;
-    for (const [a, b, lv, rate] of [...c.p, [c.len, 0, null, null]]) {
+    const [w0, w1] = win(c);
+    x0 -= w0;  // class seconds to x: the window starts at the left edge
+    // The class outline's drill stretches: a violet band behind the plan (drills mostly have no pace target).
+    for (const [a, b] of c.dr || []) {
+      const info = `drill ${clock(b)} at ${clock(a - w0)}`;
+      bars += `<rect x="${x0 + a}" y="${H * 0.3}" width="${b}" height="${H * 0.7}" fill="${C.drill}" fill-opacity="0.75" data-info="${info}"><title>${info}</title></rect>`;
+    }
+    let at = w0;
+    for (const [a, b, lv, rate] of [...c.p, [w1, 0, null, null]]) {
       if (a > at) bars += `<rect x="${x0 + at}" y="${H - 2}" width="${a - at}" height="2" fill="${C.faint}"><title>no target ${clock(a - at)}</title></rect>`;
       if (lv !== null) {
         const h = H * LEVEL_HEIGHT[lv];
-        const info = `${LEVELS[lv][0]} ${clock(b)} at ${clock(a)}${rate ? ` · ${rate[0]}–${rate[1]} spm` : ""}`;
+        const info = `${LEVELS[lv][0]} ${clock(b)} at ${clock(Math.max(0, a - w0))}${rate ? ` · ${rate[0]}–${rate[1]} spm` : ""}`;
         // A tall invisible strip as well, so a thin block is easy to tap.
         bars += `<rect x="${x0 + a}" y="${H - h}" width="${b}" height="${h}" fill="${LEVELS[lv][1]}"/>`
           + `<rect x="${x0 + a}" y="0" width="${b}" height="${H}" fill="transparent" data-info="${info}"><title>${info}</title></rect>`;
       }
       at = Math.max(at, a + b);
     }
-    x0 += c.len + joint;
+    x0 += w1 + joint;
   }
   const ref = H * (1 - LEVEL_HEIGHT[2]);
   return `<svg class="cgraph" viewBox="0 0 ${total} ${H}" preserveAspectRatio="none" role="img" aria-label="skyline: the class plan by level">
@@ -1061,6 +1071,7 @@ function rateLine(c) {
 }
 
 function classRow(c) {
+  const drillS = (c.dr || []).reduce((t, x) => t + x[1], 0);  // drill time is untargeted too: told apart
   const blocks = (k) => c.p.filter((x) => x[2] === k).length;
   const totals = [0, 1, 2, 3].filter((k) => c.s[k]).map((k) => `${LEVELS[k][0]} ${clock(c.s[k])} (${blocks(k)})`).join(" · ");
   const d = new Date(c.d * 1000);
@@ -1072,7 +1083,7 @@ function classRow(c) {
         <div><b>${c.r ?? "–"}</b><span class="csub">members</span></div></div></div>
     ${classGraph(c)}
     <div class="csub cpick">${rateLine(c)}</div>
-    <div class="csub">${totals}${c.s["-1"] ? ` · Recovery ${clock(c.s["-1"])}` : ""}${c.none ? ` · no target ${clock(c.none)}` : ""}${c.x ? ` · ${c.x} Max sprint${c.x > 1 ? "s" : ""}` : ""}</div>
+    <div class="csub">${totals}${c.s["-1"] ? ` · Recovery ${clock(c.s["-1"])}` : ""}${drillS ? ` · drills ${clock(drillS)}` : ""}${c.none - drillS > 0 ? ` · no target ${clock(c.none - drillS)}` : ""}${c.x ? ` · ${c.x} Max sprint${c.x > 1 ? "s" : ""}` : ""}</div>
     ${takenLine(c)}
     <div class="cbtns"><button data-like="${c.id}">Similar</button>
       <a href="${PELOTON_CLASS(c.id)}" target="_blank" rel="noopener">Open in Peloton</a></div></div>`;
@@ -1143,10 +1154,12 @@ $("cGroup").addEventListener("change", () => {
   $("cPart").hidden = !drills;
   if (drills) $("sFirst").value = "drill" + ($("cPart").value ? `:${$("cPart").value}` : "");
   if (!drills) $("cPart").value = "";
-  else {  // tick the drill classes' lengths so they show (10 min is off by default)
-    const lens = new Set(pel.filter((c) => c.g === DRILLS).map((c) => String(c.m)));
+  // Tick the chosen type's lengths when none of its classes would show otherwise (drills are 10 min,
+  // Form Fixer 20, and only 30 min and up are ticked at first); always for drills.
+  const group = $("cGroup").value, ticked = new Set([...$("cLen").querySelectorAll("input:checked")].map((x) => x.value));
+  const lens = new Set(pel.filter((c) => c.g === group).map((c) => String(c.m)));
+  if (group && (drills || ![...lens].some((m) => ticked.has(m))))
     for (const x of $("cLen").querySelectorAll("input")) if (lens.has(x.value)) x.checked = true;
-  }
 });
 $("cPart").addEventListener("change", () => { $("sFirst").value = "drill" + ($("cPart").value ? `:${$("cPart").value}` : ""); });
 for (const id of ["cSort", "cWho", "cGroup", "cPart", "cHard", "cMax", "cTaken"]) $(id).addEventListener("change", () => { pelShown = 100; renderClasses(); });

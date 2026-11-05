@@ -652,6 +652,19 @@ def class_segments(details: dict) -> list[dict]:
     return out
 
 
+def drill_blocks(details: dict) -> list[list[int]]:
+    """[start s, length s] of each stretch the class outline flags as a drill (neighbouring parts joined)."""
+    out = []
+    for s in class_segments(details):
+        if not s["drill"] or s["length_s"] <= 0:
+            continue
+        if out and s["start_s"] <= out[-1][0] + out[-1][1]:
+            out[-1][1] = max(out[-1][1], s["start_s"] + s["length_s"] - out[-1][0])
+        else:
+            out.append([s["start_s"], s["length_s"]])
+    return out
+
+
 def segments(args) -> None:
     """For the form classes (Form & drills, Form fixer), what Peloton's own class outline says: each part's
     name and drill flag (the drill names the descriptions don't give), and where the outline calls a level
@@ -762,10 +775,16 @@ def index_entry(class_id: str, details: dict) -> dict | None:
     score = (work / length) ** 0.5 if length else 0.0
     title = ride.get("title", "")
     rating = ride.get("difficulty_rating_avg")
+    blocks = drill_blocks(details)  # the outline's drill stretches, shaded on the skyline
+    # The rowing part of the class video (class seconds count from the video's start, intro included):
+    # the skyline draws this window, so the last minute isn't cut off.
+    a, b = int(ride.get("pedaling_start_offset") or 0), int(ride.get("pedaling_end_offset") or 0)
+    window = [a, b] if 0 <= a < b else None
     return {"id": class_id, "t": title, "i": (ride.get("instructor") or {}).get("name") or "",
             "d": int(ride.get("original_air_time") or 0), "m": class_minutes(ride), "len": length,
             "k": re.sub(r"^\d+ min ", "", title), "g": class_group(title),
             **({"fp": stroke_part(title)} if class_group(title) == DRILL_GROUP else {}),
+            **({"dr": blocks} if blocks else {}), **({"w": window} if window else {}),
             "r": round(rating, 1) if rating else None, "rn": ride.get("difficulty_rating_count") or 0,
             "p": steps, "s": {str(c): t for c, t in totals.items()}, "none": none,
             "b": {str(c): t for c, t in longest.items()}, "x": sum(1 for _, _, c, _ in steps if c == 3),

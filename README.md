@@ -743,6 +743,9 @@ Form & drills. Choosing Form & drills (and a part) sets the builder to start wit
 `segments` (no token) prints the form classes' own outline from the cache: each part's name, which parts
 Peloton flags as drills, and blocks the outline calls that the pace plan (the skylines) leaves out; it
 writes `peloton-report/segments.csv`.
+After `index`, each skyline shades the outline's drill stretches in violet ("drill" in the key) and
+runs from the start of rowing to its end (the class video's intro is left out, and the last minute is no
+longer cut off).
 
 `fetch`, `history` and `update` ask for a token (hidden; never printed or saved): sign in at
 members.onepeloton.com, press F12, Network, reload, filter on `api.onepeloton`, click a `me`

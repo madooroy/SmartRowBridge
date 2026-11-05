@@ -321,3 +321,6 @@ class SegmentsTest(unittest.TestCase):
             self.assertIn("1 have a part Peloton flags as a drill", out)
             self.assertIn("Drills > Arms Only *", out)
             self.assertIn("outline 'Challenging Effort' 60 s, plan Moderate", out)
+        # the index keeps the drill stretches (class seconds, neighbouring drill parts joined) for the skyline
+        self.assertEqual(pp.index_entry("a", d)["dr"], [[180, 120]])
+        self.assertNotIn("dr", pp.index_entry("b", details("30 min Pop Row", 30, [(0, 600, 1)])))
