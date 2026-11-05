@@ -740,6 +740,9 @@ recovery, catch, drive or finish). The two-class builder can start with a drill 
 the stroke) followed by a full class: the second follows the class type chosen above, any type while that is
 Form & drills. Choosing Form & drills (and a part) sets the builder to start with that drill. Form Fixer
 (a full workout with two instructors correcting form as you row) is its own class type.
+`segments` (no token) prints the form classes' own outline from the cache: each part's name, which parts
+Peloton flags as drills, and blocks the outline calls that the pace plan (the skylines) leaves out; it
+writes `peloton-report/segments.csv`.
 
 `fetch`, `history` and `update` ask for a token (hidden; never printed or saved): sign in at
 members.onepeloton.com, press F12, Network, reload, filter on `api.onepeloton`, click a `me`

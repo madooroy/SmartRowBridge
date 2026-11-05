@@ -14,6 +14,7 @@ that cache. Use it gently (one request a second by default) and for your own ana
     python3 tools/peloton_plans.py update                          # weekly: new classes, your history, the index
     python3 tools/peloton_plans.py drills                          # drill/technique classes in the catalogue (no token)
     python3 tools/peloton_plans.py fetch --drills                  # then download just their plans
+    python3 tools/peloton_plans.py segments                        # their own outlines: drill names (no token)
 
 Your token: sign in at members.onepeloton.com in a browser, open the developer tools (F12),
 Network tab, reload, click any request to api.onepeloton.com and copy the value of its
@@ -630,6 +631,78 @@ def drills(args) -> None:
     print(f"\nWrote {out / 'drills.csv'}. To download their plans: fetch --drills (needs a token).")
 
 
+SEGMENT_LEVEL = re.compile(r"\b(recovery|easy|moderate|challenging|max)\b", re.I)
+
+
+def class_segments(details: dict) -> list[dict]:
+    """The class's own breakdown ("segments", as the app's class outline shows it): each part with its
+    name and Peloton's drill flag, in class seconds (segment offsets count from the start of rowing)."""
+    ride = details.get("ride") or {}
+    start = int(ride.get("pedaling_start_offset") or 0)
+    out = []
+    for seg in ((details.get("segments") or {}).get("segment_list") or []):
+        subs = seg.get("subsegments_v2") or [{"offset": seg.get("start_time_offset"), "length": seg.get("length"),
+                                              "display_name": seg.get("name")}]
+        for sub in subs:
+            moves = [m.get("name") for m in sub.get("movements") or [] if m.get("name")]
+            out.append({"segment": seg.get("name") or "", "drill": bool(seg.get("is_drill")),
+                        "start_s": start + int(sub.get("offset") or 0), "length_s": int(sub.get("length") or 0),
+                        "name": sub.get("display_name") or "",
+                        "movements": "; ".join(m for m in moves if m != sub.get("display_name"))})
+    return out
+
+
+def segments(args) -> None:
+    """For the form classes (Form & drills, Form fixer), what Peloton's own class outline says: each part's
+    name and drill flag (the drill names the descriptions don't give), and where the outline calls a level
+    that the pace-target plan (what the skylines draw) leaves out. No token needed. Writes segments.csv."""
+    cache = Path(args.cache)
+    groups = set(args.groups)
+    rows, names, missed, classes = [], Counter(), [], 0
+    for f in sorted(Path(cache, "classes").glob("*.json")):
+        details = _read_json(f, {})
+        ride = details.get("ride") or {}
+        title = ride.get("title", "")
+        group = class_group(title)
+        if group not in groups:
+            continue
+        classes += 1
+        plan_ = plan(details, PELOTON_LEVELS)
+
+        def level_at(t):
+            return next((lbl for a, b, lbl in plan_ if a <= t < a + b), "")
+        aired = time.strftime("%Y-%m-%d", time.gmtime(int(ride.get("original_air_time") or 0)))
+        who = (ride.get("instructor") or {}).get("name") or ""
+        for s in class_segments(details):
+            said = SEGMENT_LEVEL.search(s["name"])
+            planned = level_at(s["start_s"] + s["length_s"] / 2)
+            match = "" if not said else ("yes" if planned.lower() == said.group(1).lower() else "no")
+            if match == "no":
+                missed.append((title, who, aired, s, planned or "no target"))
+            names[(s["segment"], s["name"], s["drill"])] += 1
+            rows.append({"id": f.stem, "title": title, "instructor": who, "aired": aired, "type": group,
+                         "part": stroke_part(title) if group == DRILL_GROUP else "", **s,
+                         "plan level": planned, "plan agrees": match})
+    if not classes:
+        raise SystemExit(f"No {', '.join(sorted(groups))} classes cached in {cache}: run fetch --drills first.")
+    flagged = {r["id"] for r in rows if r["drill"]}
+    print(f"{classes} classes ({', '.join(sorted(groups))}); {len(flagged)} have a part Peloton flags as a drill.")
+    print("\nParts by name, most common first (segment > part, * = flagged as a drill):")
+    for (seg, name, drill), n in names.most_common(args.show):
+        print(f"  {n:4d}  {seg} > {name}{' *' if drill else ''}")
+    print(f"\nWhere the outline names a level the pace plan doesn't have there: {len(missed)}")
+    for title, who, aired, s, planned in missed[:args.show]:
+        m, sec = divmod(s["start_s"], 60)
+        print(f"  {title} ({who}, {aired}) at {m}:{sec:02d}: outline '{s['name']}' {s['length_s']} s, plan {planned}")
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    with open(out / "segments.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+    print(f"\nWrote {out / 'segments.csv'} (one row per part of each class).")
+
+
 # ------------------------------------------------------------------ the index for the Pi's Classes page
 
 # Where the Pi's web page reads it (smartrow_bridge.web serves it as /peloton/classes.json). install.sh
@@ -813,6 +886,11 @@ def main(argv=None) -> None:
     d.add_argument("--cache", default="peloton-cache")
     d.add_argument("--out", default="peloton-report", help="folder for drills.csv")
     d.add_argument("--show", type=int, default=30, help="how many description-only matches to print")
+    g = sub.add_parser("segments", help="the form classes' own outline: drill names, and blocks the pace plan misses")
+    g.add_argument("--cache", default="peloton-cache")
+    g.add_argument("--out", default="peloton-report", help="folder for segments.csv")
+    g.add_argument("--groups", nargs="+", default=["Form & drills", "Form fixer"], help="class types to read")
+    g.add_argument("--show", type=int, default=60, help="how many lines of each list to print")
     x = sub.add_parser("index", help="write the class list the Pi's Classes page reads")
     x.add_argument("--cache", default="peloton-cache")
     x.add_argument("--out", default=PUBLISHED)
@@ -832,7 +910,8 @@ def main(argv=None) -> None:
     u.add_argument("--sessions", default=SESSIONS)
     args = p.parse_args(argv)
     {"fetch": fetch, "inspect": inspect, "analyse": analyse, "index": index, "update": update,
-     "history": history, "drills": drills}[args.cmd](args)
+     "history": history, "drills": drills,
+     "segments": segments}[args.cmd](args)
 
 
 if __name__ == "__main__":

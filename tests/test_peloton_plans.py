@@ -283,3 +283,41 @@ class DrillsTest(unittest.TestCase):
             with mock.patch("builtins.print"):
                 pp.fetch(args)
             self.assertEqual(sorted(asked), ["/api/ride/d1/details", "/api/ride/d2/details", "/api/ride/d3/details"])
+
+
+class SegmentsTest(unittest.TestCase):
+    def test_outline_names_drills_and_flags_blocks_the_plan_misses(self):
+        import csv
+        import io
+        from contextlib import redirect_stdout
+        d = details("10 min Form & Drills: The Recovery", 10, [(60, 180, 0), (180, 300, 1)])
+        d["ride"]["pedaling_start_offset"] = 60
+        d["segments"] = {"segment_list": [
+            {"name": "Warm Up", "is_drill": False, "start_time_offset": 0, "length": 120,
+             "subsegments_v2": [{"offset": 0, "length": 120, "display_name": "Easy Effort",
+                                 "movements": [{"name": "Easy Effort"}]}]},
+            {"name": "Drills", "is_drill": True, "start_time_offset": 120, "length": 120,
+             "subsegments_v2": [{"offset": 120, "length": 60, "display_name": "Arms Only",
+                                 "movements": [{"name": "Arms Only"}, {"name": "Pause"}]},
+                                {"offset": 180, "length": 60, "display_name": "Challenging Effort"}]}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp, "c")
+            (cache / "classes").mkdir(parents=True)
+            (cache / "classes" / "a.json").write_text(json.dumps(d))
+            (cache / "classes" / "b.json").write_text(json.dumps(details("30 min Pop Row", 30, [(0, 600, 1)])))
+
+            class A:
+                pass
+            args = A()
+            args.cache, args.out, args.groups, args.show = str(cache), str(Path(tmp, "o")), ["Form & drills"], 60
+            with redirect_stdout(io.StringIO()) as printed:
+                pp.segments(args)
+            rows = list(csv.DictReader(open(Path(tmp, "o", "segments.csv"), encoding="utf-8")))
+            self.assertEqual([(r["name"], r["start_s"], r["drill"], r["plan agrees"]) for r in rows],
+                             [("Easy Effort", "60", "False", "yes"), ("Arms Only", "180", "True", ""),
+                              ("Challenging Effort", "240", "True", "no")])
+            self.assertEqual((rows[1]["movements"], rows[1]["part"]), ("Pause", "Recovery"))
+            out = printed.getvalue()
+            self.assertIn("1 have a part Peloton flags as a drill", out)
+            self.assertIn("Drills > Arms Only *", out)
+            self.assertIn("outline 'Challenging Effort' 60 s, plan Moderate", out)
