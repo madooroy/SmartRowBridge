@@ -757,6 +757,25 @@ The downloaded plans stay in `peloton-cache`, the index in `/var/lib/smartrow-br
 (made by `install.sh`). `analyse` writes a report of how long each level is called (see the
 script's help). Keep the data for yourself: it is Peloton's.
 
+## Backing up the Pi
+
+Rows, settings and the Pi's own changes live only on the Pi. `tools/backup_pi.sh` packs them into one dated
+file (no sudo needed), never with the intervals.icu key, Strava tokens, saved Wi-Fi passwords or SSH keys:
+
+```
+bash ~/smartrow-bridge/tools/backup_pi.sh            # add --peloton to include the Peloton class cache
+```
+
+It keeps the last 5 in `~/smartrow-backups`. Copy the newest to a computer, e.g. from a Windows folder:
+
+```
+mkdir pi-backup
+scp pi@192.168.100.106:"~/smartrow-backups/pi-backup-*.tar.gz" pi-backup\
+```
+
+`MANIFEST.txt` inside says what the code was (commit, any local edits, saved as a diff) and lists every file.
+To restore rows: unpack and copy `data/smartrow-bridge/sessions` back to `/var/lib/smartrow-bridge/` (sudo).
+
 ## Optional: faster start-up
 
 The bridge works without this. It shortens the time from power-on to the bridge being visible by about 7 s
