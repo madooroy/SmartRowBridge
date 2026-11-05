@@ -333,6 +333,7 @@
           <option value="none">none</option>
           <option value="some">some</option>
         </select>
+        <button id="cClear" type="button" title="Every length, instructor and class type; no search or Similar">Clear filters</button>
       </div>
       <div class="ckey" id="cKey"></div>
       <details class="tile" id="cStack">
@@ -1195,6 +1196,18 @@ $("cList").addEventListener("click", (e) => {
   pelLike = pel.find((c) => c.id === b.dataset.like);
   renderClasses();
   $("classes").scrollTop = 0;
+});
+// Clear filters: every class shows again (all lengths ticked, every menu back to "any", no search, no
+// Similar). The order and the two-class builder's own choices stay as they are.
+$("cClear").addEventListener("click", () => {
+  for (const x of $("cLen").querySelectorAll("input")) x.checked = true;
+  for (const x of $("cWho").querySelectorAll("input")) x.checked = false;
+  for (const id of ["cGroup", "cPart", "cSpm", "cHard", "cMax", "cTaken"]) $(id).value = "";
+  $("cPart").hidden = $("cSpm").hidden = true;
+  $("cSearch").value = "";
+  pelLike = null;
+  pelShown = 100;
+  renderClasses();
 });
 $("cLike").addEventListener("click", (e) => { if (e.target.id === "cUnlike") { pelLike = null; renderClasses(); } });
 checkClasses();
