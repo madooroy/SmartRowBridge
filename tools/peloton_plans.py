@@ -15,6 +15,7 @@ that cache. Use it gently (one request a second by default) and for your own ana
     python3 tools/peloton_plans.py drills                          # drill/technique classes in the catalogue (no token)
     python3 tools/peloton_plans.py fetch --drills                  # then download just their plans
     python3 tools/peloton_plans.py segments                        # their own outlines: drill names (no token)
+    python3 tools/peloton_plans.py fetch --refresh --title "stroke rate"   # the Stroke Rate Rows (any length)
 
 Your token: sign in at members.onepeloton.com in a browser, open the developer tools (F12),
 Network tab, reload, click any request to api.onepeloton.com and copy the value of its
@@ -146,6 +147,9 @@ def fetch(args) -> None:
     if getattr(args, "drills", False):
         rides = [r for r in rides if drill_match(r)]
         print(f"Drill and technique classes only (title or description): {len(rides)}")
+    if getattr(args, "title", None):
+        rides = [r for r in rides if args.title.lower() in (r.get("title") or "").lower()]
+        print(f"Classes with '{args.title}' in the title: {len(rides)}")
     lengths = Counter(class_minutes(r) for r in rides)
     print("Classes by length: " + ", ".join(f"{m} min: {n}" for m, n in sorted(lengths.items(), reverse=True)))
     wanted = set(args.minutes) if args.minutes else set(lengths)
@@ -731,7 +735,9 @@ INDEX_MIN_MINUTES = 20
 # Drill classes come first: "Form & Drills Row: The Drive" is a drill class whatever else its title says.
 DRILL_GROUP = "Form & drills"
 # Form Fixer is a full workout with two instructors correcting form as you row, not a drill class.
-GROUPS = [("Form fixer", ("form fixer",)),
+# Stroke Rate Rows hold one rate for the class ("15 min Stroke Rate Row: 24 SPM").
+RATE_GROUP = "Stroke rate"
+GROUPS = [("Form fixer", ("form fixer",)), (RATE_GROUP, ("stroke rate",)),
           (DRILL_GROUP, ("form & drills", "form and drills", "intro to form", "drill", "technique")),
           ("Endurance", ("endurance",)), ("Intervals", ("interval",)), ("HIIT & Tabata", ("hiit", "tabata")),
           ("Beginner", ("beginner", "form", "learn")),
@@ -746,7 +752,14 @@ def class_group(title: str) -> str:
 # The part of the stroke a drill class works on. Peloton's Form & Drills descriptions are all the same
 # text, so the title ("Form & Drills: The Recovery") is the only place it is said.
 STROKE_PARTS = ("Recovery", "Catch", "Drive", "Finish")
-DRILL_MIN_MINUTES = 5  # drill classes are kept in the index from this length (most are 10 min)
+DRILL_MIN_MINUTES = 5  # drill and stroke-rate classes are kept in the index from this length (most are 10-15 min)
+SHORT_GROUPS = (DRILL_GROUP, RATE_GROUP)
+
+
+def class_spm(title: str) -> int | None:
+    """The rate a Stroke Rate Row holds, from its title ("…: 24 SPM")."""
+    m = re.search(r"(\d{2})\s*spm\b", title, re.I)
+    return int(m.group(1)) if m else None
 
 
 def stroke_part(title: str) -> str:
@@ -784,7 +797,8 @@ def index_entry(class_id: str, details: dict) -> dict | None:
             "d": int(ride.get("original_air_time") or 0), "m": class_minutes(ride), "len": length,
             "k": re.sub(r"^\d+ min ", "", title), "g": class_group(title),
             **({"fp": stroke_part(title)} if class_group(title) == DRILL_GROUP else {}),
-            **({"dr": blocks} if blocks else {}), **({"w": window} if window else {}),
+            **({"dr": blocks} if blocks else {}),
+            **({"spm": class_spm(title)} if class_group(title) == RATE_GROUP and class_spm(title) else {}), **({"w": window} if window else {}),
             "r": round(rating, 1) if rating else None, "rn": ride.get("difficulty_rating_count") or 0,
             "p": steps, "s": {str(c): t for c, t in totals.items()}, "none": none,
             "b": {str(c): t for c, t in longest.items()}, "x": sum(1 for _, _, c, _ in steps if c == 3),
@@ -827,7 +841,7 @@ def build_index(cache: Path, min_minutes: int = INDEX_MIN_MINUTES, sessions_dir=
     for f in sorted(Path(cache, "classes").glob("*.json")):
         details = json.loads(f.read_text(encoding="utf-8"))
         ride = details.get("ride") or {}
-        short = DRILL_MIN_MINUTES if class_group(ride.get("title", "")) == DRILL_GROUP else min_minutes
+        short = DRILL_MIN_MINUTES if class_group(ride.get("title", "")) in SHORT_GROUPS else min_minutes
         if class_minutes(ride) < min(min_minutes, short):
             continue
         entry = index_entry(f.stem, details)
@@ -892,6 +906,7 @@ def main(argv=None) -> None:
     f.add_argument("--cookie", action="store_true", help="sign in with a peloton_session_id cookie instead")
     f.add_argument("--minutes", type=int, nargs="+", help="only these class lengths, e.g. --minutes 60 45")
     f.add_argument("--refresh", action="store_true", help="list the catalogue again (new classes)")
+    f.add_argument("--title", help='only classes with this in the title, at every length, e.g. --title "stroke rate"')
     f.add_argument("--drills", action="store_true",
                    help="only the drill and technique classes (see the drills command), at every length")
     i = sub.add_parser("inspect", help="show what a cached class plan looks like")

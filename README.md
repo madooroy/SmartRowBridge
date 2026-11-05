@@ -746,6 +746,9 @@ writes `peloton-report/segments.csv`.
 After `index`, each skyline shades the outline's drill stretches in violet ("drill" in the key) and
 runs from the start of rowing to its end (the class video's intro is left out, and the last minute is no
 longer cut off).
+Stroke Rate Rows ("15 min Stroke Rate Row: 24 SPM", and Intro to Stroke Rate): `fetch --refresh --title
+"stroke rate"` lists the catalogue again and downloads just those (any length; `--title` takes any text), then
+`index`. They are the "Stroke rate" class type, kept from 5 min, with a filter by the rate each one holds.
 
 `fetch`, `history` and `update` ask for a token (hidden; never printed or saved): sign in at
 members.onepeloton.com, press F12, Network, reload, filter on `api.onepeloton`, click a `me`

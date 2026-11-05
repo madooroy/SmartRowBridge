@@ -147,6 +147,18 @@ class IndexTest(unittest.TestCase):
         self.assertEqual(pp.form_tags({"title": "10 min Form & Drills: The Recovery", "description": "Boilerplate."}),
                          ["recovery order"])
 
+    def test_stroke_rate_classes(self):
+        self.assertEqual(pp.class_group("15 min Stroke Rate Row: 24 SPM"), "Stroke rate")
+        self.assertEqual(pp.class_group("10 min Intro to Stroke Rate"), "Stroke rate")
+        e = pp.index_entry("abc", details("15 min Stroke Rate Row: 24 SPM", 15, [(60, 300, 1)]))
+        self.assertEqual((e["g"], e["spm"]), ("Stroke rate", 24))
+        self.assertNotIn("spm", pp.index_entry("abc", details("10 min Intro to Stroke Rate", 10, [(60, 300, 0)])))
+        with tempfile.TemporaryDirectory() as tmp:  # kept although under 20 min
+            cache = Path(tmp, "c")
+            (cache / "classes").mkdir(parents=True)
+            (cache / "classes" / "s.json").write_text(json.dumps(details("15 min Stroke Rate Row: 18 SPM", 15, [(0, 300, 0)])))
+            self.assertEqual([e["id"] for e in pp.build_index(cache, 20, None)], ["s"])
+
     def test_index_keeps_short_drill_classes(self):
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp, "c")
@@ -283,6 +295,11 @@ class DrillsTest(unittest.TestCase):
             with mock.patch("builtins.print"):
                 pp.fetch(args)
             self.assertEqual(sorted(asked), ["/api/ride/d1/details", "/api/ride/d2/details", "/api/ride/d3/details"])
+            asked.clear()  # by title instead (the cached ones are skipped)
+            args.drills, args.title = False, "rush"
+            with mock.patch("builtins.print"):
+                pp.fetch(args)
+            self.assertEqual(asked, ["/api/ride/n1/details"])
 
 
 class SegmentsTest(unittest.TestCase):
