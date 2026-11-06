@@ -44,6 +44,7 @@ import os
 import statistics
 import sys
 import urllib.request
+from contextlib import nullcontext
 from pathlib import Path
 
 import numpy as np
@@ -82,8 +83,9 @@ def model_path(path: str | None) -> str:
     return str(MODEL_PATH)
 
 
-def track(video: str, model: str, step: int = 2, t_from: float = 0.0, t_to: float = 1e9):
-    """(times, landmarks[n, 33, 3] as x px, y px, visibility) for every step-th frame."""
+def track(video: str, model: str, step: int = 2, t_from: float = 0.0, t_to: float = 1e9, tick=None):
+    """(times, landmarks[n, 33, 3] as x px, y px, visibility) for every step-th frame.
+    tick: called once a frame (the power guard's battery check; it limits itself to every 30 s)."""
     os.environ.setdefault("GLOG_minloglevel", "2")  # MediaPipe's own start-up chatter
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
     import cv2
@@ -106,6 +108,8 @@ def track(video: str, model: str, step: int = 2, t_from: float = 0.0, t_to: floa
         if t > t_to:
             break
         n += 1
+        if tick:
+            tick()
         if n % step:
             continue
         rgb = cv2.cvtColor(cv2.resize(frame, (FRAME_W, FRAME_H)), cv2.COLOR_BGR2RGB)
@@ -296,25 +300,12 @@ def print_summary(label: str, table: list[dict]) -> None:
               f"{r['elbow_at_knees_up']:>11.0f}°")
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("videos", nargs="+")
-    ap.add_argument("--strokes", help="the session's .strokes.json, to line each clip up with the pulley")
-    ap.add_argument("--step", type=int, default=2, help="track every Nth frame (default 2: 30 of 60 fps)")
-    ap.add_argument("--from", dest="t_from", type=float, default=0.0, help="start this many seconds into each clip")
-    ap.add_argument("--to", dest="t_to", type=float, default=1e9, help="stop this many seconds into each clip")
-    ap.add_argument("--by", type=float, default=60.0, help="summary groups, seconds (default 60)")
-    ap.add_argument("--model", help="pose model file (default: download Google's heavy model once)")
-    ap.add_argument("--out", help="folder for per-stroke CSV and JSON")
-    args = ap.parse_args()
-    if args.strokes and not Path(args.strokes).is_file():  # check now, not after an hour of tracking
-        ap.error(f"no strokes file {args.strokes}")
-
-    model = model_path(args.model)
+def run(args, model: str, tick) -> list[dict]:
+    """Track each clip, find its strokes, line it up with the session, print its summary."""
     everything = []
     for video in args.videos:
         label = Path(video).name
-        t, marks = track(video, model, args.step, args.t_from, args.t_to)
+        t, marks = track(video, model, args.step, args.t_from, args.t_to, tick)
         if len(t) < 30:
             print(f"\n{label}: no rower found in enough frames (is the whole body in shot?)")
             continue
@@ -326,6 +317,32 @@ def main() -> None:
         table = summary(rows, args.by) or summary(rows, 1e9)  # too few per group: one line for the clip
         print_summary(f"{label}: {len(rows)} strokes", table)
         everything += rows
+    return everything
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("videos", nargs="+")
+    ap.add_argument("--strokes", help="the session's .strokes.json, to line each clip up with the pulley")
+    ap.add_argument("--step", type=int, default=2, help="track every Nth frame (default 2: 30 of 60 fps)")
+    ap.add_argument("--from", dest="t_from", type=float, default=0.0, help="start this many seconds into each clip")
+    ap.add_argument("--to", dest="t_to", type=float, default=1e9, help="stop this many seconds into each clip")
+    ap.add_argument("--by", type=float, default=60.0, help="summary groups, seconds (default 60)")
+    ap.add_argument("--model", help="pose model file (default: download Google's heavy model once)")
+    ap.add_argument("--out", help="folder for per-stroke CSV and JSON")
+    ap.add_argument("--battery-min", type=int, default=50,
+                    help="on battery, Best performance only at or above this %% (default 50); below: Balanced")
+    ap.add_argument("--no-power-guard", action="store_true",
+                    help="leave sleep and power mode alone (by default, on Windows: no sleep while it runs, "
+                         "Best performance when plugged in or on enough battery, put back after)")
+    args = ap.parse_args()
+    if args.strokes and not Path(args.strokes).is_file():  # check now, not after an hour of tracking
+        ap.error(f"no strokes file {args.strokes}")
+
+    model = model_path(args.model)
+    from power_guard import PowerGuard
+    with PowerGuard(battery_min=args.battery_min) if not args.no_power_guard else nullcontext() as guard:
+        everything = run(args, model, guard.check if guard else None)
     if args.out and everything:
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)
