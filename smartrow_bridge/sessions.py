@@ -11,8 +11,9 @@ pulley's own totals to <directory>/<id>.json:
 
 The id is the session's start time, e.g. 2026-10-27T0702. Beside it, <id>.strokes.json
 holds every stroke (time, distance, power, rate, heart rate, length), from which the
-session's activity file is made for uploads (fitfile.py). Only the newest KEEP sessions
-are kept. The files are world-readable, so the web page (a separate, unprivileged
+session's activity file is made for uploads (fitfile.py). With the optional seat sensor,
+<id>.seat.csv holds the seat's position about 100 times a second (seat.py). Only the newest
+KEEP sessions are kept. The files are world-readable, so the web page (a separate, unprivileged
 service) can read them; nothing else about the bridge depends on them.
 
 If the bridge is stopped (shutdown, restart), the session is saved as complete there and
@@ -118,6 +119,14 @@ class SessionRecorder:
             log.warning("Could not mark session %s finished: %s", self._id, exc)
             return None
         return self._id
+
+    def current(self) -> tuple[str, float] | None:
+        """The session being recorded: (id, monotonic time of its first stroke, the strokes file's t = 0),
+        or None before it is saved (fewer than MIN_STROKES strokes) or after it is discarded."""
+        c = self.coach
+        if self._id is None or c.session != self._session or not c.stroke_log:
+            return None
+        return self._id, c.stroke_log[0][0]
 
     def drill_on(self) -> bool:
         """Whether the session being rowed (or about to start) is marked as drills."""
@@ -272,6 +281,7 @@ def save(directory: Path | str, record: dict, strokes: list[list] | None = None)
     for old in files[:-KEEP]:
         old.unlink(missing_ok=True)
         (directory / f"{old.stem}.strokes.json").unlink(missing_ok=True)
+        (directory / f"{old.stem}.seat.csv").unlink(missing_ok=True)
     return path
 
 
@@ -279,7 +289,7 @@ def delete(directory: str, session: str) -> None:
     """Remove a saved session and its strokes."""
     if not ID_PATTERN.match(session):
         return
-    for name in (f"{session}.json", f"{session}.strokes.json"):
+    for name in (f"{session}.json", f"{session}.strokes.json", f"{session}.seat.csv"):
         (Path(directory) / name).unlink(missing_ok=True)
 
 

@@ -569,6 +569,7 @@ sport settings), read once each time the bridge starts (so after changing it the
 | `SRB_COACH_SENSITIVITY` | `normal` | How readily the cues speak up: `low`, `normal` or `high` |
 | `SRB_SESSION_DIR` | `/var/lib/smartrow-bridge/sessions` | Where session summaries are saved; `off` disables |
 | `SRB_HEART_RATE`, `SRB_HEART_RATE_TO_FITNESS` | `off`, `0` | [Heart rate strap](#optional-heart-rate-strap) read by the bridge, and whether it also goes to the fitness app (off: Peloton ignored the rowing data with it) |
+| `SRB_SEAT_SENSOR` | `auto` | [Seat sensor](#optional-seat-sensor-tf-luna-lidar): `auto` (any USB serial device sending TF-Luna readings), `off`, or a port such as `/dev/ttyUSB0` |
 | `SRB_INTERVALS_KEY_FILE`, `SRB_INTERVALS_UPLOAD` | `/etc/smartrow-bridge/intervals.key`, `activity` | intervals.icu API key (`tools/setup_intervals.sh`); upload the session as an `activity`, a calendar `note`, or `off` |
 | `SRB_STRAVA_FILE`, `SRB_STRAVA_SPORT_TYPE` | `/etc/smartrow-bridge/strava.json`, `Rowing` | Strava authorization (`tools/setup_strava.sh`); activity type `Rowing` or `VirtualRow` |
 
@@ -665,6 +666,22 @@ the rowing data sent to the fitness app: with it in, Peloton showed only the hea
 distance and stroke rate, so pair the strap with Peloton directly (the COROS takes three connections).
 `SRB_HEART_RATE_TO_FITNESS=1` puts it in, for an app that wants it there. `tools/health_check.sh`
 has a *Heart rate strap* section.
+
+## Optional: seat sensor (TF-Luna lidar)
+
+A Benewake TF-Luna lidar behind the rails, aimed at a matte white target on the back of the seat, measures
+where the seat is about 100 times a second (0.2-8 m range; on the WaterRower about 34 cm at the finish to
+119 cm at the catch). It goes on a USB-to-serial adapter (CH340 or similar, jumper on 3.3 V) into any of the
+Pi's USB ports. Wire by **pin position**, not colour (the colours vary between cables): lidar pin 1 (+5 V) to
+the adapter's 5V, pin 2 (RXD) to TXD, pin 3 (TXD) to RXD, pin 4 (GND) to GND; leave pins 5 (CFG) and 6 (MUX)
+unconnected (CFG open = serial).
+
+Nothing to set: with the coach's session saving on, the bridge looks for it by itself (`SRB_SEAT_SENSOR=auto`)
+and logs `Seat sensor: TF-Luna lidar on /dev/ttyUSB0`. It can be plugged in or out at any time. Each
+session's readings are saved beside its strokes as `<id>.seat.csv` (`t` in seconds from the first stroke, as
+in the strokes file, then `cm` and `strength`; strength under 100 is unreliable); the newest 100 are kept.
+The readings are timed on the Pi with the same clock as the strokes, so seat position lines up with the
+pulley's force curves and drive flag. Nothing uses them yet beyond saving them.
 
 ## Optional: a web page for phones and tablets
 

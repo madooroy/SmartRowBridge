@@ -3,3 +3,5 @@ bleak>=0.22
 bumble>=0.0.190
 # Activity files for the optional intervals.icu / Strava uploads (pure Python)
 fit-tool==0.9.16
+# Optional seat sensor (TF-Luna lidar on a USB serial adapter, seat.py)
+pyserial>=3.5

@@ -72,6 +72,13 @@ class Bridge:
         self.recorder: sessions.SessionRecorder | None = None
         if self.coach and cfg.session_dir.lower() != "off":
             self.recorder = sessions.SessionRecorder(cfg.session_dir, self.coach)
+        # Seat sensor (seat.py): only with sessions saved, which is where its readings go.
+        self.seat = self.seat_writer = None
+        if self.recorder is not None and cfg.seat_sensor.lower() not in ("off", "0", "no"):
+            from .seat import SeatSensor, SeatWriter
+            self.seat = SeatSensor(cfg.seat_sensor)
+            self.seat_writer = SeatWriter(cfg.session_dir, self.seat)
+        self._seat_logged = 0  # seat readings counted in the last stats line
         self.uploader = None
         self._finish_result: dict | None = None  # the last "Done" (button Y) handled, for the screen
         if self.recorder is not None:
@@ -170,6 +177,15 @@ class Bridge:
                     "%d FTMS updates to fitness app | %d m, %d strokes",
                     STATS_INTERVAL_S, pulley, smartrow, ftms_sent, m.distance_m, m.stroke_count,
                 )
+            seat = self.seat
+            if seat is not None and seat.connected and (pulley or smartrow or ftms_sent):
+                taken = seat.since(self._seat_logged)
+                cms = [r[2] for r in taken]
+                if cms:
+                    log.info("Seat sensor, last %d s: %d readings, %d-%d cm", STATS_INTERVAL_S, len(cms),
+                             min(cms), max(cms))
+            if seat is not None:
+                self._seat_logged = seat.seq
             if self.parser.bad_checksums:
                 log.warning("%d pulley packets had bad checksums", self.parser.bad_checksums)
                 self.parser.bad_checksums = 0
@@ -263,6 +279,11 @@ class Bridge:
                     self.recorder.update(self.parser.metrics)
                 except Exception:  # noqa: BLE001 - nor may the session summary
                     log.exception("Session summary failed")
+            if self.seat_writer is not None:
+                try:
+                    self.seat_writer.update(self.recorder.current())
+                except Exception:  # noqa: BLE001 - nor the seat readings
+                    log.exception("Saving seat readings failed")
             if self.uploader is not None:
                 try:
                     self.uploader.tick()
@@ -318,9 +339,13 @@ class Bridge:
         ftp_task = None
         if self.coach:  # the FTP only when not set here; the heart-rate zones either way
             ftp_task = asyncio.create_task(self._ftp_loop(self.cfg.coach_ftp.strip().lower() in ("", "auto")))
+        if self.seat is not None:
+            self.seat.start()
         try:
             await self._run()
         finally:
+            if self.seat is not None:
+                self.seat.stop()
             if status_task is not None:
                 status_task.cancel()
             if ftp_task is not None:
@@ -330,6 +355,11 @@ class Bridge:
                     self.recorder.close(self.parser.metrics)  # stopping: save the session as it is
                 except Exception:  # noqa: BLE001
                     log.exception("Session summary failed")
+                if self.seat_writer is not None:
+                    try:
+                        self.seat_writer.update(self.recorder.current())  # the last second of readings
+                    except Exception:  # noqa: BLE001
+                        log.exception("Saving seat readings failed")
 
     async def _run(self) -> None:
         # Bumble is only needed once the pulley is connected, so load it in a thread

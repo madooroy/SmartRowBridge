@@ -37,6 +37,7 @@ class Config:
     session_dir: str
     heart_rate: str
     heart_rate_to_fitness: bool
+    seat_sensor: str
     intervals_key_file: str
     intervals_upload: str
     strava_file: str
@@ -120,6 +121,10 @@ def parse(argv: list[str] | None = None) -> Config:
                    help="also pass the strap's heart rate on to the fitness app (off by default: Peloton "
                         "then ignored the rowing data)")
     p.add_argument("--no-heart-rate-to-fitness", dest="heart_rate_to_fitness", action="store_false")
+    p.add_argument("--seat-sensor", default=_env("SRB_SEAT_SENSOR", "auto"),
+                   help="seat sensor (TF-Luna lidar on a USB serial adapter): auto (any USB serial device "
+                        "sending TF-Luna readings), off, or a port such as /dev/ttyUSB0; saved per session "
+                        "as <id>.seat.csv")
     p.add_argument("--intervals-key-file", default=_env("SRB_INTERVALS_KEY_FILE", "/etc/smartrow-bridge/intervals.key"),
                    help="intervals.icu API key (tools/setup_intervals.sh); with it, sessions go to intervals.icu")
     p.add_argument("--intervals-upload", choices=("activity", "note", "off"),
