@@ -199,6 +199,7 @@ Common problems:
 | `SRB_COACH_START_PCT`, `SRB_COACH_MAX_MIN`, `SRB_COACH_SENSITIVITY` | `20`, `5`, `normal` | Coach tuning: how much harder than steady an interval is (%), the longest effort to count (minutes), how readily the cues speak up (`low`, `normal`, `high`). The first two are not used once the coach has an FTP (`SRB_COACH_FTP` or intervals.icu): the FTP sets the threshold and there is no time limit |
 | `SRB_WEB_PORT` | `8080` | Port of the optional [web page](#optional-a-web-page-for-phones-and-tablets) |
 | `SRB_DISPLAY_LED`, `SRB_DISPLAY_HOLD_S`, `SRB_DISPLAY_SLEEP_S` | `1`, `2`, `3600` | Screen only: `0` leaves its LED off; seconds to hold button A to switch the Pi off; seconds with nothing connected or happening before the screen goes dark (`0` = never; rowing, a connection or any button wakes it) |
+| `SRB_DISPLAY_FLIP` | `0` | Screen only: `1` = the HAT is mounted the other way up. The picture turns 180° and each button keeps the job of its corner (A top left, B bottom left, X top right, Y bottom right as you look at it), so the letters printed on the board no longer match |
 
 ## How it works
 

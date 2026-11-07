@@ -14,6 +14,8 @@ from gpiod.line import Bias, Direction, Value
 from PIL import Image
 from st7789 import ST7789
 
+from . import button_pin_name, flipped
+
 BUTTONS = {"A": 5, "B": 6, "X": 16, "Y": 24}
 LED_PINS = {"r": 17, "g": 27, "b": 22}
 SPI_PORT, SPI_CS, DC_PIN, BACKLIGHT_PIN = 0, 1, 9, 13
@@ -36,13 +38,18 @@ _BACKLIGHT_OFF = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Val
 
 
 class DisplayHat:
-    def __init__(self, buttons: bool = True, led: bool = True) -> None:
+    def __init__(self, buttons: bool = True, led: bool = True, flip: bool | None = None) -> None:
+        # rotation=180 is the HAT the right way up (as Pimoroni's library has it); flipped: 0.
+        self.flip = flipped() if flip is None else flip
         self.lcd = ST7789(
             port=SPI_PORT, cs=SPI_CS, dc=DC_PIN, backlight=None,  # backlight: see _BACKLIGHT_ON
-            width=WIDTH, height=HEIGHT, rotation=180, spi_speed_hz=60_000_000,
+            width=WIDTH, height=HEIGHT, rotation=0 if self.flip else 180, spi_speed_hz=60_000_000,
         )
-        self._buttons = {name: gpiodevice.get_pin(pin, f"button-{name}", _INPUT)
-                         for name, pin in BUTTONS.items()} if buttons else {}
+        # Keyed by corner (A top left ... Y bottom right as you look at it), read from the
+        # button that is in that corner now.
+        self._buttons = {corner: gpiodevice.get_pin(BUTTONS[button_pin_name(corner, self.flip)],
+                                                    f"button-{corner}", _INPUT)
+                         for corner in BUTTONS} if buttons else {}
         self._led = {colour: gpiodevice.get_pin(pin, f"led-{colour}", _LED_OFF)
                      for colour, pin in LED_PINS.items()} if led else {}
         self._backlight = gpiodevice.get_pin(BACKLIGHT_PIN, "backlight", _BACKLIGHT_ON)

@@ -194,7 +194,7 @@ def summary(stats: dict, parser: FrameParser) -> str:
     gaps = stats["gaps"]
     if len(gaps) > 10:
         gaps_ms = sorted(g * 1000 for g in gaps)
-        lines.append(f"Arrival gaps on the laptop: median "
+        lines.append(f"Arrival gaps (time between readings arriving): median "
                      f"{statistics.median(gaps_ms):.1f} ms, 99th pct "
                      f"{gaps_ms[int(len(gaps_ms) * 0.99) - 1]:.1f} ms, "
                      f"longest {gaps_ms[-1]:.1f} ms")

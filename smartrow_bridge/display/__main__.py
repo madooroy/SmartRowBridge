@@ -95,6 +95,8 @@ def run() -> None:
     sleep_s = float(_env("SRB_DISPLAY_SLEEP_S", "3600"))
 
     hat = DisplayHat(led=use_led)
+    if hat.flip:
+        log.info("Screen flipped (SRB_DISPLAY_FLIP=1): picture turned 180 degrees, buttons by corner")
     controller = Controller(hold_s=hold_s, sleep_s=sleep_s)
     stop = False
 

@@ -474,3 +474,31 @@ class SleepTest(unittest.TestCase):
         c = app.Controller(sleep_s=0)
         for t in range(0, 7200, 600):
             self.assertTrue(self.step(c, self.fresh(t), t).screen_on)
+
+
+class FlipTest(unittest.TestCase):
+    def test_each_corner_reads_the_button_now_in_it(self):
+        import os
+        from unittest import mock
+        from smartrow_bridge import display
+        self.assertEqual([display.button_pin_name(c, False) for c in "ABXY"], list("ABXY"))
+        # turned 180 degrees: top left <-> bottom right, bottom left <-> top right
+        self.assertEqual([display.button_pin_name(c, True) for c in "ABXY"], list("YXBA"))
+        for value, want in (("1", True), ("yes", True), ("", False), ("0", False)):
+            with mock.patch.dict(os.environ, {"SRB_DISPLAY_FLIP": value}):
+                self.assertIs(display.flipped(), want)
+
+    def test_shutdown_hook_reads_the_settings_file(self):
+        import os
+        import tempfile
+        from unittest import mock
+        from smartrow_bridge import display
+        with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as f:
+            f.write("# Screen only\nSRB_DISPLAY_SLEEP_S=3600\nSRB_DISPLAY_FLIP=1\n")
+        try:
+            env = {k: v for k, v in os.environ.items() if k != "SRB_DISPLAY_FLIP"}
+            with mock.patch.dict(os.environ, env, clear=True):
+                self.assertTrue(display.flipped(f.name))
+                self.assertFalse(display.flipped(f.name + ".missing"))
+        finally:
+            os.unlink(f.name)
