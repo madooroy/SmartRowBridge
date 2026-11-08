@@ -63,6 +63,7 @@
   #rowing.coached .grid4 .value { font-size: clamp(28px, 9vmin, 100px); }
   #rowing.coached #rDistTile { display: none; }
   #rCurveTile { flex: 1; min-height: 120px; }
+  #rRhythm { flex: none; width: 100%; height: clamp(20px, 4.5vmin, 40px); display: block; }
   .footer.idle { color: var(--dim); }
 
   /* Interval */
@@ -220,6 +221,7 @@
         <div class="tile" id="rDistTile"><div class="label">METRES</div><div class="value" id="rDist">0</div></div>
       </div>
       <div class="tile curve" id="rCurveTile" hidden><canvas id="rCurve"></canvas><div class="clen" id="rNote"></div></div>
+      <canvas id="rRhythm" hidden></canvas>
       <div class="cue none" id="rCue" hidden>…</div>
       <div class="footer" id="rFooter"></div>
     </section>
@@ -421,6 +423,27 @@ function show(id) {
 // ------------------------------------------------------------------ curve
 
 let scratchCanvas = null;
+// One stroke to scale, as on the screen (display/screens.py _rhythm_bar): the drive (blue) then the
+// recovery (grey), a tick where the drive would end at the aim (1:2), and the figures at the right.
+function plotRhythm(g, x, y, w, h, rhythm) {
+  const { drive_s: drive, recovery_s: recovery } = rhythm, r = Math.min(6, h / 2);
+  g.fillStyle = C.tile; g.beginPath(); g.roundRect(x, y, w, h, r); g.fill();
+  g.fillStyle = C.blue; g.beginPath(); g.roundRect(x, y, w * drive / (drive + recovery), h, r); g.fill();
+  const aim = x + w / (1 + (rhythm.aim ?? 2));
+  g.strokeStyle = C.fg; g.lineWidth = 2; g.beginPath(); g.moveTo(aim, y - 2); g.lineTo(aim, y + h + 2); g.stroke();
+  g.font = `${Math.round(h * 0.62)}px system-ui, sans-serif`; g.fillStyle = C.dim; g.textAlign = "right";
+  g.textBaseline = "middle"; g.fillText(`drive ${drive.toFixed(1)} s · 1:${rhythm.ratio.toFixed(1)}`, x + w - 8, y + h / 2 + 1);
+}
+function drawRhythm(canvas, rhythm) {
+  const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!w || !h) return;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  const g = canvas.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  plotRhythm(g, 0, 2, w, h - 4, rhythm);
+}
+
 function drawCurve(canvas, curve, steady, colour, gapHalf = "back", labels = true, stall = null) {
   const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
   if (!w || !h) return;
@@ -576,6 +599,9 @@ function renderRowing(st) {
   $("rowing").classList.toggle("coached", !!curve && !recovery);
   $("rCurveTile").hidden = !curve || recovery;
   $("rCue").hidden = !curve || recovery;
+  const rhythm = curve && !recovery && rowing ? coach.rhythm : null;  // as the screen: Easy, rowing, low rates
+  $("rRhythm").hidden = !rhythm;
+  if (rhythm) drawRhythm($("rRhythm"), rhythm);
   if (curve && !recovery) {  // Easy: each stroke over your early Easy strokes, and the cue
     // A slow change over the Easy rowing (coach.drift) is a note in place of LOOKS GOOD, never of a cue.
     const drift = coach.cue === "good" && coach.drift;
@@ -2017,6 +2043,11 @@ function drawPip() {
     g.textBaseline = "middle"; g.fillText(t, x, y);
   };
   const box = (y, h, colour, r = 10) => { g.fillStyle = colour; g.beginPath(); g.roundRect(10, y, W - 20, h, r); g.fill(); };
+  const fit = (t, size, maxW, bold = true) => {  // the largest size up to `size` at which t fits maxW
+    g.font = `${bold ? "700 " : ""}${size}px system-ui, sans-serif`;
+    const w = g.measureText(t).width;
+    return w > maxW ? Math.max(10, Math.floor(size * maxW / w)) : size;
+  };
   if (!st || st.stage === null || st.age_s > STALE_S) { text("Bridge not running", W / 2, H / 2, 32, C.red, "center"); return; }
   const coach = st.coach, live = coach && coach.live, last = coach && coach.last;
   const m = st.metrics || {}, rowing = !!st.rowing;
@@ -2031,22 +2062,38 @@ function drawPip() {
     const top = 80, cueY = H - FOOT - CUE_H - 6;
     box(top, cueY - top - 8, C.tile);
     plotCurve(g, 10, top, W - 20, cueY - top - 8, live.stroke_curve || live.curve, live.steady_curve, curveColour, "both", false, 1, live.stall);
+    if (live.balance !== null && live.balance !== undefined && live.length_delta_cm !== null && live.length_delta_cm !== undefined)
+      text(`length ${signed(live.length_delta_cm, " cm")}`, 22, top + 16, 16, C.dim, "left", false);
     const [label, cueColour] = CUES[live.cue] || ["…", C.tile];
     box(cueY, CUE_H, cueColour, 14);
     const size = Math.min(44, Math.floor((W - 40) / (label.length * 0.62)));
     text(label, W / 2, cueY + CUE_H / 2, size, live.cue ? C.bg : C.dim, "center");
     footer();
   } else if (last && ((coach.show_summary && closedIndex !== last.index) || Date.now() / 1000 < recallUntil)) {
+    // As the screen's summary (display/screens.py summary_screen): the effort's average curve over
+    // Easy, then SHAPE (or FINISH), LENGTH and PEAK, and a note when something needs one.
     const colour = shapeColour(last), bal = last.balance, hasBal = bal !== null && bal !== undefined;
-    text((last.intensity ? `${last.intensity.toUpperCase()} · ` : "") + `INTERVAL ${last.index}`, 16, 36, 22, C.dim);
-    text(fmtTime(last.duration_s), W / 2, H * 0.24, 56, C.fg, "center");
-    text(`${last.power_w} W`, W / 2, H * 0.40, 56, C.fg, "center");
-    text(hasBal ? "SHAPE" : "FINISH", 16, H * 0.60, 24, C.dim, "left", false);
-    text(hasBal ? (bal >= 1 ? "LATE" : bal <= -1 ? "FADED" : "GOOD") : signed(last.finish_pct, "%"),
-         W - 16, H * 0.60, 60, colour, "right");
-    text(last.legs_late ? `LATE PUSH · peak ${last.peak_at_pct ?? "–"}%` : `length ${signed(Math.round(last.length_delta_cm), " cm")}`,
-         W / 2, H * 0.76, 26, last.legs_late ? C.amber : C.dim, "center", !!last.legs_late);
-    footer();
+    const legs = !!last.legs_late, faded = hasBal && bal <= -1;
+    text((last.intensity ? `${last.intensity.toUpperCase()} · ` : "") + `INTERVAL ${last.index}`, 16, 24, 20, C.dim);
+    const head = `${fmtTime(last.duration_s)} · ${last.power_w} W`;
+    text(head, W / 2, 64, fit(head, 46, W - 32), C.fg, "center");
+    const TILE_H = 86, tilesY = H - FOOT - TILE_H - 4, top = 96;
+    box(top, tilesY - top - 8, C.tile);
+    plotCurve(g, 10, top, W - 20, tilesY - top - 8, last.curve || [], last.steady_curve || [], colour, "both", false);
+    const first = hasBal ? ["SHAPE", bal >= 1 ? "LATE" : bal <= -1 ? "FADED" : "GOOD", Math.abs(bal) < 1 ? C.green : C.amber]
+                         : ["FINISH", signed(last.finish_pct, "%"), colour];
+    const tiles = [first, ["LENGTH", `${Math.round(last.length_cm)} cm`, C.fg], ["PEAK", `${last.peak_n} N`, C.fg]];
+    const gap = 8, tw = (W - 20 - 2 * gap) / 3;
+    tiles.forEach(([label, value, valueColour], k) => {
+      const x = 10 + k * (tw + gap);
+      g.fillStyle = C.tile; g.beginPath(); g.roundRect(x, tilesY, tw, TILE_H, 10); g.fill();
+      text(label, x + 10, tilesY + 16, 15, C.dim, "left", false);
+      text(value, x + tw / 2, tilesY + 54, fit(value, 34, tw - 14), valueColour, "center");
+    });
+    const note = legs ? `LATE PUSH · peak ${last.peak_at_pct ?? "–"}%, Easy ${last.steady_peak_at_pct ?? "–"}%`
+      : faded ? `FINISH ${signed(last.finish_pct, "%")} vs Easy` : null;
+    if (note) text(note, W / 2, H - FOOT / 2 - 2, fit(note, 20, W - 24), C.amber, "center");
+    else footer();
   } else if (coach && coach.stroke_curve && coach.stroke_curve.length && coach.intensity !== "Recovery") {
     // Easy: power, then pace and rate, each stroke over your fresh Easy stroke, and the cue.
     const [label, cueColour] = CUES[coach.cue] || [coach.waiting || (coach.warming_up ? "warming up" : "learning your Easy stroke"), null];
@@ -2054,8 +2101,11 @@ function drawPip() {
     text(rowing ? `${fmtPace(m.pace_s_per_500m)} · ${Math.round(m.stroke_rate_spm)} spm` : "paused",
          W - 16, 36, 24, rowing ? C.fg : C.dim, "right", false);
     const top = 70, cueY = H - FOOT - CUE_H - 6;
-    box(top, cueY - top - 8, C.tile);
-    plotCurve(g, 10, top, W - 20, cueY - top - 8, coach.stroke_curve, coach.steady_curve, cueColour || C.blue, "both", false);
+    const rhythm = rowing ? coach.rhythm : null, RH = 24;  // the drive:recovery bar, as on the screen
+    const curveH = cueY - top - 8 - (rhythm ? RH + 6 : 0);
+    box(top, curveH, C.tile);
+    plotCurve(g, 10, top, W - 20, curveH, coach.stroke_curve, coach.steady_curve, cueColour || C.blue, "both", false);
+    if (rhythm) plotRhythm(g, 10, top + curveH + 6, W - 20, RH, rhythm);
     text("EASY", 22, top + 16, 16, C.dim, "left");
     box(cueY, CUE_H, cueColour || C.tile, 14);
     const size = cueColour ? Math.min(42, Math.floor((W - 40) / (label.length * 0.62))) : 22;
