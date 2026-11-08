@@ -29,7 +29,7 @@ from bumble.gatt import Characteristic, CharacteristicValue, Service
 from bumble.hci import Address
 from bumble.transport import open_transport
 
-from . import advertising, ftms
+from . import advertising, ftms, gatt_views
 from .gatt_spec import CharSpec, PulleySnapshot, short_uuid
 from .protocol import RowingMetrics
 
@@ -153,6 +153,21 @@ class BridgePeripheral:
         log.info("Rower Data %s by %s (connection 0x%04X)",
                  "subscribed" if notify else "unsubscribed", connection.peer_address, connection.handle)
 
+    def _install_views(self, services: list) -> None:
+        """Each virtual device shows only its own services (gatt_views.py): "PiRower HR" just the
+        Heart Rate service, the others everything but it, as before the sensor existed."""
+        hr_service = next(s for s in services if s.uuid == UUID.from_16_bits(advertising.HEART_RATE_SERVICE_UUID_16))
+        hr_handles = gatt_views.handles(hr_service)
+        other_handles = set().union(*(gatt_views.handles(s) for s in services if s is not hr_service))
+        hr_address = self.hr_sensor[0].upper()
+
+        def hidden(bearer) -> set[int]:
+            connection = gatt_views.connection_of(bearer)
+            own = str(getattr(connection, "self_address", "")).upper()
+            return other_handles if own.startswith(hr_address) else hr_handles
+
+        gatt_views.install(self.device.gatt_server, hidden)
+
     @property
     def hr_sensor_connected(self) -> bool:
         """True while an app is subscribed to the relayed heart rate."""
@@ -251,12 +266,15 @@ class BridgePeripheral:
 
     async def __aenter__(self) -> "BridgePeripheral":
         self._transport = await open_transport(self.transport_spec)
-        # The GAP Device Name is shared by both virtual devices. iOS shows it after
+        # The GAP Device Name is shared by all the virtual devices. iOS shows it after
         # connecting, so it carries the fitness name that Peloton displays.
         self.device = Device.with_hci(
             self.fitness_name, Address(self.clone_address), self._transport.source, self._transport.sink
         )
-        self.device.add_services(self._build_services())
+        services = self._build_services()
+        self.device.add_services(services)
+        if self.hr_sensor is not None:
+            self._install_views(services)
         self.device.on("connection", self._on_connection)
         await self.device.power_on()
 

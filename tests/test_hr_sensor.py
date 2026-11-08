@@ -100,3 +100,27 @@ class StrapSearchTest(unittest.TestCase):
                 return await link._find()
 
         self.assertIs(asyncio.run(find()), strap)
+
+
+class ViewsByDeviceTest(unittest.TestCase):
+    def test_hr_device_shows_only_heart_rate_and_the_others_never_do(self):
+        from smartrow_bridge import gatt_views
+        p = peripheral()
+        services = p._build_services()
+        handle = 1
+        for s in services:  # number them as Bumble would
+            s.handle = handle
+            handle += 1 + 2 * len(s.characteristics)
+            s.end_group_handle = handle - 1
+        p.device = SimpleNamespace(gatt_server=object())
+        with mock.patch.object(gatt_views, "install") as install:
+            p._install_views(services)
+        hidden = install.call_args.args[1]
+        hr = next(s for s in services if "180D" in str(s.uuid).upper())
+        ftms = next(s for s in services if "1826" in str(s.uuid).upper())
+        conn = lambda own: SimpleNamespace(self_address=own, peer_address="5D:33:26:B2:E8:A6")
+        to_hr, to_rower = hidden(conn("F2:53:52:4F:57:33/P")), hidden(conn("F2:53:52:4F:57:32/P"))
+        self.assertTrue(gatt_views.handles(ftms) <= to_hr)
+        self.assertFalse(gatt_views.handles(hr) & to_hr)
+        self.assertEqual(to_rower, gatt_views.handles(hr))
+        self.assertEqual(hidden(conn("F2:53:52:4F:57:31/P")), gatt_views.handles(hr))  # SmartRow app
