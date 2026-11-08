@@ -5,10 +5,15 @@ GATT server containing:
   * Server 1 - a byte-for-byte clone of the pulley's services (0x1234 ...),
     whose notifications are the untouched pulley packets, and whose writes are
     forwarded to the real pulley;
-  * Server 2 - a Fitness Machine Service rower (0x1826 / 0x2AD1).
+  * Server 2 - a Fitness Machine Service rower (0x1826 / 0x2AD1);
+  * optionally, a standard Heart Rate service (0x180D / 0x2A37) relaying the
+    bridge's own strap (SRB_HEART_RATE_SENSOR).
 It is advertised as two devices (two extended advertising sets with their own
 addresses): the pulley clone for the SmartRow app, and a generically named FTMS
-rower for Peloton. Each set restarts by itself when its central disconnects.
+rower for Peloton; with the heart-rate sensor on, a third set ("PiRower HR")
+that fitness apps list as a heart-rate monitor, so they pair heart rate with the
+Pi rather than competing for the strap's few connections. Each set restarts by
+itself when its central disconnects.
 Controllers without extended advertising fall back to one combined advertisement.
 """
 
@@ -31,6 +36,9 @@ from .protocol import RowingMetrics
 log = logging.getLogger(__name__)
 
 MAX_CONNECTIONS = 2
+HR_MEASUREMENT_UUID_16 = 0x2A37
+BODY_SENSOR_LOCATION_UUID_16 = 0x2A38
+BODY_SENSOR_OTHER = 0x00
 # Bumble's default is one advertisement per second, which phones can take several
 # seconds to catch. 100 ms is within Apple's recommended range for accessories and
 # gets the devices listed quickly; the Pi is mains powered, so the cost is nil.
@@ -65,6 +73,7 @@ class BridgePeripheral:
         on_clone_write: CloneWriteCallback,
         advertise_pulley_id: bool = True,
         heart_rate: bool = False,
+        hr_sensor: tuple[str, str] | None = None,
     ) -> None:
         self.transport_spec = transport
         self.clone_address = clone_address
@@ -74,6 +83,8 @@ class BridgePeripheral:
         self.pulley = pulley
         self.on_clone_write = on_clone_write
         self.heart_rate = heart_rate  # include the bridge's heart rate in FTMS Rower Data
+        # (address, name) of the relayed heart-rate sensor, or None (extended advertising only)
+        self.hr_sensor = hr_sensor
         # The pulley ID the SmartRow app shows as "SmartRow-<id>". Left out only to test
         # whether the app accepts a clone without it (iOS cannot advertise it).
         self.manufacturer_data = pulley.manufacturer_data if advertise_pulley_id else {}
@@ -91,6 +102,9 @@ class BridgePeripheral:
         self._tasks: list[asyncio.Task] = []
         self._rower_data: Characteristic | None = None
         self._control_point: Characteristic | None = None
+        self._hr_measurement: Characteristic | None = None
+        self._hr_connections: set[int] = set()
+        self.hr_updates_sent = 0
 
     @property
     def tablet_connected(self) -> bool:
@@ -137,6 +151,19 @@ class BridgePeripheral:
         else:
             self._fitness_connections.discard(connection.handle)
         log.info("Rower Data %s by %s (connection 0x%04X)",
+                 "subscribed" if notify else "unsubscribed", connection.peer_address, connection.handle)
+
+    @property
+    def hr_sensor_connected(self) -> bool:
+        """True while an app is subscribed to the relayed heart rate."""
+        return bool(self._hr_connections)
+
+    def _on_hr_subscription(self, connection: Connection, notify: bool, _indicate: bool) -> None:
+        if notify:
+            self._hr_connections.add(connection.handle)
+        else:
+            self._hr_connections.discard(connection.handle)
+        log.info("Heart rate %s by %s (connection 0x%04X)",
                  "subscribed" if notify else "unsubscribed", connection.peer_address, connection.handle)
 
     def _on_clone_subscription(self, connection: Connection, notify: bool, indicate: bool) -> None:
@@ -196,6 +223,19 @@ class BridgePeripheral:
                 ],
             )
         )
+        if self.hr_sensor is not None:
+            self._hr_measurement = Characteristic(
+                UUID.from_16_bits(HR_MEASUREMENT_UUID_16),
+                Characteristic.Properties.NOTIFY,
+                Characteristic.READABLE,
+                b"",
+            )
+            self._hr_measurement.on("subscription", self._on_hr_subscription)
+            services.append(Service(UUID.from_16_bits(advertising.HEART_RATE_SERVICE_UUID_16), [
+                self._hr_measurement,
+                Characteristic(UUID.from_16_bits(BODY_SENSOR_LOCATION_UUID_16), Characteristic.Properties.READ,
+                               Characteristic.READABLE, bytes([BODY_SENSOR_OTHER])),
+            ]))
         return services
 
     def _on_control_point(self, connection: Connection, value: bytes) -> None:
@@ -226,6 +266,9 @@ class BridgePeripheral:
             log.warning("Extended advertising unavailable (%s); falling back to one combined "
                         "advertisement named %r", exc, self.clone_name)
             self._legacy_advertising = True
+            if self.hr_sensor:
+                log.warning("Heart-rate sensor not offered: it needs extended advertising")
+                self.hr_sensor = None
             adv, scan_rsp = advertising.combined(self.clone_name, self.manufacturer_data)
             self.device.advertising_data = adv
             self.device.scan_response_data = scan_rsp
@@ -249,7 +292,8 @@ class BridgePeripheral:
              advertising.smartrow(self.clone_name, self.manufacturer_data)),
             ("fitness apps", self.fitness_address, self.fitness_name,
              advertising.fitness(self.fitness_name)),
-        )
+        ) + ((("fitness apps' heart rate", self.hr_sensor[0], self.hr_sensor[1],
+               advertising.heart_rate(self.hr_sensor[1])),) if self.hr_sensor else ())
         for audience, address, name, (adv, scan_rsp) in sets:
             await self.device.create_advertising_set(
                 advertising_parameters=params,
@@ -274,6 +318,8 @@ class BridgePeripheral:
             target = f"to {self.clone_name!r}"
         elif own.startswith(self.fitness_address.upper()):
             target = f"to {self.fitness_name!r}"
+        elif self.hr_sensor and own.startswith(self.hr_sensor[0].upper()):
+            target = f"to {self.hr_sensor[1]!r}"
         else:
             target = f"at {own or 'unknown address'}"
         log.info("Central connected %s: %s (connection 0x%04X)", target, connection.peer_address, connection.handle)
@@ -282,6 +328,7 @@ class BridgePeripheral:
             log.info("Central disconnected: %s (reason 0x%02X)", connection.peer_address, reason)
             self._tablet_connections.discard(connection.handle)
             self._fitness_connections.discard(connection.handle)
+            self._hr_connections.discard(connection.handle)
             if self._legacy_advertising:
                 asyncio.get_running_loop().create_task(self._update_advertising())
 
@@ -321,6 +368,15 @@ class BridgePeripheral:
                     self.forwarded_to_smartrow += 1
             except Exception as exc:  # noqa: BLE001
                 log.warning("Forwarding to SmartRow app failed: %s", exc)
+
+    async def publish_heart_rate(self, bpm: int) -> None:
+        """The strap's latest reading as a standard Heart Rate Measurement (flags: 8-bit value,
+        sensor contact supported and detected)."""
+        if self._hr_measurement is None or not 0 < bpm < 256:
+            return
+        await self.device.notify_subscribers(self._hr_measurement, bytes([0x06, bpm]))
+        if self._hr_connections:
+            self.hr_updates_sent += 1
 
     async def publish_rower_data(self, metrics: RowingMetrics) -> None:
         await self.device.notify_subscribers(self._rower_data, ftms.encode_rower_data(metrics, self.heart_rate))

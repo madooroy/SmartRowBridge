@@ -37,6 +37,8 @@ class Config:
     session_dir: str
     heart_rate: str
     heart_rate_to_fitness: bool
+    heart_rate_sensor: bool
+    heart_rate_sensor_name: str
     seat_sensor: str
     intervals_key_file: str
     intervals_upload: str
@@ -121,6 +123,13 @@ def parse(argv: list[str] | None = None) -> Config:
                    help="also pass the strap's heart rate on to the fitness app (off by default: Peloton "
                         "then ignored the rowing data)")
     p.add_argument("--no-heart-rate-to-fitness", dest="heart_rate_to_fitness", action="store_false")
+    p.add_argument("--heart-rate-sensor", dest="heart_rate_sensor", action="store_true",
+                   default=_env("SRB_HEART_RATE_SENSOR", "0") in ("1", "true", "yes"),
+                   help="also offer the strap's heart rate as a separate heart-rate sensor (\"PiRower HR\") "
+                        "for the fitness app to pair, so it needn't connect to the strap itself")
+    p.add_argument("--no-heart-rate-sensor", dest="heart_rate_sensor", action="store_false")
+    p.add_argument("--heart-rate-sensor-name", default=_env("SRB_HEART_RATE_SENSOR_NAME", "PiRower HR"),
+                   help="the heart-rate sensor's name, as the fitness app lists it")
     p.add_argument("--seat-sensor", default=_env("SRB_SEAT_SENSOR", "auto"),
                    help="seat sensor (TF-Luna lidar on a USB serial adapter): auto (any USB serial device "
                         "sending TF-Luna readings), off, or a port such as /dev/ttyUSB0; saved per session "

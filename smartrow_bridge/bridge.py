@@ -28,6 +28,7 @@ def _load_peripheral_module():
 
 POLL_INTERVAL_S = 2.0
 FTMS_INTERVAL_S = 1.0
+HR_SENSOR_INTERVAL_S = 1.0
 STATS_INTERVAL_S = 60.0
 STATUS_INTERVAL_S = 1.0
 
@@ -79,6 +80,7 @@ class Bridge:
             self.seat = SeatSensor(cfg.seat_sensor)
             self.seat_writer = SeatWriter(cfg.session_dir, self.seat)
         self._seat_logged = 0  # seat readings counted in the last stats line
+        self._hr_logged = 0  # relayed heart-rate updates counted in the last stats line
         self.uploader = None
         self._finish_result: dict | None = None  # the last "Done" (button Y) handled, for the screen
         if self.recorder is not None:
@@ -161,6 +163,19 @@ class Bridge:
             log.debug("FTMS %d W, %.1f spm, %d m, %d s/500m", snap.power_w, snap.stroke_rate_spm,
                       snap.distance_m, snap.pace_s_per_500m)
 
+    async def _hr_sensor_loop(self) -> None:
+        """Once a second, the strap's latest fresh reading to the relayed heart-rate sensor
+        (nothing while the strap is off or out of range)."""
+        while True:
+            await asyncio.sleep(HR_SENSOR_INTERVAL_S)
+            bpm = self.parser.metrics.heart_rate_bpm
+            if not bpm or not self.hr_link.fresh():
+                continue
+            try:
+                await self.peripheral.publish_heart_rate(bpm)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Heart-rate notify failed: %s", exc)
+
     async def _stats_loop(self) -> None:
         """Once a minute, while anything is flowing, log proof that data reaches both apps."""
         last = (0, 0, 0)
@@ -170,12 +185,15 @@ class Bridge:
             now = (self._pulley_packets, p.forwarded_to_smartrow, p.ftms_updates_sent)
             pulley, smartrow, ftms_sent = (n - o for n, o in zip(now, last))
             last = now
+            hr_sent = p.hr_updates_sent - self._hr_logged
+            self._hr_logged = p.hr_updates_sent
             if pulley or smartrow or ftms_sent:
                 m = self.parser.metrics
+                hr_note = f", {hr_sent} heart-rate updates" if p.hr_sensor is not None else ""
                 log.info(
                     "Data flow, last %d s: %d pulley packets in, %d forwarded to SmartRow app, "
-                    "%d FTMS updates to fitness app | %d m, %d strokes",
-                    STATS_INTERVAL_S, pulley, smartrow, ftms_sent, m.distance_m, m.stroke_count,
+                    "%d FTMS updates to fitness app%s | %d m, %d strokes",
+                    STATS_INTERVAL_S, pulley, smartrow, ftms_sent, hr_note, m.distance_m, m.stroke_count,
                 )
             seat = self.seat
             if seat is not None and seat.connected and (pulley or smartrow or ftms_sent):
@@ -379,6 +397,7 @@ class Bridge:
         dongle_mac = adapters.read_mac(adapters.index_of(peripheral_hci))
         clone_address = addresses.resolve(self.cfg.clone_address, dongle_mac, "clone")
         fitness_address = addresses.resolve(self.cfg.fitness_address, dongle_mac, "fitness")
+        hr_address = addresses.resolve(None, dongle_mac, "heart_rate")
 
         if self.cfg.sniff_log:
             self._sniff = open(self.cfg.sniff_log, "a", encoding="utf-8")
@@ -387,14 +406,18 @@ class Bridge:
             adapter=central_hci,
             address=self.cfg.pulley_address,
             name_filter=self.cfg.pulley_name,
-            exclude_addresses=(clone_address, fitness_address),
+            exclude_addresses=(clone_address, fitness_address, hr_address),
             on_notify=self._on_notify,
         )
         self.link.on_connected = self._on_pulley_connected
         if self.cfg.heart_rate.lower() not in ("", "off", "0", "no"):
             from .heartrate import HeartRateLink
             self.hr_link = HeartRateLink(central_hci, self.cfg.heart_rate, self.link.scan_lock,
-                                         on_reading=self._on_heart_rate)
+                                         on_reading=self._on_heart_rate,
+                                         exclude_addresses=(clone_address, fitness_address, hr_address))
+        elif self.cfg.heart_rate_sensor:
+            log.warning("SRB_HEART_RATE_SENSOR=1 needs the strap read by the bridge (SRB_HEART_RATE); "
+                        "no heart-rate sensor offered")
         self._stage = status.SEARCHING
         snapshot = await self.link.connect_first()
         self._pulley_label = status.pulley_label(snapshot.name, snapshot.manufacturer_data)
@@ -412,10 +435,14 @@ class Bridge:
                 advertise_pulley_id=self.cfg.advertise_pulley_id,
                 on_clone_write=self.link.write,
                 heart_rate=self.hr_link is not None and self.cfg.heart_rate_to_fitness,
+                hr_sensor=(hr_address, self.cfg.heart_rate_sensor_name)
+                if self.hr_link is not None and self.cfg.heart_rate_sensor else None,
             ) as peripheral:
                 self.peripheral = peripheral
                 self._stage = status.CONNECTED
                 tasks = [self.link.run(), self._driver_loop(), self._ftms_loop(), self._stats_loop()]
+                if peripheral.hr_sensor is not None:
+                    tasks.append(self._hr_sensor_loop())
                 if self.hr_link is not None:
                     tasks.append(self.hr_link.run())  # only now: the pulley is connected first
                 await asyncio.gather(*tasks)

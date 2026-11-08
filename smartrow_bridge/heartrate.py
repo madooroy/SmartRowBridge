@@ -78,11 +78,13 @@ def matches(setting: str, device: BLEDevice, adv: AdvertisementData) -> bool:
 
 class HeartRateLink:
     def __init__(self, adapter: str, setting: str, scan_lock: asyncio.Lock,
-                 on_reading: Callable[[int], None]) -> None:
+                 on_reading: Callable[[int], None], exclude_addresses: tuple[str, ...] = ()) -> None:
         self.adapter = adapter
         self.setting = setting.strip()
         self.scan_lock = scan_lock
         self.on_reading = on_reading
+        # The bridge's own devices: never "find" its relayed heart-rate sensor as the strap.
+        self.exclude = {a.upper() for a in exclude_addresses}
         self.name: str | None = None
         self.address: str | None = None  # pinned once found
         self.last_reading = 0.0  # time.monotonic()
@@ -104,6 +106,8 @@ class HeartRateLink:
             if found.done():
                 return
             if self.address and device.address.upper() != self.address:
+                return
+            if device.address.upper() in self.exclude:
                 return
             if self.address or matches(self.setting, device, adv):
                 self.name = adv.local_name or device.name or "Heart rate strap"

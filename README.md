@@ -570,6 +570,7 @@ sport settings), read once each time the bridge starts (so after changing it the
 | `SRB_COACH_SENSITIVITY` | `normal` | How readily the cues speak up: `low`, `normal` or `high` |
 | `SRB_SESSION_DIR` | `/var/lib/smartrow-bridge/sessions` | Where session summaries are saved; `off` disables |
 | `SRB_HEART_RATE`, `SRB_HEART_RATE_TO_FITNESS` | `off`, `0` | [Heart rate strap](#optional-heart-rate-strap) read by the bridge, and whether it also goes to the fitness app (off: Peloton ignored the rowing data with it) |
+| `SRB_HEART_RATE_SENSOR`, `SRB_HEART_RATE_SENSOR_NAME` | `0`, `PiRower HR` | `1` = also appear as a heart-rate monitor relaying the strap, for the fitness app to pair [instead of the strap](#optional-heart-rate-strap) |
 | `SRB_SEAT_SENSOR` | `auto` | [Seat sensor](#optional-seat-sensor-tf-luna-lidar): `auto` (any USB serial device sending TF-Luna readings), `off`, or a port such as `/dev/ttyUSB0` |
 | `SRB_INTERVALS_KEY_FILE`, `SRB_INTERVALS_UPLOAD` | `/etc/smartrow-bridge/intervals.key`, `activity` | intervals.icu API key (`tools/setup_intervals.sh`); upload the session as an `activity`, a calendar `note`, or `off` |
 | `SRB_STRAVA_FILE`, `SRB_STRAVA_SPORT_TYPE` | `/etc/smartrow-bridge/strava.json`, `Rowing` | Strava authorization (`tools/setup_strava.sh`); activity type `Rowing` or `VirtualRow` |
@@ -667,6 +668,14 @@ the rowing data sent to the fitness app: with it in, Peloton showed only the hea
 distance and stroke rate, so pair the strap with Peloton directly (the COROS takes three connections).
 `SRB_HEART_RATE_TO_FITNESS=1` puts it in, for an app that wants it there. `tools/health_check.sh`
 has a *Heart rate strap* section.
+
+**Heart rate for the fitness app through the Pi.** With `SRB_HEART_RATE_SENSOR=1` the bridge also appears
+as a separate heart-rate monitor, **PiRower HR**, sending the strap's reading once a second in the standard
+heart-rate format. Pair Peloton's heart rate with *PiRower HR* instead of the strap: the strap then only
+talks to the Pi, which reconnects to it by itself, and Peloton doesn't compete for the strap's few
+connections (switching classes could leave Peloton unable to get the strap back, and its searching cost
+the rower connection mid-class). Nothing is sent while the strap is off or out of range. It needs
+`SRB_HEART_RATE` set (the bridge reading the strap) and leaves the rowing data as it is.
 
 ## Optional: seat sensor (TF-Luna lidar)
 

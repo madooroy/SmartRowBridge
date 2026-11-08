@@ -31,3 +31,13 @@ class AddressesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HeartRateSensorAddressTest(unittest.TestCase):
+    def test_own_static_random_address(self):
+        hr = addresses.derive(DONGLE_A, "heart_rate")
+        self.assertEqual(int(hr[:2], 16) & 0xC0, 0xC0)
+        self.assertNotIn(hr, (addresses.derive(DONGLE_A, "clone"), addresses.derive(DONGLE_A, "fitness")))
+        self.assertEqual(addresses.resolve(None, None, "heart_rate"), addresses.FALLBACK_HEART_RATE)
+        self.assertEqual(len({addresses.FALLBACK_CLONE, addresses.FALLBACK_FITNESS,
+                              addresses.FALLBACK_HEART_RATE}), 3)
