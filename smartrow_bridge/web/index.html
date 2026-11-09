@@ -1439,22 +1439,34 @@ function workoutCard(s) {
   const sub = (wk.complete ? `all ${wk.planned_steps} steps` : `${steps.filter((d) => d.complete).length} of ${wk.planned_steps} steps`)
     + (targeted ? ` \u00b7 on target in ${wk.on_target} of ${targeted}` : "");
   text(sub, P, P + 146, 34, C.dim, false);
-  // Bars: the step's length across, its target as an outline, what you rowed filled in.
+  // As intervals.icu's activity chart: a block a step, its length across, the power you rowed up, in the colour
+  // of that power's zone (Recovery grey, Easy green, Moderate yellow, Challenging orange, Max red); the target dashed.
   const box = [P, 230, CARD_W - 2 * P, 420];
   tile(...box);
   const total = Math.max(...steps.map((d) => d.end_s)) - steps[0].start_s || 1, t0 = steps[0].start_s;
   const top = Math.max(...steps.map((d) => Math.max(d.target_w || 0, d.power_w || 0)), 1);
   const yStep = niceStep(top, 3), yMax = Math.ceil(top * 1.08 / yStep) * yStep;
   const xStep = niceStep(total / 60, 5);
-  const ax = cardAxes(g, text, box, { title: "POWER (W) \u00b7 target dashed", xMax: total / 60, yMin: 0, yMax, yStep, xStep,
+  const ax = cardAxes(g, text, box, { title: "", xMax: total / 60, yMin: 0, yMax, yStep, xStep,
                                       xFmt: (v) => v + xStep > total / 60 ? `${Math.round(v)} min` : `${Math.round(v)}`, showX: true });
+  const ZONE_FILL = { Recovery: "#8b949e", Easy: "#2ea043", Moderate: "#e3c02a", Challenging: "#f0883e", Max: "#e5534b" };
+  const bands = s.power_bands || [];
+  const zoneColour = (w) => {
+    const z = bands.find(([, lo, hi]) => (lo == null || w >= lo) && (hi == null || w < hi));
+    return z ? ZONE_FILL[z[0]] || C.dim : C.green;
+  };
   for (const d of steps) {
-    const a = ax.X((d.start_s - t0) / 60) + 2, b = ax.X((d.end_s - t0) / 60) - 2;
-    const colour = !d.verdict ? C.dim : d.verdict === "on" ? C.green : C.amber;
-    if (d.power_w) { g.fillStyle = colour; g.globalAlpha = 0.75; g.fillRect(a, ax.Y(d.power_w), b - a, ax.y1 - ax.Y(d.power_w)); g.globalAlpha = 1; }
-    if (d.target_w) { g.strokeStyle = PLAN_COLOUR; g.lineWidth = 4; g.setLineDash([10, 6]);
+    const a = ax.X((d.start_s - t0) / 60) + 1, b = ax.X((d.end_s - t0) / 60) - 1;
+    if (d.power_w) { g.fillStyle = zoneColour(d.power_w); g.fillRect(a, ax.Y(d.power_w), b - a, ax.y1 - ax.Y(d.power_w)); }
+    if (d.target_w) { g.strokeStyle = C.fg; g.lineWidth = 3; g.setLineDash([10, 6]);
       g.beginPath(); g.moveTo(a, ax.Y(d.target_w)); g.lineTo(b, ax.Y(d.target_w)); g.stroke(); g.setLineDash([]); }
   }
+  let lx = ax.x0;  // the zones, named in their colours under the chart's title
+  for (const [name] of bands) {
+    text(name, lx, box[1] + 44, 20, ZONE_FILL[name] || C.dim, true);
+    lx += g.measureText(name).width + 22;
+  }
+  text("watts \u00b7 target dashed", box[0] + box[2] - 24, box[1] + 44, 20, C.dim, false, "right");
   // The table: one row a step.
   let y = 700;
   const cols = [[P + 10, "STEP", "left"], [P + 200, "LENGTH", "right"], [P + 390, "TARGET", "right"], [P + 580, "ROWED", "right"],
