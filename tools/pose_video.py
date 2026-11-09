@@ -31,8 +31,14 @@ from storage.googleapis.com on first use into ~/.cache/smartrow-bridge/.
 
 Usage:
     python3 tools/pose_video.py VIDEO [VIDEO ...] [--strokes SESSION.strokes.json]
-                                [--step 2] [--from S --to S] [--out DIR] [--by 60]
+                                [--seat SESSION.seat.csv] [--step 2] [--from S --to S] [--out DIR] [--by 60]
 Output: a summary per minute (or --by seconds) for each clip, and per-stroke CSV and JSON in --out.
+
+Pictures (with --out, unless --no-pictures): pose-moments-<clip>.jpg, three typical strokes (early,
+middle and late in the clip; with --strokes, from strokes near the session's usual power, so not
+the efforts) at the catch, the finish and the moment the knees start to rise, with the tracked
+skeleton, the trunk against vertical, and the trunk, elbow and knee angles (the same numbers as the
+CSV). With --seat SESSION.seat.csv (the lidar), each picture also shows the seat position.
 """
 
 from __future__ import annotations
@@ -205,7 +211,8 @@ def strokes(t: np.ndarray, S: dict[str, np.ndarray]) -> list[dict]:
                     "shin": round(float(S["shin"][a]), 1),
                     "swing_vs_legs": round(float(t[swing] - t[legs]), 3),
                     "arms_vs_legs": round(float(t[arms] - t[legs]), 3),
-                    "lean_at_knees_up": round(float(tr[up]), 1), "elbow_at_knees_up": round(float(el[up]), 1)})
+                    "lean_at_knees_up": round(float(tr[up]), 1), "elbow_at_knees_up": round(float(el[up]), 1),
+                    "knees_up_t": float(t[up])})
     return out
 
 
@@ -264,6 +271,114 @@ def attach(rows: list[dict], strokes_file: str, label: str) -> str:
             f"{n} of {len(rows)} strokes paired")
 
 
+# ---------- pictures ----------
+
+MOMENTS = (("CATCH", "t"), ("FINISH", "finish_t"), ("KNEES START TO RISE", "knees_up_t"))
+PANEL_W, PANEL_H = 960, 540
+
+
+def typical(rows: list[dict], n: int = 3) -> list[dict]:
+    """One stroke from each of n equal stretches of the clip: the one closest to its stretch's
+    medians of catch lean, layback and body lean when the knees rise. With pulley power, only
+    strokes within 15 % of the clip's median power (the usual rowing, not the efforts)."""
+    rows = [r for r in rows if "knees_up_t" in r]
+    powers = [r["power_w"] for r in rows if r.get("power_w")]
+    if powers:
+        mid = statistics.median(powers)
+        usual = [r for r in rows if r.get("power_w") and abs(r["power_w"] - mid) <= 0.15 * mid]
+        rows = usual if len(usual) >= n else rows
+    if not rows:
+        return []
+    keys = ("catch_lean", "finish_lean", "lean_at_knees_up")
+    chosen = []
+    for part in np.array_split(np.arange(len(rows)), min(n, len(rows))):
+        group = [rows[i] for i in part]
+        med = {k: statistics.median(r[k] for r in group) for k in keys}
+        chosen.append(min(group, key=lambda r: sum(abs(r[k] - med[k]) for k in keys)))
+    return chosen
+
+
+def seat_mapper(rows: list[dict], seat_file: str):
+    """video time -> seat cm, or None. The pulley's stroke record comes ~0.4 s after the hands'
+    finish, so the clip is pinned to the seat by the catches (seat furthest forward)."""
+    data = np.genfromtxt(seat_file, delimiter=",", names=True)
+    st, cm = data["t"], data["cm"].astype(float)
+    paired = [r for r in rows if r.get("session_t") is not None]
+    if len(paired) < 5 or len(st) < 100:
+        return None
+    off = statistics.median(r["session_t"] - r["finish_t"] for r in paired)  # video -> pulley clock
+    lags = []
+    for r in paired:
+        w = (st >= r["t"] + off - 1.2) & (st <= r["t"] + off + 0.8)
+        if w.sum() > 20:
+            top = cm[w].max()
+            lags.append(r["t"] + off - float(np.median(st[w][cm[w] >= top - 0.5])))
+    if not lags:
+        return None
+    shift = off - statistics.median(lags)
+    return lambda v: int(cm[int(np.argmin(np.abs(st - (v + shift))))])
+
+
+def pictures(video: str, t: np.ndarray, marks: np.ndarray, rows: list[dict], path: Path,
+             seat_cm=None) -> bool:
+    """pose-moments picture for one clip (see the module notes). True if written."""
+    import cv2
+
+    chosen = typical(rows)
+    if not chosen:
+        return False
+    J = joints(marks)
+    S = signals(marks)
+    facing = 1.0 if np.median(J["an"][0] - J["hp"][0]) > 0 else -1.0
+    cap = cv2.VideoCapture(video)
+    panels = []
+    for k, r in enumerate(chosen):
+        row = []
+        for name, key in MOMENTS:
+            i = int(np.argmin(np.abs(t - r[key])))
+            cap.set(cv2.CAP_PROP_POS_MSEC, float(t[i]) * 1000)
+            ok, img = cap.read()
+            if not ok:
+                img = np.zeros((PANEL_H, PANEL_W, 3), np.uint8)
+            img = cv2.resize(img, (PANEL_W, PANEL_H), interpolation=cv2.INTER_AREA)
+            sx, sy = PANEL_W / FRAME_W, PANEL_H / FRAME_H
+            pt = lambda j: (int(J[j][0][i] * sx), int(J[j][1][i] * sy))  # noqa: E731
+            lean = float(S["trunk"][i])
+            colour = (80, 200, 80) if (key != "knees_up_t" or lean >= 0) else (80, 80, 255)
+            for a, b in (("sh", "el"), ("el", "wr"), ("hp", "kn"), ("kn", "an")):
+                cv2.line(img, pt(a), pt(b), (255, 255, 255), 3, cv2.LINE_AA)
+            cv2.line(img, pt("hp"), pt("sh"), colour, 5, cv2.LINE_AA)
+            hx, hy = pt("hp")
+            length = int(np.hypot(pt("sh")[0] - hx, pt("sh")[1] - hy))
+            for y in range(hy, hy - int(length * 1.1), -16):  # dashed vertical through the hip
+                cv2.line(img, (hx, y), (hx, max(y - 8, hy - int(length * 1.1))), (0, 255, 255), 2)
+            a1 = -90 + lean * facing
+            cv2.ellipse(img, (hx, hy), (length // 2, length // 2), 0, min(-90, a1), max(-90, a1),
+                        (0, 255, 255), 3, cv2.LINE_AA)
+            for j in ("sh", "el", "wr", "hp", "kn", "an"):
+                cv2.circle(img, pt(j), 7, (40, 40, 40), -1, cv2.LINE_AA)
+                cv2.circle(img, pt(j), 5, (255, 255, 255), -1, cv2.LINE_AA)
+            when = f"{r['t']:.0f} s" + (f", {round(r['power_w'])} W" if r.get("power_w") else "")
+            lines = [f"{name}  ({when})",
+                     f"trunk {lean:+.0f} deg {'forward' if lean >= 0 else 'back'}",
+                     f"elbow {S['elbow'][i]:.0f}   knee {S['knee'][i]:.0f}"]
+            if seat_cm:
+                lines.append(f"seat {seat_cm(float(t[i]))} cm (lidar)")
+            y = 8
+            for n, text in enumerate(lines):
+                size = 0.8 if n == 0 else 0.7
+                (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, size, 2)
+                cv2.rectangle(img, (6, y), (18 + tw, y + th + 14), (0, 0, 0), -1)
+                cv2.putText(img, text, (12, y + th + 6), cv2.FONT_HERSHEY_SIMPLEX, size,
+                            (0, 255, 255) if n == 0 else (255, 255, 255), 2, cv2.LINE_AA)
+                y += th + 18
+            row.append(img)
+        panels.append(np.hstack(row))
+    cap.release()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return bool(cv2.imwrite(str(path), np.vstack(panels), [cv2.IMWRITE_JPEG_QUALITY, 88]))
+
+
 # ---------- report ----------
 
 def summary(rows: list[dict], by: float) -> list[dict]:
@@ -314,6 +429,14 @@ def run(args, model: str, tick) -> list[dict]:
             r["clip"] = label
         if args.strokes:
             print(attach(rows, args.strokes, label))
+        if args.out and not args.no_pictures:
+            seat = seat_mapper(rows, args.seat) if args.seat else None
+            path = Path(args.out) / f"pose-moments-{Path(video).stem}.jpg"
+            try:
+                if pictures(video, t, marks, rows, path, seat):
+                    print(f"{label}: pictures in {path}")
+            except Exception as exc:  # noqa: BLE001 - the numbers matter more than the picture
+                print(f"{label}: no pictures ({exc})")
         table = summary(rows, args.by) or summary(rows, 1e9)  # too few per group: one line for the clip
         print_summary(f"{label}: {len(rows)} strokes", table)
         everything += rows
@@ -329,7 +452,9 @@ def main() -> None:
     ap.add_argument("--to", dest="t_to", type=float, default=1e9, help="stop this many seconds into each clip")
     ap.add_argument("--by", type=float, default=60.0, help="summary groups, seconds (default 60)")
     ap.add_argument("--model", help="pose model file (default: download Google's heavy model once)")
-    ap.add_argument("--out", help="folder for per-stroke CSV and JSON")
+    ap.add_argument("--out", help="folder for per-stroke CSV and JSON (and the pictures)")
+    ap.add_argument("--seat", help="the session's .seat.csv (lidar), to show the seat position on the pictures")
+    ap.add_argument("--no-pictures", action="store_true", help="skip the pose-moments pictures")
     ap.add_argument("--battery-min", type=int, default=50,
                     help="on battery, Best performance only at or above this %% (default 50); below: Balanced")
     ap.add_argument("--no-power-guard", action="store_true",
@@ -338,6 +463,10 @@ def main() -> None:
     args = ap.parse_args()
     if args.strokes and not Path(args.strokes).is_file():  # check now, not after an hour of tracking
         ap.error(f"no strokes file {args.strokes}")
+    if args.seat and not Path(args.seat).is_file():
+        ap.error(f"no seat file {args.seat}")
+    if args.seat and not args.strokes:
+        ap.error("--seat needs --strokes (the seat is lined up through the session)")
 
     model = model_path(args.model)
     from power_guard import PowerGuard

@@ -79,3 +79,60 @@ class PoseVideoTest(unittest.TestCase):
     def test_peaks(self):
         x = np.array([0, 5, 1, 9, 1, 2, 1, 8, 0], dtype=float)
         self.assertEqual(self.pv.peaks(x, 1, 5), [3, 7])
+
+
+@unittest.skipIf(np is None, "numpy not installed")
+class PicturesTest(unittest.TestCase):
+    def setUp(self):
+        import pose_video
+        self.pv = pose_video
+
+    def test_typical_strokes_skip_efforts_and_spread_over_the_clip(self):
+        rows = [{"t": float(i * 3), "catch_lean": 20.0, "finish_lean": -30.0, "lean_at_knees_up": 10.0 + (i % 3),
+                 "knees_up_t": i * 3 + 2.0, "power_w": 110 if i % 7 else 190} for i in range(30)]
+        chosen = self.pv.typical(rows)
+        self.assertEqual(len(chosen), 3)
+        self.assertTrue(all(r["power_w"] == 110 for r in chosen))  # not the efforts
+        self.assertTrue(chosen[0]["t"] < chosen[1]["t"] < chosen[2]["t"])  # early, middle, late
+        self.assertTrue(all(abs(r["lean_at_knees_up"] - 11.0) <= 1 for r in chosen))  # near each stretch's median
+        self.assertEqual(self.pv.typical([]), [])
+
+    def test_strokes_carry_the_knees_up_time(self):
+        t = np.arange(0, 30, 1 / 30)
+        ph = t % 3.0
+        d, r = np.clip(ph / 1.2, 0, 1), np.clip((ph - 1.2) / 1.8, 0, 1)
+        on = ph < 1.2
+        S = {"hands": np.where(on, 700 - 400 * d, 300 + 400 * r),
+             "knee": np.where(on, 55 + 110 * np.clip(d / 0.75, 0, 1),
+                              np.where(r < 0.25, 165, 165 - 110 * np.clip((r - 0.25) / 0.75, 0, 1))),
+             "trunk": np.where(on, 20 - 55 * d, -35 + 55 * r), "elbow": np.full_like(t, 170.0),
+             "shin": np.zeros_like(t)}
+        rows = self.pv.strokes(t, S)
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertGreater(row["knees_up_t"], row["finish_t"])
+            self.assertLess(row["knees_up_t"] - row["finish_t"], 1.8)
+
+    def test_picture_is_drawn_from_tracked_joints(self):
+        try:
+            import cv2
+        except ImportError:
+            self.skipTest("opencv not installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            video = str(Path(tmp) / "clip.avi")
+            out = cv2.VideoWriter(video, cv2.VideoWriter_fourcc(*"MJPG"), 30, (320, 180))
+            for _ in range(150):
+                out.write(np.full((180, 320, 3), 90, np.uint8))
+            out.release()
+            t = np.arange(0, 5, 1 / 30)
+            marks = np.zeros((len(t), 33, 3))
+            for i, (x, y) in {12: (400, 150), 14: (480, 220), 16: (560, 250), 24: (380, 380),
+                              26: (560, 330), 28: (700, 420), 30: (700, 430), 32: (720, 430)}.items():
+                marks[:, i] = (x, y, 0.9)
+                marks[:, i - 1] = (x, y, 0.1)
+            rows = [{"t": 1.0, "finish_t": 2.0, "knees_up_t": 3.0, "catch_lean": 20, "finish_lean": -30,
+                     "lean_at_knees_up": 10, "power_w": 110.4}]
+            path = Path(tmp) / "pics" / "pose-moments-clip.jpg"
+            self.assertTrue(self.pv.pictures(video, t, marks, rows, path, seat_cm=lambda v: 48))
+            img = cv2.imread(str(path))
+            self.assertEqual(img.shape[:2], (self.pv.PANEL_H, 3 * self.pv.PANEL_W))  # one stroke, three moments
