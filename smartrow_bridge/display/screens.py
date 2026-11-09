@@ -170,6 +170,52 @@ def format_time(seconds: int) -> str:
     return f"{hours}:{rest // 60:02d}:{rest % 60:02d}" if hours else f"{rest // 60}:{rest % 60:02d}"
 
 
+# ---------------------------------------------------------------- planned workout
+
+TARGET_COLOURS = {"on": GREEN, "under": AMBER, "over": AMBER}
+
+
+def _workout(status: dict | None) -> dict | None:
+    """The planned workout being followed (coach state "workout"), when it is running."""
+    w = ((status or {}).get("coach") or {}).get("workout")
+    return w if w and w.get("state") == "running" else None
+
+
+def workout_left(w: dict) -> str:
+    """Time or metres left in the step."""
+    return format_time(w["left"]) if w.get("kind") == "time" else f"{w['left']} m"
+
+
+def workout_target(w: dict) -> str:
+    if w.get("target_w") is None:
+        return "free"
+    if w.get("low_w") is not None and w.get("high_w") is not None and w["low_w"] != w["high_w"]:
+        return f"{w['low_w']}\u2013{w['high_w']}"
+    return str(w["target_w"])
+
+
+def workout_next(w: dict) -> str:
+    n = w.get("next")
+    if not n:
+        return "last step"
+    what = f"{n['target_w']} W" if n.get("target_w") is not None else "free"
+    length = format_time(int(n["length"])) if n["kind"] == "time" else f"{int(n['length'])} m"
+    return f"next {what} \u00b7 {length}"
+
+
+def workout_note(status: dict | None) -> tuple[str, tuple] | None:
+    """A line for a workout that is ready (waiting for the first stroke) or just done."""
+    w = ((status or {}).get("coach") or {}).get("workout")
+    if not w:
+        return None
+    if w.get("state") == "ready":
+        length = f" \u00b7 {round(w['total_s'] / 60)} min" if w.get("total_s") else ""
+        return f"READY: {w['name']} \u00b7 {w['steps']} steps{length}", GREEN
+    if w.get("state") == "done":
+        return f"WORKOUT DONE: {w['name']}", GREEN
+    return None
+
+
 # ---------------------------------------------------------------- screens
 
 def status_screen(status: dict | None, now: float, uptime: float, address: str = "") -> Image.Image:
@@ -262,16 +308,22 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
     if coach.get("stroke_curve") and coach.get("intensity") != "Recovery":
         # Easy rowing with the coach: three numbers, each stroke's force curve over your early Easy
         # strokes, and the cue (none while the coach is still learning them).
-        tiles = [("WATTS", live(str(m.get("power_w", 0)))),
-                 ("PACE", live(format_pace(int(m.get("pace_s_per_500m", 0))))),
-                 ("SPM", live(str(round(m.get("stroke_rate_spm", 0)))))]
+        wk = _workout(status)
+        tiles = [("WATTS", live(str(m.get("power_w", 0))), None),
+                 ("PACE", live(format_pace(int(m.get("pace_s_per_500m", 0)))), None),
+                 ("SPM", live(str(round(m.get("stroke_rate_spm", 0)))), None)]
+        if wk:  # following a planned workout: the target, your watts against it, and the step's time left
+            tiles = [(f"TARGET {wk['step']}/{wk['steps']}", workout_target(wk), None),
+                     ("WATTS", live(str(wk["power_w"] if wk.get("power_w") is not None else m.get("power_w", 0))),
+                      TARGET_COLOURS.get(wk.get("on_target"))),
+                     ("LEFT", workout_left(wk), None)]
         top, tile_w, tile_h, gap = 26, 101, 50, 4
-        for i, (label, value) in enumerate(tiles):
+        for i, (label, value, colour) in enumerate(tiles):
             x0 = 4 + i * (tile_w + gap)
             draw.rounded_rectangle((x0, top, x0 + tile_w, top + tile_h), radius=8, fill=TILE)
             draw.text((x0 + 8, top + 4), label, font=font(12), fill=DIM)
             draw.text((x0 + tile_w // 2, top + 32), value, font=_fit(draw, value, 28, tile_w - 12, bold=True),
-                      fill=FG if value != "\u2013" else FAINT, anchor="mm")
+                      fill=colour or (FG if value != "\u2013" else FAINT), anchor="mm")
         steady = coach.get("steady_curve") or []
         cue = coach.get("cue")
         drift = coach.get("drift")  # a slow change over the Easy rowing: a note in place of LOOKS GOOD
@@ -283,6 +335,8 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
         if rhythm:
             _rhythm_bar(draw, (4, 166, WIDTH - 4, 179), rhythm)
         head = f"EASY  \u00b7  {format_time(m.get('elapsed_s', 0))}"
+        if wk:
+            head = f"EASY  \u00b7  {workout_next(wk)}"
         if m.get("heart_rate_bpm"):
             head += f"  \u00b7  \u2665 {m['heart_rate_bpm']}"
         draw.text((12, 85), head, font=font(12, True), fill=DIM)
@@ -300,18 +354,27 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
         return image
 
     tiles = [
-        ("WATTS", live(str(m.get("power_w", 0)))),
-        ("STROKES / MIN", live(str(round(m.get("stroke_rate_spm", 0))))),
-        ("PACE / 500 M", live(format_pace(int(m.get("pace_s_per_500m", 0))))),
-        ("METRES", str(m.get("distance_m", 0))),
+        ("WATTS", live(str(m.get("power_w", 0))), None),
+        ("STROKES / MIN", live(str(round(m.get("stroke_rate_spm", 0)))), None),
+        ("PACE / 500 M", live(format_pace(int(m.get("pace_s_per_500m", 0)))), None),
+        ("METRES", str(m.get("distance_m", 0)), None),
     ]
+    wk = _workout(status)
+    if wk:  # following a planned workout (in a Recovery step, or before the coach has your Easy stroke)
+        tiles = [
+            ("WATTS", live(str(wk["power_w"] if wk.get("power_w") is not None else m.get("power_w", 0))),
+             TARGET_COLOURS.get(wk.get("on_target"))),
+            (f"TARGET  \u00b7  STEP {wk['step']}/{wk['steps']}", workout_target(wk), None),
+            ("LEFT IN STEP", workout_left(wk), None),
+            ("NEXT", (workout_next(wk)[5:] if wk.get("next") else "last step"), None),
+        ]
     top, tile_w, tile_h, gap = 26, 154, 82, 4
-    for i, (label, value) in enumerate(tiles):
+    for i, (label, value, tint) in enumerate(tiles):
         x0 = 4 + (i % 2) * (tile_w + gap)
         y0 = top + (i // 2) * (tile_h + gap)
         draw.rounded_rectangle((x0, y0, x0 + tile_w, y0 + tile_h), radius=8, fill=TILE)
-        draw.text((x0 + 10, y0 + 7), label, font=font(13), fill=DIM)
-        colour = FG if value != "\u2013" else FAINT
+        draw.text((x0 + 10, y0 + 7), label, font=_fit(draw, label, 13, tile_w - 20), fill=DIM)
+        colour = tint or (FG if value != "\u2013" else FAINT)
         draw.text((x0 + tile_w // 2, y0 + 53), value, font=_fit(draw, value, 46, tile_w - 16, bold=True),
                   fill=colour, anchor="mm")
 
@@ -320,12 +383,15 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
         footer = f"{format_time(m.get('elapsed_s', 0))}  \u00b7  {m.get('stroke_count', 0)} strokes  \u00b7  \u2665 {m['heart_rate_bpm']}"
     if not rowing:
         footer += "   \u00b7   paused"
+    note = workout_note(status)
     recovery = coach.get("intensity") == "Recovery"  # no coaching while you recover: the numbers
     if recovery:
         footer = f"RECOVERY  \u00b7  {format_time(m.get('elapsed_s', 0))}" + (
             f"  \u00b7  \u2665 {m['heart_rate_bpm']}" if m.get("heart_rate_bpm") else "")
-    draw.text((WIDTH // 2, top + 2 * tile_h + gap + 14), footer, font=font(16, recovery),
-              fill=BLUE if recovery else FG if rowing else DIM, anchor="mm")
+    if note:  # a workout ready to start, or just done
+        footer, recovery = note[0], True
+    draw.text((WIDTH // 2, top + 2 * tile_h + gap + 14), footer, font=_fit(draw, footer, 16, WIDTH - 16, recovery),
+              fill=(note[1] if note else BLUE) if recovery else FG if rowing else DIM, anchor="mm")
     return image
 
 
@@ -470,11 +536,20 @@ def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
     _hints(draw, "rowing", drill=bool((status or {}).get("drill")))
     live = status["coach"]["live"]
     label = f"{live['intensity'].upper()}  \u00b7  {live['index']}" if live.get("intensity") else f"INTERVAL {live['index']}"
-    draw.text((WIDTH - 6, 4), label, font=font(15, True), fill=DIM, anchor="rt")
     clock, watts = format_time(live["elapsed_s"]), f"{live['power_w']} W"
+    wk = _workout(status)
+    watts_colour = FG
+    if wk:  # following a planned workout: the step's time left, and your watts against its target
+        clock = workout_left(wk)
+        if wk.get("power_w") is not None:
+            watts = f"{wk['power_w']} W"
+        watts_colour = TARGET_COLOURS.get(wk.get("on_target"), FG)
+        label = f"STEP {wk['step']}/{wk['steps']}  \u00b7  " + (
+            f"TARGET {workout_target(wk)} W" if wk.get("target_w") is not None else "NO TARGET")
+    draw.text((WIDTH - 6, 4), label, font=_fit(draw, label, 15, 210, True), fill=DIM, anchor="rt")
     size = min(_fit(draw, clock, 44, WIDTH // 2 - 14, True).size, _fit(draw, watts, 44, WIDTH // 2 - 14, True).size)
     draw.text((8, 54), clock, font=font(size, True), fill=FG, anchor="lm")  # the same size, side by side
-    draw.text((WIDTH - 8, 54), watts, font=font(size, True), fill=FG, anchor="rm")
+    draw.text((WIDTH - 8, 54), watts, font=font(size, True), fill=watts_colour, anchor="rm")
     # The force curve, as in the SmartRow app: each stroke over your steady shape (grey), the force
     # missing against steady filled in light grey. A shorter stroke ends before the steady curve does.
     stroke = live.get("stroke_curve") or live.get("curve") or []

@@ -40,6 +40,7 @@ class Config:
     heart_rate_sensor: bool
     heart_rate_sensor_name: str
     seat_sensor: str
+    workout_dir: str
     intervals_key_file: str
     intervals_upload: str
     strava_file: str
@@ -134,6 +135,9 @@ def parse(argv: list[str] | None = None) -> Config:
                    help="seat sensor (TF-Luna lidar on a USB serial adapter): auto (any USB serial device "
                         "sending TF-Luna readings), off, or a port such as /dev/ttyUSB0; saved per session "
                         "as <id>.seat.csv")
+    p.add_argument("--workout-dir", default=_env("SRB_WORKOUT_DIR", "/var/lib/smartrow-bridge/workouts"),
+                   help="planned workouts: a FIT workout file put here (e.g. from intervals.icu) is followed from "
+                        "the next stroke, on the screen and web page; 'off' to disable (needs the coach)")
     p.add_argument("--intervals-key-file", default=_env("SRB_INTERVALS_KEY_FILE", "/etc/smartrow-bridge/intervals.key"),
                    help="intervals.icu API key (tools/setup_intervals.sh); with it, sessions go to intervals.icu")
     p.add_argument("--intervals-upload", choices=("activity", "note", "off"),

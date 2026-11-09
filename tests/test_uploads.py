@@ -561,7 +561,8 @@ class FitFileTest(unittest.TestCase):
     def test_old_strokes_without_curves(self):
         r = saturday()
         record = sessions.build_record(r.coach, 1_800_000_000.0, 1_800_001_000.0, True, 6000, 1000)
-        strokes = [dict(zip(sessions.STROKE_COLUMNS[:-1], row[:-1])) for row in sessions.stroke_rows(r.coach)]
+        strokes = [{k: v for k, v in zip(sessions.STROKE_COLUMNS, row) if k != "force_n"}
+                   for row in sessions.stroke_rows(r.coach)]
         data = fitfile.build(record, strokes)  # saved before force curves were: no developer fields, still valid
         with fitdecode.FitReader(io.BytesIO(data), check_crc=fitdecode.CrcCheck.RAISE) as fr:
             names = {fm.name for fm in fr if isinstance(fm, fitdecode.FitDataMessage)}

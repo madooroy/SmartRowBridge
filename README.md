@@ -693,6 +693,30 @@ in the strokes file, then `cm` and `strength`; strength under 100 is unreliable)
 The readings are timed on the Pi with the same clock as the strokes, so seat position lines up with the
 pulley's force curves and drive flag. Nothing uses them yet beyond saving them.
 
+## Optional: planned workouts (FIT files)
+
+Row a planned workout, such as one built in intervals.icu, with its targets on the screen and web page. Needs
+the coach. Download the workout as a FIT file and copy it into the Pi's workouts folder, from a laptop:
+
+    scp Adrestia.fit pi@raspberrypi.local:/var/lib/smartrow-bridge/workouts/
+
+Within a few seconds the bridge logs `Workout Adrestia ready (... 11 steps, 30 min): it starts with your next
+stroke`, and the screen shows `READY: Adrestia`. The workout starts with your first stroke. Then:
+
+- **Screen and web page:** the step (3/11), its target, your watts (average of the last 3 strokes) in green
+  when within 5% of the target and amber when not, the time (or metres) left in the step, and the next step.
+  During an effort the big clock counts down the step instead of up. The coach's cues carry on as usual.
+- **Steps** last a time or a distance; a step's time runs whether or not you are rowing. FIT repeats are
+  unrolled. **Targets** are watts as written in the file; a target saved as a % of FTP becomes watts with your
+  FTP.
+- **After the row:** each step's average power against its target (its first 8 s left out) and the share of
+  its strokes within 5%, in the session's findings and on a **Workout card**; the session card draws the plan
+  as a dashed line over your power.
+
+The file moves to `workouts/done/` as soon as the workout starts, so it runs once: copy it in again to repeat
+it. To cancel before rowing, delete it from the folder. One workout per session; for another, end the
+session first (hold Y). `SRB_WORKOUT_DIR` sets the folder (`off` turns this off).
+
 ## Optional: a web page for phones and tablets
 
 The screen's information, larger, on any phone or tablet on the same Wi-Fi as the Pi: live watts, pace and

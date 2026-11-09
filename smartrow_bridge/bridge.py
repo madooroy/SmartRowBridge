@@ -79,6 +79,11 @@ class Bridge:
             from .seat import SeatSensor, SeatWriter
             self.seat = SeatSensor(cfg.seat_sensor)
             self.seat_writer = SeatWriter(cfg.session_dir, self.seat)
+        # Planned workouts (workout.py): a FIT workout file in this folder is followed from the next stroke.
+        self.workouts = None
+        if self.coach is not None and cfg.workout_dir.lower() not in ("off", "0", "no"):
+            from .workout import Folder
+            self.workouts = Folder(cfg.workout_dir)
         self._seat_logged = 0  # seat readings counted in the last stats line
         self._hr_logged = 0  # relayed heart-rate updates counted in the last stats line
         self.uploader = None
@@ -302,6 +307,11 @@ class Bridge:
                     self.seat_writer.update(self.recorder.current())
                 except Exception:  # noqa: BLE001 - nor the seat readings
                     log.exception("Saving seat readings failed")
+            if self.workouts is not None:
+                try:
+                    self.workouts.tick(self.coach, time.monotonic())
+                except Exception:  # noqa: BLE001 - nor a workout file
+                    log.exception("Planned workout failed")
             if self.uploader is not None:
                 try:
                     self.uploader.tick()

@@ -692,6 +692,9 @@ class IntervalCoach:
         self.hr_zones: dict | None = None
         self.expect = dict(EXPECTED_FINISH)
         self.session = 0
+        # A planned workout being followed (workout.Player): set by the bridge when one is loaded, it
+        # starts with the next stroke and belongs to that session (its result is in session_summary).
+        self.workout = None
         self.reset()
 
     @property
@@ -733,6 +736,12 @@ class IntervalCoach:
         return float("inf") if self.ftp else self.settings.max_effort_s
 
     def reset(self) -> None:
+        if self.workout is not None and self.workout.started:
+            if self.strokes_total < LEAD_STROKES:  # a stray pull or two started it: wait for the real row
+                from .workout import Player
+                self.workout = Player(self.workout.original)
+            else:  # it belonged to the session that just ended
+                self.workout = None
         self.steady: deque[StrokeCurve] = deque(maxlen=STEADY_WINDOW)
         # The same, without the warm-up (its shorter strokes look like a stronger finish): what
         # efforts are judged against once there are SHAPE_MIN of them.
@@ -840,6 +849,10 @@ class IntervalCoach:
                                 s.stroke_length_cm, tuple(s.force_n), s.drive_s,
                                 s.flag_drive_s, s.flag_recovery_s))
         self.recent.append(s)
+        if self.workout is not None:
+            if not self.workout.started:
+                self.workout.start(s.time, s.distance_m, self.ftp)
+            self.workout.advance(s.time, s.distance_m)
         smoothed = statistics.median(stroke_power(r) for r in self.recent)
         if not self.fresh_done and s.time - self.first_time >= FRESH_TO_S and (
                 len(self.fresh) >= FRESH_MIN or s.time - self.first_time >= FRESH_LATEST_S):
@@ -1156,6 +1169,8 @@ class IntervalCoach:
                 if d["index"] == e["index"]:
                     d["rhythm"] = {k: v for k, v in e.items() if k != "index"}
         w_bal = steps.wbal(self.stroke_log, self.ftp, self.w_prime)
+        from . import workout as workout_mod
+        workout_result = self.workout.result(self.stroke_log, self.first_time) if self.workout else None
         if hr:
             for d, h in zip(intervals, hr.pop("intervals")):
                 d.update(h)
@@ -1185,7 +1200,8 @@ class IntervalCoach:
             "wbal": w_bal,
             "ladders": ladders,
             "rhythm": rh,
-            "findings": findings(intervals) + steps.ladder_findings(ladders) + easy_findings(self.easy_drift())
+            "workout": workout_result,
+            "findings": workout_mod.findings(workout_result) + findings(intervals) + steps.ladder_findings(ladders) + easy_findings(self.easy_drift())
             + rhythm.rhythm_findings(rh)
             + length_findings(self._length_note()) + heart_rate_findings(hr, intervals) + steps.wbal_findings(w_bal),
         }
@@ -1281,6 +1297,17 @@ class IntervalCoach:
             n += 1
         return n
 
+    def _workout_state(self, now: float) -> dict | None:
+        """The planned workout's step, target and time left (workout.Player.state), or None."""
+        if self.workout is None:
+            return None
+        distance = self.stroke_log[-1][1] if self.stroke_log else 0
+        self.workout.advance(now, distance)
+        rowing = self.last_time is not None and now - self.last_time <= GAP_S
+        recent = statistics.fmean(r[2] for r in self.stroke_log[-3:]) if rowing and self.stroke_log else None
+        since_end = self._strokes_after(self.workout.ended_at) if self.workout.done else 0
+        return self.workout.state(now, distance, recent, since_end)
+
     def state(self, now: float) -> dict:
         """What the screen needs, for status.json."""
         if self.effort is not None and self.last_time is not None and now - self.last_time > GAP_S:
@@ -1317,6 +1344,7 @@ class IntervalCoach:
                                      - self.baseline["length_cm"]) if self.baseline and self.easy_window else None,
             # The Easy screen's rhythm bar (drive against recovery, last few strokes, low rates only).
             "rhythm": _live_rhythm(self.stroke_log, now) if self.effort is None else None,
+            "workout": self._workout_state(now),
         }
         if out["intensity"] not in (None, "Recovery", "Easy"):
             out["intensity"] = "Easy"  # above Easy but not (yet) an effort

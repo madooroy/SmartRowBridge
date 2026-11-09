@@ -50,6 +50,9 @@ pip_install "$PREFIX/requirements.txt"
 # The Peloton class index for the web page's Classes screen (tools/peloton_plans.py index): a folder the
 # user who ran this owns, so the scanner writes it without sudo and the web page can read it.
 install -d -m 755 -o "${SUDO_USER:-root}" /var/lib/smartrow-bridge/peloton
+# Planned workouts (smartrow_bridge/workout.py): copy a FIT workout file in (scp, no sudo); the bridge
+# moves it to done/ once it starts.
+install -d -m 755 -o "${SUDO_USER:-root}" /var/lib/smartrow-bridge/workouts
 
 if [[ ! -f /etc/default/smartrow-bridge ]]; then
     install -m 644 deploy/smartrow-bridge.env /etc/default/smartrow-bridge

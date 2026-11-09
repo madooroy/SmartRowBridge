@@ -227,6 +227,15 @@ def preview(directory: str) -> None:
     legs_last = {**good_last, "index": 4, "finish_pct": 14, "curve": late, "length_delta_cm": 0.0,
                  "drive_late": 4.3, "legs_late": True, "peak_at_pct": 52, "steady_peak_at_pct": 41,
                  "balance": 1.4, "length_balance": 0.0}
+    wk_base = {"name": "Adrestia", "steps": 11, "total_s": 1800, "state": "running", "kind": "time",
+               "elapsed_s": 500, "intensity": "interval", "step_name": ""}
+    wk_ready = {"name": "Adrestia", "steps": 11, "total_s": 1800, "state": "ready", "step": 0, "target_w": 120}
+    wk_easy = {**wk_base, "step": 1, "length": 480, "left": 154, "target_w": 120, "low_w": 120, "high_w": 120,
+               "power_w": 118, "on_target": "on", "next": {"target_w": 160, "kind": "time", "length": 60}}
+    wk_hard = {**wk_base, "step": 9, "length": 120, "left": 47, "target_w": 200, "low_w": 200, "high_w": 200,
+               "power_w": 186, "on_target": "under", "next": {"target_w": 80, "kind": "time", "length": 120}}
+    wk_rest = {**wk_base, "step": 10, "length": 120, "left": 95, "target_w": 80, "low_w": 80, "high_w": 80,
+               "power_w": 84, "on_target": "on", "next": {"target_w": 120, "kind": "time", "length": 480}}
     shots = {
         "01-starting-up": screens.status_screen(None, now, 12.0, addr),
         "02-preparing": screens.status_screen(st("starting"), now, up, addr),
@@ -261,6 +270,20 @@ def preview(directory: str) -> None:
                                                                                         "ratio": 1.31, "aim": 2.0}}}, now, up),
         "07m-rowing-recovery": screens.rowing_screen({**coached(), "coach": {**coached()["coach"],
                                                                           "intensity": "Recovery"}}, now, up),
+        # Following a planned workout (workout.py).
+        "18a-workout-ready": screens.rowing_screen({**st("connected", "SmartRow-34", True, True, False),
+                                                    "coach": {"workout": wk_ready}}, now, up),
+        "18b-workout-easy-step": screens.rowing_screen({**coached(), "coach": {**coached()["coach"],
+                                                                            "workout": wk_easy}}, now, up),
+        "18c-workout-effort-under": screens.interval_screen({**coached(live("good", full, 2, 4, 0.2, 1.5)),
+                                                             "coach": {**coached(live("good", full, 2, 4, 0.2, 1.5))["coach"],
+                                                                       "workout": wk_hard}}, now, up),
+        "18d-workout-recovery-step": screens.rowing_screen({**coached(), "coach": {**coached()["coach"],
+                                                                                "intensity": "Recovery",
+                                                                                "workout": wk_rest}}, now, up),
+        "18e-workout-done": screens.rowing_screen({**coached(), "coach": {**coached()["coach"], "intensity": "Recovery",
+                                                                       "workout": {"state": "done", "name": "Adrestia",
+                                                                                   "steps": 11, "step": 11}}}, now, up),
         "09-hold-to-switch-off": screens.hold_screen(0.6),
         "10-switching-off": screens.switching_off_screen(),
         "11-safe-to-unplug": screens.final_screen("poweroff"),
