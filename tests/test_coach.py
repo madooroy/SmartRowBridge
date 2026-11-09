@@ -69,7 +69,7 @@ class CoachTest(unittest.TestCase):
         with self.assertLogs("smartrow_bridge.coach", "INFO") as logs:
             r.row(21, 152, FULL, length=119)  # 1 minute
             self.assertEqual(r.state()["mode"], "interval")
-            r.row(15, 110)
+            r.row(5, 110)  # the 5th easy stroke confirms the end
         self.assertEqual(len(r.summaries), 1)
         s = r.summaries[0]
         self.assertEqual(s.strokes, 21)  # the hard strokes only: start back-dated, easy ones dropped
@@ -88,11 +88,13 @@ class CoachTest(unittest.TestCase):
         r = Rower()
         r.row(60, 110)
         r.row(21, 152, FULL)
-        r.row(10, 110)
+        r.row(5, 110)  # the effort's end is confirmed: summary up
         self.assertTrue(r.state()["show_summary"])
-        r.row(30, 110)
+        r.row(4, 110)
+        self.assertTrue(r.state()["show_summary"])  # 4 strokes after it appeared
+        r.row(1, 110)
         st = r.state()
-        self.assertFalse(st["show_summary"])
+        self.assertFalse(st["show_summary"])  # gone after 5
         self.assertEqual(st["last"]["index"], 1)  # still there for the X button
 
     def test_short_burst_is_not_an_interval(self):

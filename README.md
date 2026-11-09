@@ -438,7 +438,7 @@ at 70 W or 250 W.
   The pulley measures force at fixed distances along the stroke (about every 5.8 cm), so a shorter stroke
   simply has fewer points. The finish and the push are measured against each stroke's own length, so a
   shorter stroke shows as LONGER STROKES only, not as a weaker finish too.
-- **After an interval:** for 45 seconds, its duration and watts, its average force curve against your steady
+- **After an interval:** for the next 5 strokes (at most 45 seconds; X brings it back), its duration and watts, its average force curve against your steady
   shape (the force missing against it filled in light grey),
   and three tiles: **shape** (STEADY, FADED or LATE, with small force and steady blocks), **length** and
   **peak** force. Underneath, the finish figure when it faded (*FINISH −15% vs steady*), or where the force

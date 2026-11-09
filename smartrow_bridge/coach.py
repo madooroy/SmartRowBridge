@@ -186,7 +186,8 @@ def bands_text(ftp: float | None, easy_w: float | None) -> str:
                      else f"{label} {lo}\u2013{hi} W")
     return ", ".join(parts)
 SHORTER_CM = -2.0  # an interval's strokes this much shorter than steady are called out
-SUMMARY_SHOW_S = 45.0  # how long the summary is shown after an effort
+SUMMARY_SHOW_STROKES = 5  # the summary is shown for this many strokes after an effort ends (Marc, 9 Nov)
+SUMMARY_SHOW_S = 45.0  # ... and never longer than this (e.g. stopped rowing); X brings it back
 
 
 @dataclass(frozen=True)
@@ -1271,6 +1272,15 @@ class IntervalCoach:
 
     # ------------------------------------------------------------ status
 
+    def _strokes_after(self, t: float) -> int:
+        """Strokes rowed after time t (counted from the newest, so cheap just after t)."""
+        n = 0
+        for row in reversed(self.stroke_log):
+            if row[0] <= t:
+                break
+            n += 1
+        return n
+
     def state(self, now: float) -> dict:
         """What the screen needs, for status.json."""
         if self.effort is not None and self.last_time is not None and now - self.last_time > GAP_S:
@@ -1285,7 +1295,8 @@ class IntervalCoach:
             "last": last.as_dict() if last else None,
             "history": [{k: v for k, v in i.as_dict().items() if k not in ("curve", "steady_curve")}
                         for i in self.intervals[-20:]],
-            "show_summary": bool(last and self.effort is None and now - last.ended_at < SUMMARY_SHOW_S),
+            "show_summary": bool(last and self.effort is None and now - last.ended_at < SUMMARY_SHOW_S
+                                 and self._strokes_after(last.ended_at) < SUMMARY_SHOW_STROKES),
             # Between efforts: Recovery or Easy (from the last few strokes), the latest stroke and the
             # reference it is drawn against (the early Easy strokes once there are enough, else the
             # recent ones), and the Easy cue (None while still learning).
