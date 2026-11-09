@@ -2018,7 +2018,7 @@ function sessionCard(s, rows) {
   const flagged = (i) => i.uneven || i.transition || i.legs_late || i.rating === "short";
   const xStep = niceStep(minutes, 5), xFmt = (v) => v + xStep > minutes ? `${Math.round(v)} min` : `${Math.round(v)}`;
   const chart = (box, values, colour, title, { fromZero = false, names = false, minStep = 0, yFmt, showX = false,
-                                               bands = [], range = null, plan = [] } = {}) => {
+                                               bands = [], range = null, plan = [], fill = false } = {}) => {
     tile(...box);
     const vs = [...values.map((v) => v[1]), ...plan.map((p) => p.target_w)];
     const hi = Math.max(...vs), lo = fromZero ? 0 : Math.min(...vs);
@@ -2030,7 +2030,7 @@ function sessionCard(s, rows) {
     for (const z of bands) {  // zones: faint horizontal bands, named in the margin on the right where there's room
       const top = ax.Y(Math.min(z.hi ?? yMax, yMax)), bottom = ax.Y(Math.max(z.lo ?? yMin, yMin));
       if (bottom - top < 2) continue;
-      g.fillStyle = z.colour; g.globalAlpha = 0.26; g.fillRect(ax.x0, top, ax.x1 - ax.x0, bottom - top); g.globalAlpha = 1;
+      g.fillStyle = z.colour; g.globalAlpha = fill ? 0.08 : 0.26; g.fillRect(ax.x0, top, ax.x1 - ax.x0, bottom - top); g.globalAlpha = 1;
       if (bottom - top >= 15) text(z.name, ax.x1 + 10, (top + bottom) / 2 + 6, 17, z.colour, true);
     }
     for (const i of iv) {  // efforts
@@ -2038,8 +2038,29 @@ function sessionCard(s, rows) {
       g.fillStyle = C.fg; g.globalAlpha = bands.length ? 0.1 : 0.12; g.fillRect(a, ax.y0, b - a, ax.y1 - ax.y0); g.globalAlpha = 1;
       if (names) text(`I${i.index}`, (a + b) / 2, ax.y0 - 8, 20, flagged(i) ? C.amber : C.green, true, "center");
     }
+    if (fill && bands.length) {  // as intervals.icu: the area under the line in the colour of its zone
+      const zoneOf = (v) => bands.find((z) => (z.lo == null || v >= z.lo) && (z.hi == null || v < z.hi));
+      const base = ax.Y(yMin), P = ([t, v]) => [ax.X(t / 60), ax.Y(Math.max(v, yMin))];
+      // runs of segments in the same zone, each filled as one shape (no seams between slices)
+      let run = null;
+      const flush = () => {
+        if (!run) return;
+        g.fillStyle = run.z.colour; g.globalAlpha = 0.85; g.beginPath();
+        g.moveTo(P(run.pts[0])[0], base);
+        for (const p of run.pts) g.lineTo(...P(p));
+        g.lineTo(P(run.pts[run.pts.length - 1])[0], base); g.closePath(); g.fill(); g.globalAlpha = 1;
+        run = null;
+      };
+      for (let k = 1; k < values.length; k++) {
+        const p0 = values[k - 1], p1 = values[k];
+        const z = p1[0] - p0[0] > 30 ? null : zoneOf((p0[1] + p1[1]) / 2);  // a pause: a gap
+        if (!run || run.z !== z) { flush(); if (z) run = { z, pts: [p0] }; }
+        if (run) run.pts.push(p1);
+      }
+      flush();
+    }
     g.beginPath(); values.forEach(([t, v], k) => k ? g.lineTo(ax.X(t / 60), ax.Y(v)) : g.moveTo(ax.X(t / 60), ax.Y(v)));
-    g.strokeStyle = colour; g.lineWidth = 3; g.lineJoin = "round"; g.stroke();
+    g.strokeStyle = colour; g.lineWidth = fill && bands.length ? 2 : 3; g.lineJoin = "round"; g.stroke();
     if (plan.length) {  // a planned workout's targets: a dashed line, step by step
       g.beginPath();
       plan.forEach((p, k) => {
@@ -2073,7 +2094,7 @@ function sessionCard(s, rows) {
   let y = 316;
   const plan = ((s.workout && s.workout.steps) || []).filter((p) => p.target_w !== null && p.target_w !== undefined);
   chart([P, y, W, heights[0]], power, C.fg, "POWER (W) \u00b7 efforts shaded" + (plan.length ? " \u00b7 plan dashed" : ""),
-        { fromZero: true, names: true, bands: powerBands, plan });
+        { fromZero: true, names: true, bands: powerBands, plan, fill: true });
   y += heights[0] + 16;
   if (wb) {  // W'bal in place of pace (pace is the power chart again, in other units)
     chart([P, y, W, heights[1]], wb.series, AVG_COLOUR, `W\u2032BAL (%) \u00b7 W\u2032 ${(wb.w_prime / 1000).toFixed(1)} kJ`,
@@ -2084,7 +2105,7 @@ function sessionCard(s, rows) {
   y += heights[1] + 16;
   chart([P, y, W, heights[2]], smooth("spm"), C.fg, "STROKE RATE (spm)", { minStep: 5, showX: !withHr });
   y += heights[2] + 16;
-  if (withHr) { chart([P, y, W, heights[3]], hrValues, hrBands.length ? C.fg : C.red, "HEART RATE (bpm)", { showX: true, bands: hrBands }); y += heights[3] + 16; }
+  if (withHr) { chart([P, y, W, heights[3]], hrValues, hrBands.length ? C.fg : C.red, "HEART RATE (bpm)", { showX: true, bands: hrBands, fill: true }); y += heights[3] + 16; }
   let x = P;  // the note, in pieces (the colour words in their colours)
   for (const [t, colour, bold] of [[`${SMOOTH_S}-second averages \u00b7 I1, I2\u2026 `, C.dim, false],
                                    ["green", C.green, true], [" clean strokes, ", C.dim, false],
