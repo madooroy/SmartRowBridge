@@ -18,6 +18,7 @@ class Config:
     peripheral_transport: str | None
     pulley_address: str | None
     pulley_name: str
+    pulley_rest_s: float
     clone_name: str | None
     clone_address: str | None
     fitness_name: str
@@ -69,6 +70,9 @@ def parse(argv: list[str] | None = None) -> Config:
                    help="MAC of the physical pulley (default: first device matching service/name)")
     p.add_argument("--pulley-name", default=_env("SRB_PULLEY_NAME", "SmartRow"),
                    help="name substring used to find the pulley")
+    p.add_argument("--pulley-rest-s", type=float, default=float(_env("SRB_PULLEY_REST_S", "600")),
+                   help="let go of the pulley after this long without rowing, so it switches itself off and "
+                        "saves its batteries (a pull of the handle wakes it); 0 = never")
     p.add_argument("--clone-name", default=_env("SRB_CLONE_NAME"),
                    help="advertised name of the virtual device (default: the pulley's own name)")
     p.add_argument("--clone-address", default=_env("SRB_CLONE_ADDRESS"),

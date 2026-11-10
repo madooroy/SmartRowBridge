@@ -25,6 +25,7 @@ STARTING = "starting"  # finding and preparing the two radios
 SEARCHING = "searching"  # scanning for the pulley (it sleeps until the handle is pulled)
 CONNECTED = "connected"  # pulley connected, virtual devices advertising
 RECONNECTING = "reconnecting"  # pulley link lost, scanning again
+RESTING = "resting"  # let go of after no rowing for a while (it switches itself off); a pull wakes it
 
 
 def pulley_label(name: str, manufacturer_data: dict[int, bytes]) -> str:

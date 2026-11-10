@@ -448,7 +448,7 @@ class SleepTest(unittest.TestCase):
         st["time"] = 101030.0 + 300
         self.assertFalse(c.step(st, 101030.0 + 300, 350.0, NO_BUTTONS).screen_on)  # uptime, not the clock
 
-    def test_never_while_anything_is_connected(self):
+    def test_a_connection_that_stays_up_does_not_keep_it_on_but_a_new_one_wakes_it(self):
         def connected(t, what):
             st = self.fresh(t)
             if what == "pulley":
@@ -460,12 +460,12 @@ class SleepTest(unittest.TestCase):
             return st
         for what in ("pulley", "smartrow_app", "fitness_app", "strap"):
             c = app.Controller(sleep_s=3600)
-            for t in range(0, 4 * 3600, 600):
+            self.step(c, self.fresh(0), 0)
+            for t in range(600, 3600, 600):  # it connects: the hour starts then
                 self.assertTrue(self.step(c, connected(t, what), t).screen_on, (what, t))
-            # disconnected: the hour starts then
-            self.assertTrue(self.step(c, self.fresh(4 * 3600), 4 * 3600).screen_on)
-            self.assertFalse(self.step(c, self.fresh(5 * 3600), 5 * 3600).screen_on, what)
-            self.assertTrue(self.step(c, connected(5 * 3600 + 1, what), 5 * 3600 + 1).screen_on)  # and wakes it
+            self.assertFalse(self.step(c, connected(600 + 3600, what), 600 + 3600).screen_on, what)  # still up: dark
+            self.step(c, self.fresh(5 * 3600), 5 * 3600)  # it goes ...
+            self.assertTrue(self.step(c, connected(5 * 3600 + 1, what), 5 * 3600 + 1).screen_on)  # ... and comes back
 
     def test_an_hour_by_default(self):
         self.assertEqual(app.SLEEP_S, 3600)

@@ -243,9 +243,11 @@ def status_screen(status: dict | None, now: float, uptime: float, address: str =
         return image
 
     stage = status.get("stage")
-    connected = stage in ("connected", "reconnecting")  # virtual devices are up
+    connected = stage in ("connected", "reconnecting", "resting")  # virtual devices are up
     if stage == "connected":
         pulley = (status.get("pulley") or "Pulley"), "Connected", GREEN
+    elif stage == "resting":  # let go of after no rowing, so it can switch itself off
+        pulley = (status.get("pulley") or "Pulley"), "Resting - pull the handle", DIM
     elif stage == "reconnecting":
         pulley = (status.get("pulley") or "Pulley"), "Lost - pull the handle", AMBER
     elif stage == "searching":

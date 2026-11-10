@@ -23,6 +23,12 @@ _SKIP_SERVICES = {
 }
 
 RETRY_DELAY_S = 5
+# Resting: after this long without rowing the bridge lets go of the pulley, which switches itself off
+# about a minute after it loses its connection (WaterRower: "If there is no Bluetooth connection within
+# 1 minute it will turn itself off"), saving its batteries. It isn't looked for again until REST_HOLD_S
+# have passed, so it can; then a pull of the handle wakes it and it is reconnected as from cold.
+REST_CHECK_S = 15.0
+REST_HOLD_S = 90.0
 CONNECT_TIMEOUT_S = 10.0
 WRITE_TIMEOUT_S = 5.0  # a write that takes longer is given up, so later writes aren't held up
 WRITE_GAP_S = 0.03  # spacing between single-byte command writes
@@ -50,6 +56,9 @@ class PulleyLink:
         self.exclude_addresses = {a.upper() for a in exclude_addresses}
         self.on_notify = on_notify
         self.on_connected: Callable[[], None] = lambda: None
+        self.rest_after_s = 0.0  # 0: never let go of an idle pulley
+        self.idle_s: Callable[[], float] = lambda: 0.0  # seconds without rowing (set by the bridge)
+        self.resting = False  # let go of while idle: waiting for a pull of the handle
         self.scan_lock = asyncio.Lock()  # shared with the heart rate strap: one scan at a time
 
         self._client: BleakClient | None = None
@@ -200,18 +209,38 @@ class PulleyLink:
                     # BlueZ can fire a disconnect callback right after connecting while the
                     # link stays up (seen on a cold boot: data kept flowing). Only a link
                     # that is actually down counts.
+                    rest = False
                     while True:
-                        await self._disconnected.wait()
+                        try:
+                            await asyncio.wait_for(self._disconnected.wait(), REST_CHECK_S)
+                        except asyncio.TimeoutError:
+                            if self.rest_after_s > 0 and self.idle_s() >= self.rest_after_s:
+                                rest = True
+                                break
+                            continue
                         self._disconnected.clear()
                         if not client.is_connected:
                             break
                         log.info("Ignoring spurious disconnect event; pulley link is still up")
+                    if rest:
+                        log.info("No rowing for %d min: letting go of the pulley so it can switch itself off "
+                                 "(pull the handle to wake it)", round(self.idle_s() / 60))
+                        self.resting = True
+                        try:
+                            await client.disconnect()
+                        except Exception as exc:  # noqa: BLE001
+                            log.warning("Letting go of the pulley failed: %s", _describe(exc))
+                        self._client = None
+                        client = None
+                        await asyncio.sleep(REST_HOLD_S)
+                        continue
                     log.warning("Pulley disconnected")
                 client = None
                 await asyncio.sleep(RETRY_DELAY_S)
                 try:
                     device, _ = await self._scan()
                     client = await self._connect(device)
+                    self.resting = False
                 except Exception as exc:  # noqa: BLE001
                     log.warning("Reconnect failed: %s", _describe(exc))
                     client = None

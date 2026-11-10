@@ -702,12 +702,15 @@ function render() {
   $("dot").className = `dot ${connected ? "ok" : "warn"}`;
   const strap = st.heart_rate ? (st.heart_rate.connected ? ` · ♥ ${st.heart_rate.name || "strap"}` : " · ♥ looking for strap") : "";
   $("where").textContent = connected ? `${st.pulley || "Pulley"} connected` + strap +
-    (st.coach ? "" : " · coach off (SRB_COACH=1 turns it on)") : "Waiting for the pulley – pull the handle";
+    (st.coach ? "" : " · coach off (SRB_COACH=1 turns it on)")
+    : st.stage === "resting" ? "Pulley resting – pull the handle to wake it" : "Waiting for the pulley – pull the handle";
   const coach = st.coach;
   renderHistory(coach);
   renderWorkout(st);
   $("layout").classList.toggle("busy", !!(coach && coach.live));
-  if (!connected && !st.rowing) return message("Waiting for the pulley", "Pull the handle to wake it", "warn");
+  if (!connected && !st.rowing) return st.stage === "resting"
+    ? message("Pulley resting", "Let go of after a while without rowing, so it switches itself off. Pull the handle to wake it.", "warn")
+    : message("Waiting for the pulley", "Pull the handle to wake it", "warn");
   if (coach && coach.live) { recallUntil = 0; return renderInterval(coach.live); }
   const last = coach && coach.last;
   if (last && ((coach.show_summary && closedIndex !== last.index) || now < recallUntil)) {

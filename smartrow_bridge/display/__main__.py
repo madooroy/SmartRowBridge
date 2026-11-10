@@ -243,6 +243,7 @@ def preview(directory: str) -> None:
         "04-pulley-connected": screens.status_screen(st("connected", "SmartRow-34"), now, up, addr),
         "05-both-apps": screens.status_screen(st("connected", "SmartRow-34", True, True), now, up, addr),
         "06-pulley-lost": screens.status_screen(st("reconnecting", "SmartRow-34", True, True), now, up, addr),
+        "06b-pulley-resting": screens.status_screen(st("resting", "SmartRow-34", False, True), now, up, addr),
         "07-rowing": screens.rowing_screen(st("connected", "SmartRow-34", True, True, True, **rowing), now, up),
         "08-paused": screens.rowing_screen(
             st("connected", "SmartRow-34", True, True, False, **{**rowing, "power_w": 0, "stroke_rate_spm": 0,

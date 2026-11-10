@@ -198,7 +198,7 @@ Common problems:
 | `SRB_COACH` | `0` | `1` turns on the [interval coach](#optional-interval-coach-experimental) (experimental) |
 | `SRB_COACH_START_PCT`, `SRB_COACH_MAX_MIN`, `SRB_COACH_SENSITIVITY` | `20`, `5`, `normal` | Coach tuning: how much harder than steady an interval is (%), the longest effort to count (minutes), how readily the cues speak up (`low`, `normal`, `high`). The first two are not used once the coach has an FTP (`SRB_COACH_FTP` or intervals.icu): the FTP sets the threshold and there is no time limit |
 | `SRB_WEB_PORT` | `8080` | Port of the optional [web page](#optional-a-web-page-for-phones-and-tablets) |
-| `SRB_DISPLAY_LED`, `SRB_DISPLAY_HOLD_S`, `SRB_DISPLAY_SLEEP_S` | `1`, `2`, `3600` | Screen only: `0` leaves its LED off; seconds to hold button A to switch the Pi off; seconds with nothing connected or happening before the screen goes dark (`0` = never; rowing, a connection or any button wakes it) |
+| `SRB_DISPLAY_LED`, `SRB_DISPLAY_HOLD_S`, `SRB_DISPLAY_SLEEP_S` | `1`, `2`, `3600` | Screen only: `0` leaves its LED off; seconds to hold button A to switch the Pi off; seconds with nothing happening (no rowing, no button, nothing newly connected) before the screen goes dark (`0` = never; rowing, something connecting or any button wakes it) |
 | `SRB_DISPLAY_FLIP` | `0` | Screen only: `1` = the HAT is mounted the other way up. The picture turns 180° and each button keeps the job of its corner (A top left, B bottom left, X top right, Y bottom right as you look at it), so the letters printed on the board no longer match |
 
 ## How it works
@@ -360,9 +360,14 @@ without a phone:
 - **Buttons:** small tabs in the screen's corners show what each does: a power symbol on A, on B the screen
   it switches to and *Hold: drills* (*DRILLS ON* in amber once a session is marked), on X once there is an interval to look back at (or *Hold: discard* before then), and a tick on Y
   (*Hold: end/submit*) once there is a session to finish.
-- **Screen sleep:** the screen goes dark after an hour with nothing happening: nothing connected (the
-  pulley, the SmartRow app, a fitness app or the heart-rate strap), no rowing, no button, nothing left to
-  upload. It stays on as long as any of those is connected. The LED stays on, so a dark screen with a lit LED is asleep, not switched off. Start rowing
+- **Pulley rest:** after 10 minutes without rowing the bridge lets go of the pulley, which switches itself
+  off about a minute later, saving its batteries (the status screen shows *Resting - pull the handle*). A
+  pull of the handle wakes it and it reconnects within a few seconds, as from cold (for 90 s after letting
+  go, while the pulley switches off, it isn't looked for). `SRB_PULLEY_REST_S` sets the time (`0` = keep it
+  connected).
+- **Screen sleep:** the screen goes dark after an hour with nothing happening: no rowing, no button, nothing
+  newly connected, nothing left to upload. A connection that just stays up (Peloton left open on the
+  iPad, the heart-rate strap) doesn't keep it on; something connecting wakes it. The LED stays on, so a dark screen with a lit LED is asleep, not switched off. Start rowing
   or press any button to wake it; the press that wakes it does nothing else. Change the time with
   `SRB_DISPLAY_SLEEP_S` in `/etc/default/smartrow-bridge` (`0` = never).
 - **LED:** dim red while the bridge starts and waits for the pulley (or is not running), dim green

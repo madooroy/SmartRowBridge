@@ -100,6 +100,8 @@ class Bridge:
         self._pulley_packets = 0
         self._sniff: IO[str] | None = None
         self._stage = status.STARTING
+        self._last_rowing = 0.0  # monotonic: last time the pulley showed rowing (pulley rest)
+        self._pulley_connected_at = 0.0
         self._pulley_label: str | None = None
         self._clone_name: str | None = None
 
@@ -136,11 +138,21 @@ class Bridge:
     def _on_heart_rate(self, bpm: int) -> None:
         self.parser.metrics.heart_rate_bpm = bpm
 
+    def _idle_s(self) -> float:
+        """Seconds since the last rowing (or since the pulley connected, if later)."""
+        now = time.monotonic()
+        snap = self.parser.snapshot()
+        if snap.stroke_rate_spm > 0 or snap.power_w > 0:
+            self._last_rowing = now
+        last_stroke = self.coach.last_time if self.coach is not None and self.coach.last_time else 0.0
+        return now - max(self._last_rowing, self._pulley_connected_at, last_stroke)
+
     def _on_pulley_connected(self) -> None:
         """Called once notifications are subscribed, so replies to our commands are seen."""
         self._driver_initialized = False
         self._challenge_requested = False
         self._pulley_ready = True
+        self._pulley_connected_at = time.monotonic()
 
     async def _driver_loop(self) -> None:
         while True:
@@ -216,7 +228,7 @@ class Bridge:
     def _status(self) -> dict:
         stage = self._stage
         if stage == status.CONNECTED and not (self.link and self.link.connected):
-            stage = status.RECONNECTING
+            stage = status.RESTING if self.link.resting else status.RECONNECTING
         p = self.peripheral
         snap = self.parser.snapshot()
         return status.build(
@@ -420,6 +432,8 @@ class Bridge:
             on_notify=self._on_notify,
         )
         self.link.on_connected = self._on_pulley_connected
+        self.link.rest_after_s = self.cfg.pulley_rest_s
+        self.link.idle_s = self._idle_s
         if self.cfg.heart_rate.lower() not in ("", "off", "0", "no"):
             from .heartrate import HeartRateLink
             self.hr_link = HeartRateLink(central_hci, self.cfg.heart_rate, self.link.scan_lock,

@@ -22,10 +22,11 @@
   to switch the Pi off on every boot. With a session still to upload, the Pi finishes
   it, uploads and then switches off by itself (A again: off now; B: cancel); a service
   that can't be reached gets it the next time the Pi is on.
-- The screen goes dark after SRB_DISPLAY_SLEEP_S seconds (3600; 0 = never) with nothing
-  connected (pulley, SmartRow app, fitness app, heart-rate strap), no rowing, no button
-  pressed and nothing still to upload; the LED stays on. Rowing, any button or a
-  connection wakes it, and the press that wakes it does nothing else.
+- The screen goes dark after SRB_DISPLAY_SLEEP_S seconds (3600; 0 = never) with no rowing,
+  no button pressed, nothing newly connected and nothing still to upload; the LED stays on.
+  Connections that just stay up (Peloton left open, the strap, the pulley before the bridge
+  lets it rest) don't keep it on. Rowing, any button or something connecting wakes it, and
+  the press that wakes it does nothing else.
 
 The screen asks the bridge to finish a session through a request file beside the status
 file (status.send_request); Frame.request carries it to the caller, which writes it.
@@ -68,11 +69,11 @@ class Frame:
     request: dict | None = None  # for the bridge: {"action": "finish", "token": ...} (status.request_path)
 
 
-def _connected(status: dict | None) -> bool:
-    """Something is connected: the pulley, the SmartRow app, a fitness app or the heart-rate strap."""
+def _connections(status: dict | None) -> tuple[bool, bool, bool, bool]:
+    """What is connected: the pulley, the SmartRow app, a fitness app, the heart-rate strap."""
     st = status or {}
-    return bool(st.get("stage") == "connected" or st.get("smartrow_app") or st.get("fitness_app")
-                or (st.get("heart_rate") or {}).get("connected"))
+    return (st.get("stage") == "connected", bool(st.get("smartrow_app")), bool(st.get("fitness_app")),
+            bool((st.get("heart_rate") or {}).get("connected")))
 
 
 def _session_open(status: dict | None) -> bool:
@@ -102,7 +103,7 @@ def led_for(status: dict | None, now: float, uptime: float, rowing_recently: boo
     Off: while rowing, until the screen goes back to the status a minute after the last stroke."""
     if rowing_recently:
         return None
-    if screens.bridge_state(status, now, uptime) == "ok" and status.get("stage") == "connected":
+    if screens.bridge_state(status, now, uptime) == "ok" and status.get("stage") in ("connected", "resting"):
         return "green"
     return "red"
 
@@ -112,6 +113,7 @@ class Controller:
         self.hold_s = hold_s
         self.sleep_s = sleep_s
         self.asleep = False
+        self._links = (False,) * 4  # what was connected at the last step (pulley, SmartRow app, fitness app, strap)
         self._quiet_since: float | None = None  # in uptime: the wall clock jumps when the Pi syncs its time
         self._swallow = False  # the press that woke the screen: ignored until let go
         self.view = "status"
@@ -237,7 +239,11 @@ class Controller:
             self._swallow = False
         fresh = screens.bridge_state(status, now, uptime) == "ok"
         rowing = fresh and bool(status.get("rowing"))
-        connected = fresh and _connected(status)
+        # A connection that appears (the pulley woken, an app or the strap connecting) counts as
+        # something happening; one that just stays up (Peloton left open, the strap on the desk) doesn't.
+        links = _connections(status) if fresh else (False,) * 4
+        connected = any(now_on and not before for now_on, before in zip(links, self._links))
+        self._links = links
         if self.asleep:
             if not (pressed or rowing or connected or _outstanding(status)):
                 return Frame(screens.blank(), led_for(status, now, uptime), screen_on=False)
