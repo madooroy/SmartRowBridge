@@ -186,11 +186,13 @@ class RecorderTest(unittest.TestCase):
         log[0] = log[0][:8] + (0.9, 2.1, t0 - 0.95, t0 - 0.05)  # a pulley stroke with its drive flag and edges
         log[1] = log[1][:7] + (1.12,)            # a handle stroke from an older tuple
         rows = sessions.stroke_rows(r.coach)
-        self.assertEqual(sessions.STROKE_COLUMNS[-5:], ["drive_s", "flag_drive_s", "flag_recovery_s",
-                                                        "flag_on_t", "flag_off_t"])
-        self.assertEqual(rows[0][-5:], [None, 0.9, 2.1, -0.95, -0.05])  # edges in s from the first stroke
-        self.assertEqual(rows[1][-5:], [1.12, None, None, None, None])
-        self.assertEqual(rows[2][-5:], [None, None, None, None, None])
+        log[2] = log[2][:10] + (t0 + 5.0, t0 + 5.8, t0 + 4.6, t0 + 5.5, t0 + 3.0)  # with the seat's events
+        rows = sessions.stroke_rows(r.coach)
+        self.assertEqual(sessions.STROKE_COLUMNS[7:], ["drive_s", "flag_drive_s", "flag_recovery_s",
+                                                       "flag_on_t", "flag_off_t", "catch_t", "legs_flat_t", "knees_t"])
+        self.assertEqual(rows[0][7:], [None, 0.9, 2.1, -0.95, -0.05, None, None, None])  # s from the first stroke
+        self.assertEqual(rows[1][7:], [1.12, None, None, None, None, None, None, None])
+        self.assertEqual(rows[2][10:], [5.0, 5.8, 4.6, 5.5, 3.0])
         self.assertEqual(len(rows[0]), len(sessions.STROKE_COLUMNS))
 
     def test_bridge_handles_done_from_the_screen(self):

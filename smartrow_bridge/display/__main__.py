@@ -270,6 +270,14 @@ def preview(directory: str) -> None:
         "07p-rowing-easy-rhythm": screens.rowing_screen({**coached(), "coach": {**coached()["coach"],
                                                                              "rhythm": {"drive_s": 1.3, "recovery_s": 1.7,
                                                                                         "ratio": 1.31, "aim": 2.0}}}, now, up),
+        "07q-rowing-easy-stroke-parts": screens.rowing_screen({**coached(), "coach": {**coached()["coach"], "rhythm": {
+            "drive_s": 1.14, "recovery_s": 2.37, "ratio": 2.08, "aim": 2.0, "source": "seat",
+            "phases": {"load": 0.39, "legs": 0.94, "body": 0.21, "drive": 1.14, "parked": 1.3, "slide": 1.04,
+                       "recovery": 2.37}}}}, now, up),
+        "07r-rowing-easy-arms-first": screens.rowing_screen({**coached(), "coach": {**coached()["coach"], "rhythm": {
+            "drive_s": 1.25, "recovery_s": 1.95, "ratio": 1.56, "aim": 2.0, "source": "seat",
+            "phases": {"load": -0.12, "legs": 0.95, "body": 0.3, "drive": 1.25, "parked": 0.7, "slide": 1.25,
+                       "recovery": 1.95}}}}, now, up),
         "07m-rowing-recovery": screens.rowing_screen({**coached(), "coach": {**coached()["coach"],
                                                                           "intensity": "Recovery"}}, now, up),
         # Following a planned workout (workout.py).

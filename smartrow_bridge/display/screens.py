@@ -504,19 +504,62 @@ GOOD_FINISH_PCT, OK_FINISH_PCT = -5, -12  # same bands as smartrow_bridge.coach 
 METER_MIN_PCT, METER_MAX_PCT = -30, 15
 
 
+# The stroke's parts on the rhythm bar (seat sensor, phases.py): the drive in blues, the recovery in greys.
+PHASE_COLOURS = {"slack": (40, 82, 130), "legs": BLUE, "body": (160, 210, 250), "parked": (120, 120, 120),
+                 "slide": (52, 52, 52), "early": AMBER}
+
+
+def phase_segments(rhythm: dict) -> list[tuple[str, float]] | None:
+    """The bar's segments, as (part, share of the stroke), from catch to catch: the legs (their start in
+    a darker blue until the handle takes load, or amber if it was loaded before the seat moved), body
+    and arms, parked after the finish, the slide. The parts' medians are scaled to the drive and the
+    recovery so the segments add up. None without the seat sensor's parts."""
+    ph = rhythm.get("phases") or {}
+    drive, recovery = rhythm["drive_s"], rhythm["recovery_s"]
+    legs, body, parked, slide, load = (ph.get(k) for k in ("legs", "body", "parked", "slide", "load"))
+    if not (legs and body is not None and parked is not None and slide):
+        return None
+    total = drive + recovery
+    body = max(0.0, body)
+    k_d = drive / (legs + body) if legs + body > 0 else 1.0
+    k_r = recovery / (max(0.0, parked) + slide) if parked + slide > 0 else 1.0
+    legs_s, body_s, parked_s, slide_s = legs * k_d, body * k_d, max(0.0, parked) * k_r, slide * k_r
+    out = []
+    if load is not None and load < -0.05:
+        early = min(0.15 * legs_s, -load)
+        out += [("early", early / total), ("legs", (legs_s - early) / total)]
+    elif load and load > 0:
+        slack = min(load * k_d, legs_s)
+        out += [("slack", slack / total), ("legs", (legs_s - slack) / total)]
+    else:
+        out.append(("legs", legs_s / total))
+    return out + [("body", body_s / total), ("parked", parked_s / total), ("slide", slide_s / total)]
+
+
 def _rhythm_bar(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], rhythm: dict) -> None:
     """One stroke to scale: the drive (blue) then the recovery (grey), with a tick where the drive
-    would end at the aim (1:2). A recovery that grows moves the blue/grey edge toward the tick."""
+    would end at the aim (1:2). A recovery that grows moves the blue/grey edge toward the tick.
+    With the seat sensor the bar shows the stroke's parts (phase_segments)."""
     x0, y0, x1, y1 = box
     drive, recovery = rhythm["drive_s"], rhythm["recovery_s"]
     w = x1 - x0
     edge = x0 + w * drive / (drive + recovery)
     draw.rounded_rectangle(box, radius=4, fill=TILE)
-    draw.rounded_rectangle((x0, y0, edge, y1), radius=4, fill=BLUE)
+    segments = phase_segments(rhythm)
+    if segments:
+        x = float(x0)
+        for part, share in segments:
+            nx = x + w * share
+            if nx - x >= 0.5:  # a 1-pixel gap between parts
+                draw.rectangle((round(x), y0, max(round(x), round(nx) - 2), y1), fill=PHASE_COLOURS[part])
+            x = nx
+    else:
+        draw.rounded_rectangle((x0, y0, edge, y1), radius=4, fill=BLUE)
     aim = x0 + w / (1 + rhythm.get("aim", 2.0))
     draw.line((aim, y0 - 2, aim, y1 + 2), fill=FG, width=2)
-    text = f"drive {drive:.1f} s  \u00b7  1:{rhythm['ratio']:.1f}"
-    draw.text((x1 - 6, (y0 + y1) // 2), text, font=font(11), fill=DIM, anchor="rm")
+    text = (f"{drive:.1f} s \u00b7 1:{rhythm['ratio']:.1f}" if segments
+            else f"drive {drive:.1f} s  \u00b7  1:{rhythm['ratio']:.1f}")
+    draw.text((x1 - 6, (y0 + y1) // 2), text, font=font(11), fill=FG if segments else DIM, anchor="rm")
 
 
 def finish_colour(pct: int | None) -> tuple:

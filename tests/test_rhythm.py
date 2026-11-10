@@ -69,7 +69,7 @@ class RhythmTest(unittest.TestCase):
         bar = rhythm.live(log, now=27.5)
         d = rhythm.drive_from_flag(0.82, 20)
         self.assertEqual(bar, {"drive_s": round(d, 2), "recovery_s": round(3.0 - d, 2),
-                               "ratio": round((3.0 - d) / d, 2), "aim": 2.0})
+                               "ratio": round((3.0 - d) / d, 2), "aim": 2.0, "source": "pulley"})
         self.assertIsNone(rhythm.live(log, now=27.0 + rhythm.LIVE_STALE_S + 1))  # stopped rowing
         fast = [row(t * 2.0, 30, flag=0.7, rec=1.3) for t in range(10)]
         self.assertIsNone(rhythm.live(fast, now=18.5))  # above 24 spm: 1:2 isn't the aim there

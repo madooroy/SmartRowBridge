@@ -79,6 +79,8 @@ class Bridge:
             from .seat import SeatSensor, SeatWriter
             self.seat = SeatSensor(cfg.seat_sensor)
             self.seat_writer = SeatWriter(cfg.session_dir, self.seat)
+            if self.coach is not None:
+                self.coach.seat_window = self._seat_window
         # Planned workouts (workout.py): a FIT workout file in this folder is followed from the next stroke.
         self.workouts = None
         if self.coach is not None and cfg.workout_dir.lower() not in ("off", "0", "no"):
@@ -109,6 +111,13 @@ class Bridge:
     # on V3 hardware, a KEYLOCK answer. The SmartRow app does all of that through
     # the clone; the bridge only takes over while the app is not connected.
     @property
+    def _seat_window(self, start: float, end: float) -> list[tuple[float, float]]:
+        """The seat sensor's good readings from start to end (monotonic), as (time, cm), for the coach."""
+        from .seat import good
+        if self.seat is None:
+            return []
+        return [(r[1], float(r[2])) for r in self.seat.since(0, start) if r[1] <= end and good(r[2], r[3])]
+
     def _bridge_drives_pulley(self) -> bool:
         return self.cfg.drive_without_tablet and not (self.peripheral and self.peripheral.tablet_connected)
 

@@ -449,14 +449,43 @@ function show(id) {
 let scratchCanvas = null;
 // One stroke to scale, as on the screen (display/screens.py _rhythm_bar): the drive (blue) then the
 // recovery (grey), a tick where the drive would end at the aim (1:2), and the figures at the right.
+// As display/screens.py phase_segments: the stroke's parts with the seat sensor, catch to catch.
+const PHASE_COLOURS = { slack: "#285282", legs: C.blue, body: "#a0d2fa", parked: "#787878", slide: "#343434", early: C.amber };
+function phaseSegments(rhythm) {
+  const ph = rhythm.phases || {}, drive = rhythm.drive_s, recovery = rhythm.recovery_s;
+  let { legs, body, parked, slide, load } = ph;
+  if (!legs || body == null || parked == null || !slide) return null;
+  const total = drive + recovery;
+  body = Math.max(0, body);
+  const kd = legs + body > 0 ? drive / (legs + body) : 1, kr = parked + slide > 0 ? recovery / (Math.max(0, parked) + slide) : 1;
+  const legsS = legs * kd, bodyS = body * kd, parkedS = Math.max(0, parked) * kr, slideS = slide * kr, out = [];
+  if (load != null && load < -0.05) {
+    const early = Math.min(0.15 * legsS, -load);
+    out.push(["early", early / total], ["legs", (legsS - early) / total]);
+  } else if (load && load > 0) {
+    const slack = Math.min(load * kd, legsS);
+    out.push(["slack", slack / total], ["legs", (legsS - slack) / total]);
+  } else out.push(["legs", legsS / total]);
+  return out.concat([["body", bodyS / total], ["parked", parkedS / total], ["slide", slideS / total]]);
+}
 function plotRhythm(g, x, y, w, h, rhythm) {
   const { drive_s: drive, recovery_s: recovery } = rhythm, r = Math.min(6, h / 2);
   g.fillStyle = C.tile; g.beginPath(); g.roundRect(x, y, w, h, r); g.fill();
-  g.fillStyle = C.blue; g.beginPath(); g.roundRect(x, y, w * drive / (drive + recovery), h, r); g.fill();
+  const segs = phaseSegments(rhythm);
+  if (segs) {
+    g.save(); g.beginPath(); g.roundRect(x, y, w, h, r); g.clip();
+    let at = x;
+    for (const [part, share] of segs) {  // a 1-pixel gap between parts
+      g.fillStyle = PHASE_COLOURS[part]; g.fillRect(at, y, Math.max(0, w * share - 1), h); at += w * share;
+    }
+    g.restore();
+  } else { g.fillStyle = C.blue; g.beginPath(); g.roundRect(x, y, w * drive / (drive + recovery), h, r); g.fill(); }
   const aim = x + w / (1 + (rhythm.aim ?? 2));
   g.strokeStyle = C.fg; g.lineWidth = 2; g.beginPath(); g.moveTo(aim, y - 2); g.lineTo(aim, y + h + 2); g.stroke();
-  g.font = `${Math.round(h * 0.62)}px system-ui, sans-serif`; g.fillStyle = C.dim; g.textAlign = "right";
-  g.textBaseline = "middle"; g.fillText(`drive ${drive.toFixed(1)} s · 1:${rhythm.ratio.toFixed(1)}`, x + w - 8, y + h / 2 + 1);
+  g.font = `${Math.round(h * 0.62)}px system-ui, sans-serif`; g.fillStyle = segs ? C.fg : C.dim; g.textAlign = "right";
+  g.textBaseline = "middle";
+  g.fillText(segs ? `${drive.toFixed(1)} s · 1:${rhythm.ratio.toFixed(1)}` : `drive ${drive.toFixed(1)} s · 1:${rhythm.ratio.toFixed(1)}`,
+             x + w - 8, y + h / 2 + 1);
 }
 function drawRhythm(canvas, rhythm) {
   const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
@@ -2075,7 +2104,12 @@ function glossary(s) {
       "or the stall slip by the end? Needs no Easy rowing, so a race or a hard start is judged too."],
     ...(s.rhythm ? [["Rhythm", C.fg, "Drive time against recovery time. 1:2 means the recovery takes twice as long " +
       "as the drive, the usual aim at low rates; at higher rates it shortens. " +
-      (s.rower ? "" : "The drive is estimated from the pulley\u2019s drive signal, to about 0.1\u00a0s over many strokes.")]] : []),
+      (((s.rhythm.easy || {}).source === "seat")
+        ? "Timed with the seat sensor and the pulley: the drive from the seat leaving the front to the handle " +
+          "letting go, the recovery from there to the next catch. On the screen\u2019s bar: legs (dark blue until the " +
+          "handle takes load), body and arms (light blue), parked after the finish (grey: hands away and body over " +
+          "before the knees rise), the slide (dark grey)."
+        : s.rower ? "" : "The drive is estimated from the pulley\u2019s drive signal, to about 0.1\u00a0s over many strokes.")]] : []),
     ...((s.ladders || []).length ? [["Ladder", C.fg, "Steady steps, each a set power above the one before. Per step: " +
       "where the extra power came from (stroke rate, force, drive time) and how heart rate followed."]] : []),
     ...(s.wbal && s.wbal.min_pct < WBAL_SHOW_PCT ? [["W\u2032bal", AVG_COLOUR, `What is left of W\u2032 (${(s.wbal.w_prime / 1000).toFixed(1)}\u00a0kJ), the work ` +

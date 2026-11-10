@@ -695,6 +695,10 @@ class IntervalCoach:
         # A planned workout being followed (workout.Player): set by the bridge when one is loaded, it
         # starts with the next stroke and belongs to that session (its result is in session_summary).
         self.workout = None
+        # The seat sensor's readings (seat.SeatSensor through the bridge): a callable (from, to) on the
+        # strokes' clock returning [(time, cm)]; None without the sensor. With it, each stroke is timed
+        # part by part (phases.py).
+        self.seat_window = None
         self.reset()
 
     @property
@@ -781,9 +785,10 @@ class IntervalCoach:
         # Every stroke, for the session's activity file and later analysis:
         # (time, distance m, power W, strokes/min, heart rate, stroke length cm, force curve N, drive s)
         # (time, distance, power, spm, heart rate, length, force curve, drive_s, flag_drive_s, flag_recovery_s,
-        #  flag_on_t, flag_off_t)
+        #  flag_on_t, flag_off_t, catch_t, legs_flat_t, knees_before_t): the last three from the seat
+        #  sensor (phases.py; 0 = none), knees_before_t being the knees rise in the recovery before this catch
         self.stroke_log: list[tuple[float, int, float, float, int, int, tuple[int, ...], float, float, float,
-                                    float, float]] = []
+                                    float, float, float, float, float]] = []
 
     # ------------------------------------------------------------ reference
 
@@ -823,6 +828,24 @@ class IntervalCoach:
     def expected(self, intensity: str) -> float:
         return self.expect.get(intensity, 1.0)
 
+    def _seat_events(self, s: StrokeCurve) -> dict | None:
+        """This stroke's catch and legs flat (and the knees rise before it) from the seat sensor,
+        with the previous stroke's finish (phases.stroke_events); None without the sensor."""
+        if self.seat_window is None or not (s.flag_on_t and s.flag_off_t):
+            return None
+        from . import phases
+        prev = self.stroke_log[-1] if self.stroke_log else None
+        prev_off = prev[phases.I_FLAG_OFF] if prev is not None and len(prev) > phases.I_FLAG_OFF else 0.0
+        prev_legs = prev[phases.I_LEGS] if prev is not None and len(prev) > phases.I_LEGS else 0.0
+        start = (prev_off if prev_off and s.flag_on_t - prev_off <= phases.MAX_RECOVERY_S + 2
+                 else s.flag_on_t - phases.LOOK_BACK_S) - 0.5
+        try:
+            readings = self.seat_window(start, s.time)
+            return phases.stroke_events(readings, s.flag_on_t, s.flag_off_t, prev_off or None, prev_legs or None)
+        except Exception:  # noqa: BLE001 - the seat must never break coaching
+            log.exception("Timing the stroke with the seat sensor failed")
+            return None
+
     def shape_strokes(self) -> list[StrokeCurve]:
         """The Easy strokes efforts are judged against: after the warm-up when there are enough."""
         return list(self.shape) if len(self.shape) >= SHAPE_MIN else list(self.steady)
@@ -847,9 +870,12 @@ class IntervalCoach:
         self.power_total += stroke_power(s)
         self.length_total += s.stroke_length_cm
         self.trace.append((s.time, s.heart_rate_bpm, stroke_power(s)))
+        events = self._seat_events(s)
         self.stroke_log.append((s.time, s.distance_m, stroke_power(s), s.stroke_rate_spm, s.heart_rate_bpm,
                                 s.stroke_length_cm, tuple(s.force_n), s.drive_s,
-                                s.flag_drive_s, s.flag_recovery_s, s.flag_on_t, s.flag_off_t))
+                                s.flag_drive_s, s.flag_recovery_s, s.flag_on_t, s.flag_off_t,
+                                events["catch"] if events else 0.0, events["legs"] if events else 0.0,
+                                (events["knees_before"] or 0.0) if events else 0.0))
         self.recent.append(s)
         if self.workout is not None:
             if not self.workout.started:
@@ -1165,7 +1191,7 @@ class IntervalCoach:
         hr = heart_rate_summary(self.trace, self.intervals, self.steady_power())
         from . import rhythm, steps  # (steps imports this module)
         ladders = steps.find_ladders(self.stroke_log)
-        rh = rhythm.session_rhythm(self.stroke_log, intervals)
+        rh = rhythm.session_rhythm(self.stroke_log, intervals, (self.saved_ref or {}).get("rhythm_last"))
         for e in (rh or {}).get("efforts", []):
             for d in intervals:
                 if d["index"] == e["index"]:
