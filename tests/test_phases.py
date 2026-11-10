@@ -99,7 +99,7 @@ class PhasesTest(unittest.TestCase):
         self.assertEqual(len(easy["thirds"]), 3)
         text = " ".join(rhythm.rhythm_findings(rh))
         self.assertIn("timed with the seat sensor", text)
-        self.assertIn("Stroke parts (Easy): legs 0.8 s (the handle taking load 0.3 s into it), then body and arms 0.3 s",
+        self.assertIn("Stroke parts (Easy): legs 0.8 s (the handle taking load 0.3 s into it), body and arms 0.3 s",
                       text)
         self.assertIn("then parked 1.", text)
         self.assertNotIn("Over the row", text)  # nothing moved
@@ -127,3 +127,37 @@ class PhasesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReplayToolTest(unittest.TestCase):
+    def test_tool_times_a_saved_session(self):
+        import csv
+        import importlib.util
+        import io
+        import json
+        import tempfile
+        from contextlib import redirect_stdout
+        from pathlib import Path
+        spec = importlib.util.spec_from_file_location("phases_replay", Path(__file__).parents[1] / "tools" / "phases_replay.py")
+        tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tool)
+        plan = stroke_plan(n=40)
+        with tempfile.TemporaryDirectory() as d:
+            sp = Path(d, "2026-11-10T0600.strokes.json")
+            cols = ["t", "distance_m", "power_w", "spm", "heart_rate", "length_cm", "force_n", "drive_s",
+                    "flag_drive_s", "flag_recovery_s", "flag_on_t", "flag_off_t"]
+            sp.write_text(json.dumps({"id": "2026-11-10T0600", "columns": cols, "rows": [
+                [s["off"] + 0.4, 0, 110.0, 17.6, 0, 120, [], None, s["off"] - s["on"], None, s["on"], s["off"]]
+                for s in plan]}))
+            with open(Path(d, "2026-11-10T0600.seat.csv"), "w", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(["t", "cm", "strength"])
+                for t, cm in seat_readings(plan):
+                    w.writerow([t, int(cm), 5000])
+            out = io.StringIO()
+            with redirect_stdout(out):
+                tool.main([str(sp), "--csv", str(Path(d, "out.csv"))])
+            self.assertIn("40 of 40 strokes timed", out.getvalue())
+            self.assertNotIn("older file", out.getvalue())
+            lines = Path(d, "out.csv").read_text().splitlines()
+            self.assertEqual(len(lines), 41)

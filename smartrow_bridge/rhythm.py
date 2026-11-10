@@ -181,7 +181,7 @@ def phase_findings(easy: dict, last: dict | None = None) -> list[str]:
     load = (f"the handle taking load {f(ph['load'])} s into it" if ph["load"] is not None and ph["load"] > EARLY_LOAD_S
             else "the handle loaded before the seat moved" if ph["load"] is not None else "")
     text = (f"Stroke parts (Easy): legs {f(ph['legs'])} s{' (' + load + ')' if load else ''}, "
-            f"then body and arms {f(ph['body'])} s")
+            f"body and arms {f(ph['body'])} s")
     if ph.get("parked") is not None:
         text += (f"; then parked {f(ph['parked'])} s after the finish (hands away and body over before the knees "
                  f"rise) and the slide {f(ph['slide'])} s")

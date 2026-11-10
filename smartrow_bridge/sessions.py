@@ -489,7 +489,19 @@ def session_point(record: dict) -> dict:
         if fresh.get("length_cm") else None,
         "easy_back_pct": round(fresh["back_share"] * 100, 1) if fresh.get("back_share") else None,
         "easy_peak_pct": round(peak_position(fresh["curve"])) if fresh.get("curve") else None,
+        **_rhythm_point(record),
     }
+
+
+def _rhythm_point(record: dict) -> dict:
+    """The Easy rhythm timed with the seat sensor (rhythm.py, source "seat"): ratio and the parts that
+    matter for form; empty for sessions without it (their drive was only estimated)."""
+    easy = (record.get("rhythm") or {}).get("easy") or {}
+    ph = easy.get("phases") or {}
+    if easy.get("source") != "seat" or not ph:
+        return {}
+    return {"rhythm_ratio": easy.get("ratio"), "rhythm_drive_s": ph.get("drive"), "rhythm_parked_s": ph.get("parked"),
+            "rhythm_slide_s": ph.get("slide"), "rhythm_load_s": ph.get("load"), "rhythm_body_s": ph.get("body")}
 
 
 def _trend(points: list[dict], key: str) -> tuple[float, float] | None:
@@ -571,6 +583,10 @@ def progress_findings(points: list[dict], weeks: int | None, now: float | None =
             parts.append(f"force in the back half of the drive {back[0]:.1f}% to {back[1]:.1f}%")
         out.append("Your Easy stroke: " + " and ".join(parts) + "." if parts
                    else f"Your Easy stroke held its length (about {length[1]:.0f} cm) and shape.")
+    ratio, parked, drive = (_trend(points, k) for k in ("rhythm_ratio", "rhythm_parked_s", "rhythm_drive_s"))
+    if ratio and drive and parked:  # rows timed with the seat sensor
+        out.append(f"Rhythm in Easy rowing (seat sensor): 1:{ratio[0]:.1f} to 1:{ratio[1]:.1f}; drive {drive[0]:.2f} to "
+                   f"{drive[1]:.2f} s; parked after the finish {parked[0]:.2f} to {parked[1]:.2f} s.")
     return out
 
 

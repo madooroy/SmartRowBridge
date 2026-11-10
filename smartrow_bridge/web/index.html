@@ -1151,6 +1151,17 @@ function renderProgress(d) {
     { id: "cEasyBack", title: "YOUR EASY STROKE · FORCE IN THE BACK HALF",
       legend: "share of each stroke's force in the back half of the drive, Easy rowing 2-8 minutes in (%)",
       opts: { xs, series: [{ values: ss.map((p) => p.easy_back_pct), colour: C.blue, line: true }], fmt: (v) => `${v.toFixed(1)}` } });
+  if (ss.filter((p) => p.rhythm_drive_s != null).length >= 2) charts.push(
+    { id: "cParts", title: "YOUR EASY STROKE · PARTS (SEAT SENSOR)",
+      legend: `<b style="color:${C.blue}">drive</b> · <b style="color:#a0a0a0">parked after the finish</b> (hands away, body over) · ` +
+              `<b style="color:#606060">slide</b> (s)`,
+      opts: { xs, series: [{ values: ss.map((p) => p.rhythm_drive_s), colour: C.blue, line: true },
+                           { values: ss.map((p) => p.rhythm_parked_s), colour: "#a0a0a0", line: true },
+                           { values: ss.map((p) => p.rhythm_slide_s), colour: "#606060", line: true }],
+              fmt: (v) => v.toFixed(1) } },
+    { id: "cRatio", title: "YOUR EASY STROKE · RATIO (SEAT SENSOR)", legend: "recovery ÷ drive; line: about 1:2, the usual aim at low rates",
+      opts: { xs, zero: 2, series: [{ values: ss.map((p) => p.rhythm_ratio), colour: C.fg, line: true }],
+              fmt: (v) => `1:${v.toFixed(1)}` } });
   if (hasHr) charts.push({ id: "cBeat", title: "WATTS PER HEARTBEAT (steady)",
     legend: "higher = more power for the same heart rate (aerobic fitness)",
     opts: { xs, series: [{ values: ss.map((p) => p.watts_per_beat), colour: C.green, line: true }], fmt: (v) => v.toFixed(2) } });
@@ -1941,6 +1952,96 @@ function easyCard(s, rows) {
 // so an effort needs no Easy rowing before it to be judged. The longest one's thirds drawn as curves;
 // a row per effort of what changed from its first third to its last.
 const THIRD_COLOURS = [C.blue, "#b48cff", AVG_COLOUR];
+// Stroke parts (seat sensor and pulley, phases.py): this row's Easy stroke catch to catch, then by
+// thirds of the row and against the last seat-timed row; the same colours as the screen's bar.
+function partsBar(g, x, y, w, h, rh) {
+  const segs = phaseSegments(rh);
+  if (!segs) return [];
+  let at = x;
+  const spans = [];
+  for (const [part, share] of segs) {
+    g.fillStyle = PHASE_COLOURS[part]; g.fillRect(at, y, Math.max(0, w * share - 2), h);
+    spans.push([part, at, at + w * share]); at += w * share;
+  }
+  const aim = x + w / (1 + 2);  // where the drive would end at 1:2
+  g.strokeStyle = C.fg; g.lineWidth = 3; g.beginPath(); g.moveTo(aim, y - 6); g.lineTo(aim, y + h + 6); g.stroke();
+  return spans;
+}
+function partsCard(s) {
+  const rh = s.rhythm || {}, easy = rh.easy;
+  if (!easy || easy.source !== "seat" || !easy.phases) return null;
+  const { cv, g, text, tile } = cardCanvas();
+  const P = CARD_P, W = CARD_W - 2 * P, ph = easy.phases;
+  const bar = (x) => ({ drive_s: x.drive_s, recovery_s: x.recovery_s, ratio: x.ratio, phases: x.phases });
+  text(`${fmtWhen(s.started_at)} · ROWING`, P, P + 26, 26, C.dim, true);
+  text("Stroke parts", P, P + 104, 72, C.fg, true);
+  text(`Easy rowing at ${Math.round(easy.spm)} spm, catch to catch · 1:${easy.ratio.toFixed(1)}`, P, P + 158, 34, C.dim);
+  // This row's stroke, large, with each part's seconds under it.
+  tile(P, 230, W, 320);
+  const bx = P + 30, bw = W - 60, by = 300, bh = 90;
+  text("THIS ROW", bx, 270, 22, C.dim, true);
+  const spans = partsBar(g, bx, by, bw, bh, bar(easy));
+  const secs = { slack: ph.load, legs: ph.load > 0 ? ph.legs - ph.load : ph.legs, early: -ph.load, body: ph.body,
+                 parked: ph.parked, slide: ph.slide };
+  const names = { slack: "to load", legs: "legs", early: "arms first", body: "body+arms", parked: "parked", slide: "slide" };
+  let lastRight = -1e9;  // a label that would run into the one before drops to a second line
+  spans.forEach(([part, a, b]) => {
+    if (b - a < 12) return;
+    const mid = (a + b) / 2, low = mid - 60 < lastRight;
+    const y = by + bh + (low ? 118 : 40);
+    if (low) { g.strokeStyle = C.dim; g.lineWidth = 2; g.beginPath(); g.moveTo(mid, by + bh + 4); g.lineTo(mid, y - 30); g.stroke(); }
+    text(`${(secs[part] ?? 0).toFixed(1)} s`, mid, y, 30, C.fg, true, "center");
+    text(names[part], mid, y + 34, 22, C.dim, false, "center");
+    if (!low) lastRight = mid + 60;
+  });
+  text(`drive ${easy.drive_s.toFixed(2)} s · recovery ${easy.recovery_s.toFixed(2)} s`, bx + bw, 270, 22, C.dim, true, "right");
+  // Thirds of the row, and the last row.
+  const rowsOf = [...(easy.thirds || []).map((t, k) => [["first third", "middle third", "last third"][k], t]),
+                  ...(rh.last && rh.last.phases ? [[`last row${rh.last.session ? ", " + Number(rh.last.session.slice(8, 10)) + " " +
+    ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(rh.last.session.slice(5, 7)) - 1] : ""}`, rh.last]] : [])];
+  const ty = 570, rowH = 96;
+  tile(P, ty, W, 60 + rowsOf.length * rowH);
+  text("OVER THE ROW, AND THE LAST ROW", bx, ty + 40, 22, C.dim, true);
+  const LW = 220, sbx = bx + LW, sbw = bw - LW - 150;
+  rowsOf.forEach(([label, x], k) => {
+    const y = ty + 70 + k * rowH;
+    text(label, bx, y + 30, 26, C.fg, true);
+    partsBar(g, sbx, y + 8, sbw, 44, bar(x));
+    text(`1:${x.ratio.toFixed(1)}`, bx + bw, y + 22, 28, C.fg, true, "right");
+    text(`parked ${x.phases.parked == null ? "–" : x.phases.parked.toFixed(1)} s`, bx + bw, y + 54, 20, C.dim, false, "right");
+  });
+  // The key.
+  const ky = ty + 60 + rowsOf.length * rowH + 50;
+  const early = ph.load != null && ph.load <= -0.05;
+  const key = [["slack", "legs, before the handle takes load"], ["legs", "legs"], ["body", "body and arms"],
+               ["parked", "parked: hands away, body over"], ["slide", "slide"],
+               ...(early ? [["early", "handle loaded before the seat moved"]] : []), ["aim", "where the drive would end at 1:2"]];
+  key.forEach(([part, label], k) => {
+    const x = P + (k % 2) * (W / 2), y = ky + Math.floor(k / 2) * 44;
+    if (part === "aim") {
+      g.strokeStyle = C.fg; g.lineWidth = 3; g.beginPath(); g.moveTo(x + 17, y - 18); g.lineTo(x + 17, y + 14); g.stroke();
+    } else { g.fillStyle = PHASE_COLOURS[part]; g.fillRect(x, y - 14, 34, 24); }
+    text(label, x + 48, y + 6, 22, C.dim);
+  });
+  // The coach's line: what moved, else how it stands.
+  const f = (s.findings || []).find((x) => x.startsWith("Since the last row"))
+    || (s.findings || []).find((x) => x.startsWith("Over the row"))
+    || (ph.load != null && ph.load <= -0.05 ? "Handle loaded before the seat moved: push with the legs first." : null);
+  const verdict = ph.load != null && ph.load <= -0.05 ? ["Coach: arms or back first, push with the legs first", C.amber]
+    : f ? [`Coach: ${f.replace(/\.$/, "").replace(" (Easy)", "").replace("parked after the finish", "parked")}`, C.fg] : [`Coach: parked ${ph.parked?.toFixed(1) ?? "–"} s after the finish, ` +
+                                                     `1:${easy.ratio.toFixed(1)}`, C.fg];
+  g.font = "700 28px system-ui, sans-serif";  // up to three lines, broken between the items
+  const lines = [""];
+  for (const part of verdict[0].split(/(?<=[,:]) /)) {
+    const tryLine = lines[lines.length - 1] ? `${lines[lines.length - 1]} ${part}` : part;
+    if (g.measureText(tryLine).width > W && lines[lines.length - 1]) lines.push(part);
+    else lines[lines.length - 1] = tryLine;
+  }
+  const shown = lines.slice(0, 3);
+  shown.forEach((l, k) => text(l, P, 1268 - (shown.length - 1 - k) * 36, 28, verdict[1], true));
+  text(CARD_CREDIT, CARD_W - P, CARD_H - 30, 22, C.dim, false, "right");
+  return cv;
+}
 function overCard(s) {
   const efforts = (s.intervals || []).filter((i) => i.over);
   if (!efforts.length) return null;
@@ -2282,6 +2383,7 @@ async function openPhotos() {
                  ...(easy ? [["easy", easy]] : []),
                  ...(s.intervals || []).map((i) => [`I${i.index}`, effortCard(s, i, rows, effortCardTop(s, rows))]),
                  ...(overCard(s) ? [["over", overCard(s)]] : []),
+                 ...(partsCard(s) ? [["parts", partsCard(s)]] : []),
                  ...(s.ladders || []).map((lad, k, all) => [`ladder${all.length > 1 ? k + 1 : ""}`, ladderCard(s, lad, k, all.length)]),
                  ["guide", glossaryCard(s)]];
   photoFiles = cards.map(([name, cv]) => ({ name: `rowing-${s.id}-${name}.png`, url: cv.toDataURL("image/png") }));
