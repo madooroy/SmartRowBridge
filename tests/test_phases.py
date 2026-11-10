@@ -246,3 +246,40 @@ class BridgeWithSeatTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FilmModeTest(unittest.TestCase):
+    def test_flag_reaches_the_led_only_in_film_mode(self):
+        import os
+        import tempfile
+        import threading
+        import time
+        from smartrow_bridge import bridge, config, status
+        from smartrow_bridge.display import __main__ as display
+        with tempfile.TemporaryDirectory() as d:
+            sp = f"{d}/status.json"
+            b = bridge.Bridge(config.parse(["--status-file", sp, "--session-dir", "off"]))
+            b.parser.on_flag(True, 1.0)
+            self.assertFalse(os.path.exists(status.flag_path(sp)))  # film mode off: nothing written
+            open(status.film_path(sp), "w").close()
+
+            class Hat:
+                def __init__(self):
+                    self.leds = []
+
+                def film_led(self, on):
+                    self.leds.append(on)
+
+            hat, film, stop = Hat(), threading.Event(), [False]
+            t = threading.Thread(target=display.film_loop, args=(hat, sp, film, lambda: stop[0]), daemon=True)
+            t.start()
+            b.parser.on_flag(True, 2.0)
+            time.sleep(0.05)
+            b.parser.on_flag(False, 3.0)
+            time.sleep(0.05)
+            self.assertTrue(film.is_set())
+            os.remove(status.film_path(sp))
+            time.sleep(0.6)
+            stop[0] = True
+            self.assertFalse(film.is_set())
+            self.assertEqual(hat.leds, [False, True, False, False])  # off at the start, on, off, off at the end

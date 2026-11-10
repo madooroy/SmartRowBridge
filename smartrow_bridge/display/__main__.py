@@ -15,6 +15,7 @@ import os
 import signal
 import socket
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -116,6 +117,8 @@ def run() -> None:
 
     address, address_at = "", 0.0
     last_draw, last_buttons, lit, fast = 0.0, {}, True, False
+    film = threading.Event()  # film mode: the LED shows the drive flag (film_loop), the screen says FILM
+    threading.Thread(target=film_loop, args=(hat, path, film, lambda: stop), daemon=True).start()
     while not stop:
         now = time.monotonic()
         buttons = {name: hat.pressed(name) for name in ("A", "B", "X", "Y")}
@@ -129,12 +132,13 @@ def run() -> None:
                     status_file.write(status_file.request_path(path), frame.request)
                 except OSError as exc:
                     log.warning("Could not pass the request to the bridge: %s", exc)
-            hat.show(frame.image)
+            hat.show(screens.film_badge(frame.image) if film.is_set() else frame.image)
             if frame.screen_on != lit:
                 hat.backlight(frame.screen_on)
                 lit = frame.screen_on
                 log.info("Screen %s", "woken" if lit else "dark (nothing happening); any button wakes it")
-            hat.set_led(frame.led)
+            if not film.is_set():
+                hat.set_led(frame.led)
             last_draw, fast = now, frame.fast
             if frame.switch_off:
                 log.info("A held: switching off")
@@ -350,6 +354,39 @@ def preview(directory: str) -> None:
     for name, image in shots.items():
         image.save(out / f"{name}.png")
     print(f"{len(shots)} screens saved in {out}")
+
+
+FILM_POLL_S = 0.004  # film mode: how often the flag file is read (the LED follows within this)
+
+
+def film_loop(hat, path: str, film: threading.Event, stopping) -> None:
+    """Film mode, while status.film_path exists: the LED (full green) follows the drive flag the
+    bridge writes at each change (status.flag_path), checked every FILM_POLL_S, so on video each
+    LED change is the moment the Pi received the pulley record with the change (a few ms later at
+    most). Turned on and off with the film file; the LED goes back to normal when it is removed."""
+    film_file, flag_file = status_file.film_path(path), status_file.flag_path(path)
+    shown = None
+    while not stopping():
+        if os.path.exists(film_file):
+            if not film.is_set():
+                film.set()
+                log.info("Film mode on: the LED shows the pulley's drive flag")
+            try:
+                with open(flag_file, encoding="ascii") as f:
+                    on = f.read(1) == "1"
+            except OSError:
+                on = False
+            if on != shown:
+                hat.film_led(on)
+                shown = on
+            time.sleep(FILM_POLL_S)
+        else:
+            if film.is_set():
+                film.clear()
+                hat.film_led(False)
+                shown = None
+                log.info("Film mode off")
+            time.sleep(0.5)
 
 
 def led_test() -> None:

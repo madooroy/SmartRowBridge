@@ -28,6 +28,8 @@ _INPUT = gpiod.LineSettings(direction=Direction.INPUT, bias=Bias.PULL_UP)
 # the pull-up also set so it stays off after the program exits.
 _LED_OFF = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Value.ACTIVE, bias=Bias.PULL_UP)
 _LED_DIM = gpiod.LineSettings(direction=Direction.INPUT, bias=Bias.PULL_DOWN)
+# Film mode only: full on, to be seen on video (output low).
+_LED_FULL = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Value.INACTIVE, bias=Bias.PULL_UP)
 # Mixes for a planned workout's countdown (screens.ZONE_LEDS): yellow doubles as its amber blink.
 LED_COLOURS = {"red": ("r",), "green": ("g",), "blue": ("b",), "yellow": ("r", "g"), "magenta": ("r", "b"),
                "white": ("r", "g", "b")}
@@ -81,6 +83,13 @@ class DisplayHat:
                 lines, offset = pin
                 lines.reconfigure_lines({offset: _LED_DIM if on else _LED_OFF})
                 self._led_state[name] = on
+
+    def film_led(self, on: bool) -> None:
+        """Film mode: green at full brightness (or off), for a video to see the pulley's drive flag.
+        The other colours are switched off; set_led takes over again afterwards."""
+        for name, (lines, offset) in self._led.items():
+            lines.reconfigure_lines({offset: _LED_FULL if (on and name == "g") else _LED_OFF})
+            self._led_state[name] = None  # unknown to set_led: it sets every pin next time
 
     def backlight(self, on: bool) -> None:
         """Off also sets the pull-down, so the screen stays dark after the program exits."""

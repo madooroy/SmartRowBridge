@@ -204,6 +204,8 @@ class SmartRowParser:
         self.v3 = False
         self.bad_checksums = 0
         self.on_stroke: Callable[[StrokeCurve], None] | None = None
+        # Called with (on, time) when the drive flag changes (film mode: bridge.py)
+        self.on_flag: Callable[[bool, float], None] | None = None
         self._curve_parts: list[list[int]] = []
         self._pending_curve: list[int] | None = None
         self._flag_on = False
@@ -288,6 +290,11 @@ class SmartRowParser:
         if on is None or on == self._flag_on:
             return
         self._flag_on = on
+        if self.on_flag is not None:
+            try:
+                self.on_flag(on, now)
+            except Exception:  # noqa: BLE001 - film mode must never break parsing
+                log.exception("on_flag failed")
         if on:
             self._flag_start = now
             self._flag_on_prev = self._before(now)

@@ -89,6 +89,17 @@ def request_path(status_path: str) -> str:
     return os.path.join(os.path.dirname(status_path) or ".", "request.json")
 
 
+def film_path(status_path: str) -> str:
+    """Film mode is on while this file exists (beside the status file): the screen's LED shows the
+    pulley's drive flag, for lining a video up with the pulley (display/__main__.py)."""
+    return os.path.join(os.path.dirname(status_path) or ".", "film")
+
+
+def flag_path(status_path: str) -> str:
+    """In film mode the bridge writes the drive flag here at each change: "1" (on) or "0" (off)."""
+    return os.path.join(os.path.dirname(status_path) or ".", "flag")
+
+
 def send_request(status_path: str, action: str) -> str:
     """Leave a request for the bridge; returns its token (echoed in the status when handled)."""
     token = f"{time.time():.3f}"

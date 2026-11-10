@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import logging
+import os
 import time
 import urllib.error
 from typing import IO, TYPE_CHECKING
@@ -59,6 +60,7 @@ class Bridge:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         self.parser = protocol.SmartRowParser()
+        self.parser.on_flag = self._film_flag
         self.coach: coach.IntervalCoach | None = None
         if cfg.coach and cfg.status_file.lower() != "off":
             saved = cfg.session_dir.lower() != "off"
@@ -110,6 +112,18 @@ class Bridge:
     # The pulley only streams after the "$\rV@\r" init, periodic "$" polls and,
     # on V3 hardware, a KEYLOCK answer. The SmartRow app does all of that through
     # the clone; the bridge only takes over while the app is not connected.
+    def _film_flag(self, on: bool, now: float) -> None:
+        """Film mode (status.film_path exists): pass each drive-flag change to the screen, whose LED
+        shows it within a few milliseconds, so a video lines up with the pulley's records."""
+        path = self.cfg.status_file
+        if path.lower() == "off" or not os.path.exists(status.film_path(path)):
+            return
+        try:
+            with open(status.flag_path(path), "w", encoding="ascii") as f:
+                f.write("1" if on else "0")
+        except OSError:
+            pass
+
     def _seat_window(self, start: float, end: float) -> list[tuple[float, float]]:
         """The seat sensor's good readings from start to end (monotonic), as (time, cm), for the coach."""
         from .seat import good

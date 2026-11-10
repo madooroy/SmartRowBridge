@@ -258,6 +258,16 @@ def countdown_led(cd: dict | None) -> str | None:
     return None
 
 
+def film_badge(image: Image.Image) -> Image.Image:
+    """Film mode: a small green FILM label in the top-right corner, so it isn't left on by mistake."""
+    out = image.copy()
+    draw = ImageDraw.Draw(out)
+    w = image.size[0]
+    draw.rounded_rectangle((w - 58, 4, w - 4, 22), radius=4, fill=GREEN)
+    draw.text((w - 31, 13), "FILM", font=font(12, True), fill=BG, anchor="mm")
+    return out
+
+
 def countdown_overlay(image: Image.Image, cd: dict | None) -> Image.Image:
     """The countdown drawn over whatever screen is up (rowing, interval or summary)."""
     if not cd:
