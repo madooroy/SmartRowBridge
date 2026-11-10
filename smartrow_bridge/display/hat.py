@@ -28,7 +28,9 @@ _INPUT = gpiod.LineSettings(direction=Direction.INPUT, bias=Bias.PULL_UP)
 # the pull-up also set so it stays off after the program exits.
 _LED_OFF = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Value.ACTIVE, bias=Bias.PULL_UP)
 _LED_DIM = gpiod.LineSettings(direction=Direction.INPUT, bias=Bias.PULL_DOWN)
-LED_COLOURS = {"red": ("r",), "green": ("g",)}
+# Mixes for a planned workout's countdown (screens.ZONE_LEDS): yellow doubles as its amber blink.
+LED_COLOURS = {"red": ("r",), "green": ("g",), "blue": ("b",), "yellow": ("r", "g"), "magenta": ("r", "b"),
+               "white": ("r", "g", "b")}
 # Backlight on, with the pin's pull-up also set. When a program lets go of a pin, the
 # Pi turns it back into an input, which would switch the backlight off the moment the
 # screen service stops, long before the Pi has finished shutting down. With the
@@ -71,7 +73,7 @@ class DisplayHat:
         return lines.get_value(offset) == Value.INACTIVE
 
     def set_led(self, colour: str | None) -> None:
-        """Dim "red" or "green", or None for off. Only changes pins whose state changes."""
+        """Dim "red", "green" (or another LED_COLOURS mix), or None for off. Only changes pins whose state changes."""
         lit = LED_COLOURS.get(colour, ()) if colour else ()
         for name, pin in self._led.items():
             on = name in lit

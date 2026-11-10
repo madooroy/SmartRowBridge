@@ -198,6 +198,19 @@
   #cStack .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
 
   @media (pointer: coarse) { select, input, .dd summary { font-size: max(16px, var(--label)) !important; } }  /* iOS zooms in on smaller */
+  /* A planned workout's countdown to its next step (display/screens.py countdown): over the whole page. */
+  #cd { position: fixed; inset: 0; pointer-events: none; z-index: 50; display: none; }
+  #cd.count { display: block; background: rgba(0, 0, 0, 0.6); }
+  #cd.go { display: block; }
+  #cd.soon { display: block; inset: auto 0 0 0; }
+  #cd .digit { position: absolute; inset: 0 0 17vh 0; display: flex; align-items: center; justify-content: center;
+    font-size: min(75vh, 90vw); font-weight: 800; line-height: 1; opacity: 0.85; -webkit-text-stroke: 0.6vmin #000; }
+  #cd .band { position: absolute; left: 0; right: 0; bottom: 0; height: 17vh; display: flex; align-items: center;
+    justify-content: center; font-size: min(9vh, 6vw); font-weight: 800; background: #000; }
+  #cd.soon .band { position: static; height: auto; padding: 1.2vh 0; font-size: min(5vh, 4.5vw); color: #000; }
+  #cd.go { display: flex; flex-direction: column; align-items: center; justify-content: center; color: #000; }
+  #cd.go .go { font-size: min(45vh, 40vw); font-weight: 800; line-height: 1; }
+  #cd.go .what { font-size: min(14vh, 11vw); font-weight: 800; }
   #pipVideo { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; bottom: 0; right: 0; }
 </style>
 </head>
@@ -211,6 +224,7 @@
   <button id="classesBtn" hidden title="Peloton row classes, ranked by their class plans">Classes</button>
   <button id="full" hidden title="Hide the browser's address bar (swipe from the top edge, or tap again, to leave)">Full screen</button>
   <button id="float" hidden title="Keep the coach in a floating window over other apps">Float</button>
+  <button id="beepBtn" title="Beeps at 3, 2, 1 and at the change of step of a planned workout (on this device)">Beeps: on</button>
   <button id="pipShapeBtn" hidden title="The floating window's shape: wide (5:4) or tall (4:5)">Shape: wide</button>
 </header>
 
@@ -386,6 +400,7 @@
 </div>
 
 <video id="pipVideo" muted playsinline></video>
+<div id="cd"></div>
 
 <script>
 "use strict";
@@ -408,7 +423,7 @@ const CUES = { finish: ["STRONGER FINISH", C.amber], legs: ["EARLIER PUSH", C.am
 const RATING = { good: C.green, ok: C.amber, short: C.red };
 
 const $ = (id) => document.getElementById(id);
-let state = null, recallUntil = 0, closedIndex = null, failures = 0;
+let state = null, stateAt = 0, recallUntil = 0, closedIndex = null, failures = 0;
 let reviewing = false, sessionList = [], openSession = null, seenSession = null;
 try { seenSession = localStorage.getItem("seenSession"); } catch (e) { /* storage off: fine */ }
 
@@ -687,6 +702,111 @@ function renderWorkout(st) {
     `<span class="dimmed">${esc(wkNext(w))}</span><div class="bar" style="width:${done}%"></div>`;
 }
 
+// ------------------------------------------------------------------ countdown to the next step
+// As display/screens.py countdown(): a band from 10 s out, then 3, 2, 1 in the colour of the next
+// step's effort level, then GO with the new target. The status (written once a second) is carried
+// forward to now, so the digits change on time; beeps are scheduled ahead on the audio clock, so
+// they stay on time even when the browser slows this page's timers (another app in front).
+const CD_SOON_S = 10, CD_COUNT_S = 3, CD_GO_S = 1.5;
+const ZONE_COLOURS = { Recovery: "#8b949e", Easy: "#2ea043", Moderate: "#e3c02a", Challenging: "#f0883e", Max: "#e5534b" };
+const cdStep = (target, kind, length) => `${target !== null && target !== undefined ? target + " W" : "free"} · ` +
+  (kind === "time" ? fmtTime(length) : `${Math.round(length)} m`);
+function countdown(st) {
+  const w = st && st.coach && st.coach.workout;
+  if (!w || w.state !== "running" || st.age_s === null || st.age_s > STALE_S) return null;
+  const age = Math.max(0, performance.now() / 1000 - stateAt), n = w.next;
+  if (w.step > 1 && w.step_elapsed_s !== null && w.step_elapsed_s !== undefined && w.step_elapsed_s + age < CD_GO_S)
+    return { phase: "go", left: 0, key: `${w.step}`, zone: w.zone, text: cdStep(w.target_w, w.kind, w.length) };
+  if (!n || w.left_s === null || w.left_s === undefined) return null;
+  const left = w.left_s - age, text = cdStep(n.target_w, n.kind, n.length), key = `${w.step + 1}`;
+  if (left <= 0) return { phase: "go", left: 0, key, zone: n.zone, text };
+  if (left <= CD_SOON_S) return { phase: left <= CD_COUNT_S ? "count" : "soon", left, digit: Math.ceil(left), key, zone: n.zone, text };
+  return null;
+}
+
+let beepsOn = true, audio = null, beepedFor = null;
+try { beepsOn = localStorage.getItem("beeps") !== "off"; } catch (e) { /* storage off: on */ }
+function audioReady() {  // browsers start sound only from a tap: any tap on the page will do
+  try {
+    if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+    if (audio.state === "suspended") audio.resume();
+  } catch (e) { audio = null; }
+}
+document.addEventListener("pointerdown", audioReady, { passive: true });
+function beep(at, freq, dur) {
+  const o = audio.createOscillator(), v = audio.createGain();
+  o.type = "sine"; o.frequency.value = freq;
+  v.gain.setValueAtTime(0.0001, at); v.gain.exponentialRampToValueAtTime(0.5, at + 0.01);
+  v.gain.setValueAtTime(0.5, at + dur - 0.04); v.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+  o.connect(v).connect(audio.destination); o.start(at); o.stop(at + dur + 0.02);
+}
+function scheduleBeeps(cd) {  // once per change of step, from 4.5 s out: three short, then a long higher one
+  if (!beepsOn || !audio || audio.state !== "running" || !cd || cd.phase === "go" || cd.left > 4.5 || beepedFor === cd.key) return;
+  beepedFor = cd.key;
+  const t0 = audio.currentTime;
+  [3, 2, 1].forEach((k) => { if (cd.left > k + 0.05) beep(t0 + cd.left - k, 880, 0.15); });
+  beep(t0 + cd.left, 1320, 0.45);
+}
+const beepBtn = $("beepBtn");
+const showBeeps = () => { beepBtn.textContent = `Beeps: ${beepsOn ? "on" : "off"}`; };
+showBeeps();
+beepBtn.addEventListener("click", () => {
+  beepsOn = !beepsOn; showBeeps(); audioReady();
+  try { localStorage.setItem("beeps", beepsOn ? "on" : "off"); } catch (e) { /* not kept: fine */ }
+  if (beepsOn && audio) beep(audio.currentTime + 0.05, 1320, 0.2);  // a test beep
+});
+
+let cdShown = "";
+function renderCountdown(cd) {
+  const el = $("cd"), colour = cd ? ZONE_COLOURS[cd.zone] || C.fg : "";
+  const sig = cd && !reviewing ? `${cd.phase}|${cd.digit}|${cd.text}|${colour}` : "";
+  if (sig === cdShown) return false;
+  cdShown = sig;
+  if (!sig) { el.className = ""; el.innerHTML = ""; return true; }
+  el.className = cd.phase;
+  el.style.background = cd.phase === "go" ? colour : "";
+  if (cd.phase === "soon")
+    el.innerHTML = `<div class="band" style="background:${colour}">NEXT ${esc(cd.text)} · IN ${cd.digit} s</div>`;
+  else if (cd.phase === "count")
+    el.innerHTML = `<div class="digit" style="color:${colour}">${cd.digit}</div><div class="band" style="color:${colour}">NEXT ${esc(cd.text)}</div>`;
+  else el.innerHTML = `<div class="go">GO</div><div class="what">${esc(cd.text)}</div>`;
+  return true;
+}
+// The floating window: the same, drawn over its picture (called at the end of drawPip).
+function drawCountdown(g, W, H, cd) {
+  const colour = ZONE_COLOURS[cd.zone] || C.fg;
+  const txt = (t, x, y, size, c, alpha = 1, stroke = false) => {
+    g.save(); g.globalAlpha = alpha; g.font = `800 ${size}px system-ui, sans-serif`; g.textAlign = "center"; g.textBaseline = "middle";
+    if (stroke) { g.lineWidth = Math.max(4, size / 18); g.strokeStyle = "rgba(0,0,0,0.9)"; g.lineJoin = "round"; g.strokeText(t, x, y); }
+    g.fillStyle = c; g.fillText(t, x, y); g.restore();
+  };
+  const fitTo = (t, size, maxW) => {
+    g.font = `800 ${size}px system-ui, sans-serif`;
+    const w = g.measureText(t).width;
+    return w > maxW ? Math.floor(size * maxW / w) : size;
+  };
+  if (cd.phase === "soon") {
+    const bh = 34, t = `NEXT ${cd.text} · IN ${cd.digit} s`;
+    g.fillStyle = colour; g.fillRect(0, H - bh, W, bh);
+    txt(t, W / 2, H - bh / 2, fitTo(t, 22, W - 16), "#000");
+  } else if (cd.phase === "count") {
+    g.save(); g.globalAlpha = 0.6; g.fillStyle = "#000"; g.fillRect(0, 0, W, H); g.restore();
+    const bh = Math.round(H * 0.17), t = `NEXT ${cd.text}`;
+    g.fillStyle = "#000"; g.fillRect(0, H - bh, W, bh);
+    txt(String(cd.digit), W / 2, (H - bh) * 0.52, Math.min((H - bh) * 0.95, W * 1.2), colour, 0.85, true);
+    txt(t, W / 2, H - bh / 2, fitTo(t, Math.round(bh * 0.55), W - 16), colour);
+  } else {
+    g.save(); g.globalAlpha = 0.93; g.fillStyle = colour; g.fillRect(0, 0, W, H); g.restore();
+    txt("GO", W / 2, H * 0.38, fitTo("GO", Math.round(H * 0.40), W - 24), "#000");
+    txt(cd.text, W / 2, H * 0.78, fitTo(cd.text, Math.round(H * 0.13), W - 24), "#000");
+  }
+}
+setInterval(() => {  // ten times a second (slower when the browser holds this page back): fine for 3, 2, 1
+  const cd = countdown(state);
+  scheduleBeeps(cd);
+  if (renderCountdown(cd)) drawPip();
+}, 100);
+
 function render() {
   const st = state, now = Date.now() / 1000;
   $("close").hidden = true;
@@ -750,6 +870,7 @@ async function poll() {
     const r = await fetch("/status.json", { cache: "no-store", signal: ac.signal });
     if (!r.ok) throw new Error(r.status);
     state = await r.json();
+    stateAt = performance.now() / 1000 - (state.age_s || 0);  // when the bridge wrote it, on this device's clock
     failures = 0;
     render();
   } catch (e) {
@@ -2166,6 +2287,12 @@ let pipOn = false;
 
 function drawPip() {
   if (!pipOn) return;
+  drawPipView();
+  const cd = countdown(state);
+  if (cd) drawCountdown(pipCanvas.getContext("2d"), pipCanvas.width, pipCanvas.height, cd);
+}
+
+function drawPipView() {
   const g = pipCanvas.getContext("2d"), W = pipCanvas.width, H = pipCanvas.height, st = state;
   g.fillStyle = C.bg; g.fillRect(0, 0, W, H);
   const text = (t, x, y, size, colour, align = "left", bold = true) => {

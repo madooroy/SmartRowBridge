@@ -502,3 +502,54 @@ class FlipTest(unittest.TestCase):
                 self.assertFalse(display.flipped(f.name + ".missing"))
         finally:
             os.unlink(f.name)
+
+
+def with_workout(left_s, step=5, step_elapsed_s=30.0, age=0.0, nxt=True):
+    st = coached(age=age)
+    st["coach"]["workout"] = {
+        "name": "Adrestia", "steps": 11, "state": "running", "step": step, "kind": "time", "length": 180,
+        "left": round(left_s), "left_s": left_s, "step_elapsed_s": step_elapsed_s, "target_w": 120, "low_w": 120,
+        "high_w": 120, "zone": "Easy", "power_w": 118, "on_target": "on",
+        "next": {"target_w": 200, "kind": "time", "length": 60, "zone": "Challenging"} if nxt else None}
+    return st
+
+
+@unittest.skipIf(screens is None, "Pillow not installed")
+class CountdownTest(unittest.TestCase):
+
+    def test_phases_carried_forward_from_when_the_status_was_written(self):
+        self.assertIsNone(screens.countdown(with_workout(30.0), NOW))
+        cd = screens.countdown(with_workout(8.2), NOW)
+        self.assertEqual((cd["phase"], cd["digit"], cd["zone"], cd["text"]), ("soon", 9, "Challenging", "200 W \u00b7 1:00"))
+        cd = screens.countdown(with_workout(3.4, age=0.9), NOW)  # written 0.9 s ago: 2.5 s left now
+        self.assertEqual((cd["phase"], cd["digit"]), ("count", 3))
+        self.assertEqual(screens.countdown(with_workout(1.0, age=0.2), NOW)["digit"], 1)
+        cd = screens.countdown(with_workout(0.3, age=0.8), NOW)  # the bridge hasn't written the change yet
+        self.assertEqual((cd["phase"], cd["zone"], cd["text"]), ("go", "Challenging", "200 W \u00b7 1:00"))
+        cd = screens.countdown(with_workout(59.0, step=6, step_elapsed_s=0.8), NOW)  # the new step just began
+        self.assertEqual((cd["phase"], cd["zone"], cd["text"]), ("go", "Easy", "120 W \u00b7 3:00"))
+        self.assertIsNone(screens.countdown(with_workout(59.0, step=6, step_elapsed_s=1.2, age=0.5), NOW))
+        self.assertIsNone(screens.countdown(with_workout(2.0, nxt=False), NOW))  # the last step: nothing to count to
+        self.assertIsNone(screens.countdown(with_workout(2.0, step=1, step_elapsed_s=None) | {"coach": {}}, NOW))
+
+    def test_led_blinks_amber_then_the_next_zone(self):
+        led = lambda left: screens.countdown_led({"phase": "count", "left": left})
+        self.assertEqual([led(2.9), led(2.6), led(2.4), led(2.0)], ["yellow", "yellow", "off", "yellow"])
+        self.assertEqual(screens.countdown_led({"phase": "go", "zone": "Challenging"}), "red")
+        self.assertIsNone(screens.countdown_led({"phase": "soon", "left": 8.0}))
+
+    def test_the_screen_shows_it_over_the_rowing_screen_and_redraws_quickly(self):
+        c = app.Controller()
+        plain = c.step(coached(), NOW, UPTIME, NO_BUTTONS)
+        frame = c.step(with_workout(2.7), NOW, UPTIME, NO_BUTTONS)
+        self.assertTrue(frame.fast)
+        self.assertEqual(frame.led, "yellow")
+        self.assertNotEqual(frame.image.tobytes(), plain.image.tobytes())
+        self.assertEqual(frame.image.getpixel((160, 230)), (0, 0, 0))  # the band along the bottom
+        frame = c.step(with_workout(59.0, step=6, step_elapsed_s=0.5), NOW, UPTIME, NO_BUTTONS)
+        self.assertEqual(frame.led, "green")  # GO into an Easy step
+        r, g, b = frame.image.getpixel((5, 5))
+        self.assertTrue(g > r and g > b)  # the screen in the step's colour
+        frame = c.step(with_workout(8.0), NOW, UPTIME, NO_BUTTONS)
+        self.assertFalse(frame.fast)
+        self.assertEqual(frame.image.getpixel((160, 236)), screens.ZONE_COLOURS["Challenging"])

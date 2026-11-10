@@ -6,6 +6,9 @@
 - Holding B for B_HOLD_S seconds (2): this session is drills, or not (it toggles). Drills are
   still kept and uploaded, but the coach doesn't analyse them (sessions.DRILL_TEXT). Before
   the session has started it applies to the session about to start.
+- Following a planned workout: from 10 s before each step ends, a band with the next step; then a
+  big 3, 2, 1 (the LED blinking amber) and "GO" with the new target, in the next step's zone colour
+  (screens.countdown).
 - While rowing with the interval coach on (smartrow_bridge.coach): the interval
   screen during an effort, then its summary for a while after it; X brings the last
   summary back, or closes it.
@@ -63,10 +66,11 @@ SLEEP_S = 3600.0  # the screen goes dark after this long with nothing happening 
 @dataclass
 class Frame:
     image: Image.Image
-    led: str | None  # "red", "green" or None (off)
+    led: str | None  # "red", "green" or None (off); during a workout's countdown also hat.LED_COLOURS' others
     switch_off: bool = False  # the hold finished: shut the Pi down now
     screen_on: bool = True  # False: dark (backlight off) until rowing or a button
     request: dict | None = None  # for the bridge: {"action": "finish", "token": ...} (status.request_path)
+    fast: bool = False  # the countdown's 3, 2, 1 and GO: redraw often (REDRAW_FAST_S) so it changes on time
 
 
 def _connections(status: dict | None) -> tuple[bool, bool, bool, bool]:
@@ -385,6 +389,13 @@ class Controller:
             if fresh and self.screen == "rowing" and not coach.get("last") \
                     and coach.get("session_strokes", 0) > 0:
                 image = screens.add_tab(image, "X", "close", "Hold: discard")
+            # A planned workout's countdown to its next step, over whichever rowing screen is up.
+            cd = screens.countdown(status, now) if fresh else None
+            if cd:
+                led = screens.countdown_led(cd)
+                return Frame(screens.countdown_overlay(image, cd),
+                             None if led == "off" else led or led_for(status, now, uptime, self._rowing_recently(now)),
+                             fast=cd["phase"] != "soon")
         else:
             self.screen = "status"
             image = screens.status_screen(status, now, uptime, address)

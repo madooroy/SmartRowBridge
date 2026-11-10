@@ -203,6 +203,98 @@ def workout_next(w: dict) -> str:
     return f"next {what} \u00b7 {length}"
 
 
+# The countdown to the next step (the web page and floating window draw the same): a heads-up
+# band from SOON_S seconds out, then a big 3, 2, 1 in the colour of the next step's effort level,
+# then "GO" with the new target for GO_S seconds. Times come from the status file (written once
+# a second) and are carried forward to now with its timestamp, so the digits change on time.
+SOON_S, COUNT_S, GO_S = 10.0, 3.0, 1.5
+ZONE_COLOURS = {"Recovery": (139, 148, 158), "Easy": (46, 160, 67), "Moderate": (227, 192, 42),
+                "Challenging": (240, 136, 62), "Max": (229, 83, 75)}  # as the Workout card's blocks
+# The HAT's LED (only dim red, green and blue to mix): what each effort level lights at "GO".
+ZONE_LEDS = {"Recovery": "blue", "Easy": "green", "Moderate": "yellow", "Challenging": "red", "Max": "magenta"}
+
+
+def _step_text(target_w, kind: str, length: float) -> str:
+    what = f"{target_w} W" if target_w is not None else "free"
+    return f"{what} \u00b7 " + (format_time(int(length)) if kind == "time" else f"{int(length)} m")
+
+
+def countdown(status: dict | None, now: float) -> dict | None:
+    """{"phase": "soon" | "count" | "go", "left": seconds to the change, "digit", "text", "zone"}, or None.
+
+    "soon" and "count" are about the next step ("text": its target and length); "go" is the step just
+    begun, or about to begin when the bridge hasn't written the change yet."""
+    w = _workout(status)
+    if not w:
+        return None
+    age = max(0.0, now - float((status or {}).get("time", now)))
+    nxt = w.get("next")
+    if w.get("step", 1) > 1 and w.get("step_elapsed_s") is not None and w["step_elapsed_s"] + age < GO_S:
+        return {"phase": "go", "left": 0.0, "digit": None, "zone": w.get("zone"),
+                "text": _step_text(w.get("target_w"), w.get("kind", "time"), w.get("length", 0))}
+    if not nxt or w.get("left_s") is None:
+        return None
+    left = w["left_s"] - age
+    text = _step_text(nxt.get("target_w"), nxt["kind"], nxt["length"])
+    if left <= 0:
+        return {"phase": "go", "left": 0.0, "digit": None, "zone": nxt.get("zone"), "text": text}
+    if left <= COUNT_S:
+        return {"phase": "count", "left": left, "digit": math.ceil(left), "zone": nxt.get("zone"), "text": text}
+    if left <= SOON_S:
+        return {"phase": "soon", "left": left, "digit": math.ceil(left), "zone": nxt.get("zone"), "text": text}
+    return None
+
+
+def countdown_led(cd: dict | None) -> str | None:
+    """The LED during the countdown: amber (red and green) for the first half of each of 3, 2, 1;
+    the next step's colour at GO. None: the LED as it would be anyway."""
+    if not cd:
+        return None
+    if cd["phase"] == "count":
+        return "yellow" if cd["left"] - math.floor(cd["left"]) > 0.5 or cd["left"] == math.floor(cd["left"]) else "off"
+    if cd["phase"] == "go":
+        return ZONE_LEDS.get(cd.get("zone"), "white")
+    return None
+
+
+def countdown_overlay(image: Image.Image, cd: dict | None) -> Image.Image:
+    """The countdown drawn over whatever screen is up (rowing, interval or summary)."""
+    if not cd:
+        return image
+    colour = ZONE_COLOURS.get(cd.get("zone"), FG)
+    w, h = image.size
+    if cd["phase"] == "soon":
+        out = image.copy()
+        draw = ImageDraw.Draw(out)
+        band = 34
+        draw.rectangle((0, h - band, w, h), fill=colour)
+        text = f"NEXT {cd['text']} \u00b7 IN {cd['digit']} s"
+        draw.text((w // 2, h - band // 2), text, font=_fit(draw, text, 22, w - 12, True), fill=BG, anchor="mm")
+        return out
+    if cd["phase"] == "go":
+        out = Image.blend(image.convert("RGB"), Image.new("RGB", (w, h), colour), 0.93)
+        draw = ImageDraw.Draw(out)
+        draw.text((w // 2, int(h * 0.38)), "GO", font=font(int(h * 0.42), True), fill=BG, anchor="mm")
+        draw.text((w // 2, int(h * 0.80)), cd["text"], font=_fit(draw, cd["text"], int(h * 0.16), w - 16, True),
+                  fill=BG, anchor="mm")
+        return out
+    # 3, 2, 1: the screen dimmed, the digit over it, the next step along the bottom
+    out = Image.blend(image.convert("RGB"), Image.new("RGB", (w, h), BG), 0.6)
+    band = int(h * 0.17)
+    ImageDraw.Draw(out).rectangle((0, h - band, w, h), fill=BG)
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ld = ImageDraw.Draw(layer)
+    size = int((h - band) * 0.95)
+    ld.text((w // 2, (h - band) // 2 + 4), str(cd["digit"]), font=font(size, True), fill=(*colour, 220),
+            anchor="mm", stroke_width=max(3, size // 30), stroke_fill=(0, 0, 0, 235))
+    out = Image.alpha_composite(out.convert("RGBA"), layer).convert("RGB")
+    draw = ImageDraw.Draw(out)
+    text = f"NEXT {cd['text']}"
+    draw.text((w // 2, h - band // 2), text, font=_fit(draw, text, int(band * 0.6), w - 12, True), fill=colour,
+              anchor="mm")
+    return out
+
+
 def workout_note(status: dict | None) -> tuple[str, tuple] | None:
     """A line for a workout that is ready (waiting for the first stroke) or just done."""
     w = ((status or {}).get("coach") or {}).get("workout")

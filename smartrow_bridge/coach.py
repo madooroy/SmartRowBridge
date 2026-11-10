@@ -1306,7 +1306,15 @@ class IntervalCoach:
         rowing = self.last_time is not None and now - self.last_time <= GAP_S
         recent = statistics.fmean(r[2] for r in self.stroke_log[-3:]) if rowing and self.stroke_log else None
         since_end = self._strokes_after(self.workout.ended_at) if self.workout.done else 0
-        return self.workout.state(now, distance, recent, since_end)
+        out = self.workout.state(now, distance, recent, since_end)
+        if out and out.get("state") == "running":
+            # The effort level of this step's and the next step's targets (INTENSITIES): the colour
+            # of the screens' countdown to the next step, and of its "GO".
+            out["zone"] = self.intensity(out["target_w"]) if out.get("target_w") else None
+            nxt = out.get("next")
+            if nxt:
+                nxt["zone"] = self.intensity(nxt["target_w"]) if nxt.get("target_w") else None
+        return out
 
     def state(self, now: float) -> dict:
         """What the screen needs, for status.json."""

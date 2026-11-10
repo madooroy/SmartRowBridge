@@ -258,9 +258,18 @@ class Player:
         left = end - (now if kind == "time" else distance)
         nxt = w.steps[self.step + 1] if self.step + 1 < len(w.steps) else None
         target = s.target_w
+        # Seconds to the end of the step, for the screens' countdown to the next one: on the clock for
+        # a time step; for a distance step, the metres left at the speed the recent watts give
+        # (watts = 2.8 x (m/s)^3, Concept2's formula, which SmartRow's pace matches), None while not rowing.
+        if kind == "time":
+            left_s = max(0.0, left)
+        else:
+            left_s = max(0.0, left) / (recent_power / 2.8) ** (1 / 3) if recent_power and recent_power > 0 else None
         out.update({
             "state": "running", "step": self.step + 1, "kind": kind, "length": s.length,
             "left": max(0, round(left)), "elapsed_s": round(now - self.started_at),
+            "left_s": round(left_s, 2) if left_s is not None else None,
+            "step_elapsed_s": round(now - self.step_started[self.step][0], 2),
             "target_w": _round(target), "low_w": _round(s.low_w), "high_w": _round(s.high_w),
             "intensity": s.intensity, "step_name": s.name,
             "power_w": _round(recent_power),

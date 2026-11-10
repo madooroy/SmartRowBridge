@@ -26,6 +26,7 @@ log = logging.getLogger("smartrow_bridge.display")
 
 TICK_S = 0.05  # button polling
 REDRAW_S = 0.5  # screen refresh while no button is in use
+REDRAW_FAST_S = 0.1  # ... during a workout's 3, 2, 1 and GO, so the digits and the LED change on time
 ADDRESS_EVERY_S = 15.0
 
 
@@ -114,12 +115,12 @@ def run() -> None:
         _record("Button A read as pressed when the screen started; ignored until released")
 
     address, address_at = "", 0.0
-    last_draw, last_buttons, lit = 0.0, {}, True
+    last_draw, last_buttons, lit, fast = 0.0, {}, True, False
     while not stop:
         now = time.monotonic()
         buttons = {name: hat.pressed(name) for name in ("A", "B", "X", "Y")}
         busy = buttons != last_buttons or buttons["A"]
-        if busy or now - last_draw >= REDRAW_S:
+        if busy or now - last_draw >= (REDRAW_FAST_S if fast else REDRAW_S):
             if now - address_at >= ADDRESS_EVERY_S:
                 address, address_at = _address(), now
             frame = controller.step(status_file.read(path), time.time(), _uptime(), buttons, address)
@@ -134,7 +135,7 @@ def run() -> None:
                 lit = frame.screen_on
                 log.info("Screen %s", "woken" if lit else "dark (nothing happening); any button wakes it")
             hat.set_led(frame.led)
-            last_draw = now
+            last_draw, fast = now, frame.fast
             if frame.switch_off:
                 log.info("A held: switching off")
                 _record("Button A held: switching the Pi off")

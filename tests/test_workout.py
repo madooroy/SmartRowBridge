@@ -152,6 +152,17 @@ class PlayerTest(unittest.TestCase):
         self.assertIn("1 of 3 steps (stopped early)", workout.findings(r)[0])
 
 
+    def test_seconds_left_for_the_countdown(self):
+        p = workout.Player(self.plan())
+        p.start(0.0, 0, None)
+        st = p.state(57.4, 100, 120, 0)
+        self.assertEqual((st["left_s"], st["step_elapsed_s"]), (2.6, 57.4))
+        p.advance(91.0, 300)  # into the distance step (100 m) at 300 m
+        st = p.state(91.0, 340, 2.8 * 8, 0)  # 22.4 W is 2 m/s: 60 m left takes 30 s
+        self.assertEqual((st["step"], st["kind"], st["left_s"], st["step_elapsed_s"]), (3, "distance", 30.0, 1.0))
+        self.assertIsNone(p.state(91.0, 340, None, 0)["left_s"])  # not rowing: no estimate
+
+
 class FolderTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -183,6 +194,11 @@ class FolderTest(unittest.TestCase):
             coach.add(self.stroke(t, 120 if t < 130 else 160, d))
             t, d = t + 3, d + 10
             folder.tick(coach, t)
+            if t == 121.0:  # in step 1: its zone and the next one's, for the countdown's colours
+                w = coach.state(t)["workout"]
+                self.assertEqual(w["zone"], coach.intensity(120))
+                self.assertEqual(w["next"]["zone"], coach.intensity(160))
+                self.assertAlmostEqual(w["left_s"], 9.0, delta=0.05)
         self.assertEqual(os.listdir(os.path.join(self.dir, "done"))[0][-9:], "-plan.fit")
         self.assertFalse(os.path.exists(os.path.join(self.dir, "plan.fit")))
         summary = coach.session_summary()
