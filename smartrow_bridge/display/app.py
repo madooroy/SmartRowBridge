@@ -395,7 +395,7 @@ class Controller:
                 led = screens.countdown_led(cd)
                 return Frame(screens.countdown_overlay(image, cd),
                              None if led == "off" else led or led_for(status, now, uptime, self._rowing_recently(now)),
-                             fast=cd["phase"] != "soon")
+                             fast=cd["phase"] != "soon" or cd["left"] <= screens.COUNT_S + 0.6)
         else:
             self.screen = "status"
             image = screens.status_screen(status, now, uptime, address)

@@ -240,15 +240,15 @@ def distance_offset(distances: list[int]) -> int:
 # force_n: the stroke's force curve as the pulley sends it (24 samples, N, about every 5.8 cm of
 # handle travel from the catch; see coach.py). drive_s: drive time measured by a SmartRow handle
 # (CSV replays only). flag_drive_s / flag_recovery_s: the pulley's drive flag, raw (see
-# protocol.FLAG_BIT; rhythm.py turns it into drive time). flag_on_t / flag_off_t: when the flag
-# went on and off, s from the first stroke like t (and the seat file's t), each to about +-0.05 s
-# (from 10 Nov 2026: to time the drive from the seat's catch). catch_t / legs_flat_t: the seat
-# leaving the front and reaching the back; knees_t: the seat starting forward in the recovery
-# before this catch (phases.py; with the seat sensor). null = not measured. Files saved before a
-# column was added lack it.
+# protocol.FLAG_BIT; rhythm.py turns it into drive time). flag_on_t / flag_off_t: the first pulley
+# record with the flag on / off, s from the first stroke like t (and the seat file's t), from
+# 10 Nov 2026; flag_on_prev_t / flag_off_prev_t: the record just before each (the change lies
+# between). catch_t / legs_flat_t: the seat leaving the front and reaching the back; knees_t: the
+# seat starting forward in the recovery before this catch (phases.py; with the seat sensor).
+# null = not measured. Files saved before a column was added lack it.
 STROKE_COLUMNS = ["t", "distance_m", "power_w", "spm", "heart_rate", "length_cm", "force_n",
                   "drive_s", "flag_drive_s", "flag_recovery_s", "flag_on_t", "flag_off_t",
-                  "catch_t", "legs_flat_t", "knees_t"]
+                  "catch_t", "legs_flat_t", "knees_t", "flag_on_prev_t", "flag_off_prev_t"]
 
 
 def stroke_rows(coach: IntervalCoach) -> list[list]:
@@ -263,7 +263,7 @@ def stroke_rows(coach: IntervalCoach) -> list[list]:
         return round(row[i] - t0, 3) if len(row) > i and row[i] else None
 
     return [[round(r[0] - t0, 2), r[1], round(r[2], 1), round(r[3], 1), r[4], r[5], list(r[6]),
-             secs(r, 7), secs(r, 8), secs(r, 9), at(r, 10), at(r, 11), at(r, 12), at(r, 13), at(r, 14)]
+             secs(r, 7), secs(r, 8), secs(r, 9), *(at(r, i) for i in range(10, 17))]
             for r in coach.stroke_log]
 
 

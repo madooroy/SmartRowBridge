@@ -30,17 +30,20 @@ import statistics
 from typing import Sequence
 
 SMOOTH = 5  # readings averaged (about 0.05 s): the lidar reads whole centimetres
-CATCH_FIT_CM = 3.0  # the catch: the turning point of a parabola through the readings this close to the front
-CATCH_FIT_S = 0.35  # ... and no further than this either side of the front-most one
-FLAT_TOL_CM = 1.0  # legs flat: the first moment the seat is this close to its back-most point
+CROSS_CM = 3.0  # the seat is moving once it is this far from where it rests (front or back)
+SPEED_S = 0.05  # its speed at a reading: a line through the readings this far either side
+V_LO, V_HI = 20.0, 60.0  # cm/s: the speed rising (or falling) through this range is extended to zero
+MAX_BACK_S = 0.4  # ... at most this far from where it reached V_LO
+REST_BAND_CM = 1.5  # where the seat rests: the median of the readings within this of its extreme
 MIN_TRAVEL_CM = 15.0  # less seat travel than this (arms-only drills, a pause): no phases
 LOOK_BACK_S = 3.0  # without a previous finish, the catch is looked for this far before the load
 AFTER_OFF_S = 0.35  # legs flat is looked for up to this long after the finish
 MAX_RECOVERY_S = 6.0  # a longer gap from one finish to the next catch is a pause, not a recovery
 MAX_GAP_S = 0.15  # a gap in the seat readings longer than this inside a phase: no phases
+SAME_FINISH_S = 0.15  # the previous row's finish must match this stroke's own (flag recovery) this closely
 
 # Stroke-log row positions (coach.IntervalCoach.stroke_log)
-I_SPM, I_FLAG_ON, I_FLAG_OFF, I_CATCH, I_LEGS, I_KNEES = 3, 10, 11, 12, 13, 14
+I_SPM, I_FLAG_RECOVERY, I_FLAG_ON, I_FLAG_OFF, I_CATCH, I_LEGS, I_KNEES = 3, 9, 10, 11, 12, 13, 14
 
 
 def _smooth(cms: Sequence[float]) -> list[float]:
@@ -67,45 +70,74 @@ def _window(readings: Sequence[tuple[float, float]], a: float, b: float) -> tupl
     return [ts[i] for i in keep], [cms[i] for i in keep]
 
 
-def _turning_point(ts: list[float], cms: list[float], i: int) -> float:
-    """When the seat turned at the front: the vertex of a parabola fitted (least squares) to the
-    readings near the front-most one. The lidar reads whole centimetres, so the front looks flat for
-    a while; the parabola finds the middle of the turn, where the seat stops coming forward and starts
-    going back. Falls back to the middle of the readings at the very front."""
-    front = cms[i]
-    while i + 1 < len(cms) and cms[i + 1] >= front:  # the last reading at the very front
-        i += 1
-    j = i
-    while j + 1 < len(cms) and cms[j + 1] >= front - 0.5:
-        j += 1
-    fallback = ts[j]  # the seat leaving the front (a long wait at the front, e.g. before the first stroke)
-    if all(c >= front - 0.5 for t, c in zip(ts, cms) if ts[i] - CATCH_FIT_S <= t <= ts[i]):
-        return fallback  # it sat at the front: no turn to fit
-    near = [k for k in range(len(ts)) if abs(ts[k] - ts[i]) <= CATCH_FIT_S and cms[k] >= front - CATCH_FIT_CM]
-    if len(near) < 7:
-        return fallback
-    t0 = ts[i]
-    xs = [ts[k] - t0 for k in near]
-    ys = [cms[k] for k in near]
-    n = len(xs)
-    s1, s2, s3, s4 = (sum(x ** p for x in xs) for p in (1, 2, 3, 4))
-    y0, y1, y2 = sum(ys), sum(x * y for x, y in zip(xs, ys)), sum(x * x * y for x, y in zip(xs, ys))
-    # normal equations for y = a x^2 + b x + c
-    m = [[s4, s3, s2, y2], [s3, s2, s1, y1], [s2, s1, n, y0]]
-    for col in range(3):  # Gaussian elimination
-        piv = max(range(col, 3), key=lambda r: abs(m[r][col]))
-        if abs(m[piv][col]) < 1e-12:
-            return fallback
-        m[col], m[piv] = m[piv], m[col]
-        for r in range(3):
-            if r != col:
-                f = m[r][col] / m[col][col]
-                m[r] = [a - f * b for a, b in zip(m[r], m[col])]
-    a, b = m[0][3] / m[0][0], m[1][3] / m[1][1]
-    if a >= 0:  # not a peak
-        return fallback
-    vertex = t0 - b / (2 * a)
-    return vertex if min(xs) <= vertex - t0 <= max(xs) else fallback
+def _rest(cms: list[float], lo: int, hi: int, top: bool) -> float:
+    """Where the seat rests at the front (top) or the back: the median of the readings within
+    REST_BAND_CM of the extreme, so a centimetre of flicker (46, 45, 47...) doesn't move it."""
+    part = cms[lo:hi] or cms
+    ext = max(part) if top else min(part)
+    near = sorted(c for c in part if abs(c - ext) <= REST_BAND_CM)
+    return near[len(near) // 2]
+
+
+def _speed(ts: list[float], cms: list[float], k: int) -> float:
+    """cm/s at reading k: the slope of a line through the readings within SPEED_S of it."""
+    idx = [j for j in range(len(ts)) if abs(ts[j] - ts[k]) <= SPEED_S]
+    if len(idx) < 3:
+        return 0.0
+    mt = sum(ts[j] for j in idx) / len(idx)
+    mc = sum(cms[j] for j in idx) / len(idx)
+    den = sum((ts[j] - mt) ** 2 for j in idx)
+    return sum((ts[j] - mt) * (cms[j] - mc) for j in idx) / den if den else 0.0
+
+
+def _cross_time(ts: list[float], cms: list[float], k: int, level: float) -> float:
+    """When the line between readings k-1 and k crosses level."""
+    a, b = cms[k - 1], cms[k]
+    return ts[k] if a == b else ts[k - 1] + (ts[k] - ts[k - 1]) * (level - a) / (b - a)
+
+
+def _from_crossing(ts: list[float], cms: list[float], k: int, level: float, leaving: bool) -> float:
+    """The moment the seat started moving (leaving) or stopped, around where it crossed `level`
+    (between readings k-1 and k): its speed, as it rises from V_LO to V_HI (or falls from V_HI to
+    V_LO), follows a line, and the moment is where that line reaches zero. So a centimetre of
+    flicker, a slow creep or roll (a few cm/s) and where exactly it rests don't move it; at most
+    MAX_BACK_S from where the speed passed V_LO; the crossing itself if the speed can't be read."""
+    t_cross = _cross_time(ts, cms, k, level)
+    n = len(ts)
+    sp = {}
+
+    def v(i: int) -> float:
+        if i not in sp:
+            sp[i] = abs(_speed(ts, cms, i))
+        return sp[i]
+
+    if leaving:  # back from the crossing to where it was still slow, then forward to where it is fast
+        lo = k
+        while lo > 0 and v(lo - 1) >= V_LO and ts[k] - ts[lo - 1] <= MAX_BACK_S:
+            lo -= 1
+        hi = lo
+        while hi + 1 < n and v(hi) < V_HI and ts[hi + 1] - ts[lo] <= 0.3:
+            hi += 1
+        idx = [i for i in range(lo, hi + 1) if V_LO * 0.5 <= v(i) <= V_HI * 1.2]
+    else:  # forward from the crossing to where it is slow, keeping the falling part
+        hi = k
+        while hi + 1 < n and v(hi + 1) >= V_LO and ts[hi + 1] - ts[k] <= MAX_BACK_S:
+            hi += 1
+        lo = hi
+        while lo > 0 and v(lo) < V_HI and ts[hi] - ts[lo - 1] <= 0.3:
+            lo -= 1
+        idx = [i for i in range(lo, hi + 1) if V_LO * 0.5 <= v(i) <= V_HI * 1.2]
+    if len(idx) < 3:
+        return t_cross
+    mt = sum(ts[i] for i in idx) / len(idx)
+    mv = sum(v(i) for i in idx) / len(idx)
+    den = sum((ts[i] - mt) ** 2 for i in idx)
+    slope = sum((ts[i] - mt) * (v(i) - mv) for i in idx) / den if den else 0.0
+    if (leaving and slope <= 0) or (not leaving and slope >= 0):
+        return t_cross
+    t0 = mt - mv / slope  # where the speed line reaches zero
+    edge = ts[idx[0]] if leaving else ts[idx[-1]]
+    return max(t0, edge - MAX_BACK_S) if leaving else min(t0, edge + MAX_BACK_S)
 
 
 def stroke_events(readings: Sequence[tuple[float, float]], flag_on: float, flag_off: float,
@@ -113,34 +145,59 @@ def stroke_events(readings: Sequence[tuple[float, float]], flag_on: float, flag_
     """{"catch", "legs", "knees_before"} for one stroke (clock times), or None.
 
     readings: (time, cm from the lidar) covering at least prev_off to flag_off + AFTER_OFF_S. The
-    lidar is behind the rower, so the seat at the front (the catch) is the largest distance."""
+    lidar is behind the rower, so the seat at the front (the catch) is the largest distance. Each
+    moment is timed from where the seat crosses CROSS_CM from rest (_from_crossing), not from where
+    it first differs by a reading: the lidar flickers by a centimetre at rest, and the seat creeps
+    a little while parked and during the body swing."""
     if not flag_on or not flag_off or flag_off <= flag_on:
         return None
     start = prev_off if prev_off and 0 < flag_on - prev_off <= MAX_RECOVERY_S + 2 else flag_on - LOOK_BACK_S
-    w = _window(readings, start, flag_off)
+    w = _window(readings, start, flag_off + AFTER_OFF_S)
     if w is None:
         return None
     ts, cms = w
-    front = max(cms)
-    catch = _turning_point(ts, cms, cms.index(front))
-    w2 = _window(readings, catch, flag_off + AFTER_OFF_S)
-    if w2 is None:
-        return None
-    ts2, cms2 = w2
-    back = min(cms2)
+    end_drive = max(i for i, t in enumerate(ts) if t <= flag_off) + 1  # the catch is before the finish
+    i_front = max(range(end_drive), key=lambda i: (cms[i], i))  # the last reading at the front-most point
+    front = _rest(cms, max(0, i_front - 40), i_front + 1, top=True)
+    i_back = min(range(i_front, len(cms)), key=lambda i: cms[i])
+    back = _rest(cms, i_back, len(cms), top=False)
     if front - back < MIN_TRAVEL_CM:
         return None
-    legs = next(t for t, c in zip(ts2, cms2) if c <= back + FLAT_TOL_CM)
+    k = next((i for i in range(i_front + 1, len(cms)) if cms[i] <= front - CROSS_CM), None)
+    if k is None:
+        return None
+    catch = max(_from_crossing(ts, cms, k, front - CROSS_CM, leaving=True), ts[i_front] - MAX_BACK_S)
+    j = next((i for i in range(k, len(cms)) if cms[i] <= back + CROSS_CM), None)
+    if j is None or j == 0:
+        return None
+    legs = _from_crossing(ts, cms, j, back + CROSS_CM, leaving=False)
     knees = None
     if prev_legs is not None and prev_off is not None and prev_legs < catch:
         w3 = _window(readings, prev_legs, catch)
         if w3 is not None:
             ts3, cms3 = w3
-            rest = min(cms3)
-            near = [t for t, c in zip(ts3, cms3) if c <= rest + FLAT_TOL_CM]
-            if near and near[-1] > prev_off - 0.3:
-                knees = near[-1]
+            i_top = max(range(len(cms3)), key=lambda i: (cms3[i], i))
+            rest = _rest(cms3, 0, i_top + 1, top=False)
+            # the last time the seat rose through rest + CROSS_CM on its way to this catch
+            ups = [i for i in range(1, i_top + 1) if cms3[i - 1] < rest + CROSS_CM <= cms3[i]]
+            if ups:
+                t = _from_crossing(ts3, cms3, ups[-1], rest + CROSS_CM, leaving=True)
+                if t > prev_off - 0.3:
+                    knees = t
     return {"catch": catch, "legs": legs, "knees_before": knees}
+
+
+def previous_finish(prev: Sequence | None, row: Sequence) -> float | None:
+    """The previous stroke's finish, if the row before is really the previous stroke: its flag-off
+    must match this stroke's own count of the time since the last finish (flag recovery), else a
+    stroke is missing from the log in between and nothing is paired across the gap."""
+    off = _get(prev, I_FLAG_OFF) if prev is not None else None
+    on, rec = _get(row, I_FLAG_ON), _get(row, I_FLAG_RECOVERY)
+    if not off:
+        return None
+    if on and rec:
+        return off if abs((on - rec) - off) <= SAME_FINISH_S else None
+    return off if on and 0 < on - off <= MAX_RECOVERY_S else None
 
 
 def _get(row: Sequence, i: int) -> float | None:
@@ -155,7 +212,7 @@ def durations(prev: Sequence | None, row: Sequence) -> dict | None:
         return None
     out = {"load": on - catch, "legs": legs - catch, "body": off - legs, "drive": off - catch,
            "recovery": None, "parked": None, "slide": None}
-    prev_off = _get(prev, I_FLAG_OFF) if prev is not None else None
+    prev_off = previous_finish(prev, row)
     if prev_off and 0 < catch - prev_off <= MAX_RECOVERY_S:
         out["recovery"] = catch - prev_off
         knees = _get(row, I_KNEES)
@@ -170,6 +227,7 @@ PARTS = ("load", "legs", "body", "drive", "parked", "slide", "recovery")
 def medians(pairs: list[dict]) -> dict:
     """Median of each part over strokes (None where none had it), seconds to 2 decimals."""
     out = {}
+    pairs = [d for d in pairs if d]
     for k in PARTS:
         v = [d[k] for d in pairs if d.get(k) is not None]
         out[k] = round(statistics.median(v), 2) if v else None

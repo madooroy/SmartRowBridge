@@ -131,7 +131,7 @@ FLAG_BYTE = 3
 FLAG_BIT = 0x10
 FLAG_PAIR_S = 3.0  # a drive that ended longer ago than this before the stroke's 'b' record isn't its drive
 FLAG_GAP_S = 6.0  # flag off for longer than this is a pause, not a recovery
-EDGE_GAP_S = 0.5  # records further apart than this: an edge is placed at the later one (no midpoint)
+EDGE_GAP_S = 0.5  # a record further back than this doesn't bracket a flag change (no "record before")
 
 
 def drive_flag(packet: bytes) -> bool | None:
@@ -170,10 +170,14 @@ class StrokeCurve:
     flag_drive_s: float = 0.0  # how long the pulley's drive flag was on (raw, uncalibrated; see FLAG_BIT); 0 = none
     flag_recovery_s: float = 0.0  # flag off from the previous drive to this one; 0 = none (first stroke, pause)
     # When the flag went on and off, on this clock (time.monotonic(), as `time` and the seat sensor's
-    # readings): each edge is placed midway between the last record before it and the first after it,
-    # so it is good to about +-0.05 s (records every 0.09-0.12 s). 0 = none.
+    # readings): the arrival of the first record with the flag on / off, which is what was checked on
+    # film (the finish within 0.02 s, 4 Nov 2026). The change itself lies between the record before
+    # (flag_on_prev_t / flag_off_prev_t, records every 0.09-0.12 s) and that one; both are kept so a
+    # filmed row can settle which is closer. 0 = none.
     flag_on_t: float = 0.0
     flag_off_t: float = 0.0
+    flag_on_prev_t: float = 0.0
+    flag_off_prev_t: float = 0.0
 
 
 @dataclass
@@ -206,10 +210,11 @@ class SmartRowParser:
         self._flag_start = 0.0
         self._flag_recovery = 0.0
         self._last_drive_end: float | None = None
-        self._drive: tuple[float, float, float, float, float] | None = None
-        # (flag time, recovery before it, end, edge on, edge off), not yet used
-        self._last_record: float | None = None  # when the previous good record arrived
-        self._flag_on_edge = 0.0
+        self._drive: tuple[float, float, float, float, float, float] | None = None
+        # (flag time, recovery before it, end = flag off, flag on, record before the on, record before the off),
+        # not yet used
+        self._last_record: float | None = None  # when the previous record with the flag bit arrived
+        self._flag_on_prev = 0.0
 
     def feed(self, packet: bytes, now: float | None = None) -> bool:
         """Consume one notification. Returns True if metrics changed."""
@@ -223,8 +228,10 @@ class SmartRowParser:
             return False
 
         now = time.monotonic() if now is None else now
-        self._track_flag(drive_flag(packet), now)
-        self._last_record = now
+        flag = drive_flag(packet)
+        self._track_flag(flag, now)
+        if flag is not None:
+            self._last_record = now
         p = decode_packet(packet)
         m = self.metrics
         m.distance_m = _atoi(p[1:6])
@@ -270,41 +277,42 @@ class SmartRowParser:
                 self._curve_parts = []
         return True
 
-    def _edge(self, now: float) -> float:
-        """Where the flag changed: midway between the previous record and this one (records come every
-        ~0.1 s); this record's time if the previous one is missing or too long ago."""
+    def _before(self, now: float) -> float:
+        """The record before this one (with the flag bit), if recent enough to bracket a change; else 0."""
         prev = self._last_record
-        return (prev + now) / 2 if prev is not None and 0 < now - prev <= EDGE_GAP_S else now
+        return prev if prev is not None and 0 < now - prev <= EDGE_GAP_S else 0.0
 
     def _track_flag(self, on: bool | None, now: float) -> None:
         """Time the drive flag's runs (measured from the first record with it on to the first without),
-        and place its edges (_edge) for the strokes file."""
+        keeping the record before each change for the strokes file."""
         if on is None or on == self._flag_on:
             return
         self._flag_on = on
         if on:
             self._flag_start = now
-            self._flag_on_edge = self._edge(now)
+            self._flag_on_prev = self._before(now)
             gap = now - self._last_drive_end if self._last_drive_end is not None else None
             self._flag_recovery = gap if gap is not None and gap <= FLAG_GAP_S else 0.0
         else:
-            self._drive = (now - self._flag_start, self._flag_recovery, now, self._flag_on_edge, self._edge(now))
+            self._drive = (now - self._flag_start, self._flag_recovery, now, self._flag_start, self._flag_on_prev,
+                           self._before(now))
             self._last_drive_end = now
 
     def _emit_stroke(self, curve: list[int], work_j: float, now: float) -> None:
         drive, self._drive = self._drive, None  # each flag run belongs to one stroke at most
         if self.on_stroke is None or not any(curve):
             return
-        flag_drive = flag_recovery = flag_on = flag_off = 0.0
+        flag_drive = flag_recovery = flag_on = flag_off = on_prev = off_prev = 0.0
         if drive is not None and now - drive[2] <= FLAG_PAIR_S:
             flag_drive, flag_recovery = round(drive[0], 3), round(drive[1], 3)
-            flag_on, flag_off = drive[3], drive[4]
+            flag_on, flag_off, on_prev, off_prev = drive[3], drive[2], drive[4], drive[5]
         m = self.metrics
         stroke = StrokeCurve(time=now, force_n=curve, power_w=m.power_w, stroke_rate_spm=m.stroke_rate_spm,
                              stroke_length_cm=m.stroke_length_cm, work_j=work_j, stroke_count=m.stroke_count,
                              heart_rate_bpm=m.heart_rate_bpm, distance_m=m.distance_m,
                              flag_drive_s=flag_drive, flag_recovery_s=flag_recovery,
-                             flag_on_t=flag_on, flag_off_t=flag_off)
+                             flag_on_t=flag_on, flag_off_t=flag_off, flag_on_prev_t=on_prev,
+                             flag_off_prev_t=off_prev)
         try:
             self.on_stroke(stroke)
         except Exception:  # noqa: BLE001 - coaching must never break parsing

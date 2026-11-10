@@ -352,14 +352,40 @@ def preview(directory: str) -> None:
     print(f"{len(shots)} screens saved in {out}")
 
 
+def led_test() -> None:
+    """Each LED colour in turn, named on the screen: which zone colours read clearly at GO (screens.ZONE_LEDS)."""
+    from PIL import Image, ImageDraw
+    from .hat import LED_COLOURS, DisplayHat
+    hat = DisplayHat(buttons=False)
+    zones = {v: k for k, v in screens.ZONE_LEDS.items()}
+    try:
+        for colour in [*LED_COLOURS, None]:
+            image = Image.new("RGB", (screens.WIDTH, screens.HEIGHT), screens.BG)
+            draw = ImageDraw.Draw(image)
+            draw.text((screens.WIDTH // 2, 100), colour or "off", font=screens.font(40, True), fill=screens.FG, anchor="mm")
+            draw.text((screens.WIDTH // 2, 150), f"GO into {zones[colour]}" if colour in zones else
+                      ("countdown blink" if colour == "yellow" else ""), font=screens.font(20), fill=screens.DIM,
+                      anchor="mm")
+            hat.show(image)
+            hat.set_led(colour)
+            print(colour or "off", flush=True)
+            time.sleep(3)
+    finally:
+        hat.set_led(None)
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="smartrow-display", description=__doc__.splitlines()[0])
     p.add_argument("--preview", metavar="DIR", help="save every screen as PNG files (no hardware needed)")
     p.add_argument("--final", metavar="KIND", help="draw the last screen (poweroff, halt or reboot) and exit")
+    p.add_argument("--led-test", action="store_true",
+                   help="show each LED colour for 3 s with its name on the screen (stop smartrow-display first)")
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
     if args.preview:
         preview(args.preview)
+    elif args.led_test:
+        led_test()
     elif args.final:
         final(args.final)
     else:

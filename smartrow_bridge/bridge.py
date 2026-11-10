@@ -110,7 +110,6 @@ class Bridge:
     # The pulley only streams after the "$\rV@\r" init, periodic "$" polls and,
     # on V3 hardware, a KEYLOCK answer. The SmartRow app does all of that through
     # the clone; the bridge only takes over while the app is not connected.
-    @property
     def _seat_window(self, start: float, end: float) -> list[tuple[float, float]]:
         """The seat sensor's good readings from start to end (monotonic), as (time, cm), for the coach."""
         from .seat import good
@@ -118,6 +117,7 @@ class Bridge:
             return []
         return [(r[1], float(r[2])) for r in self.seat.since(0, start) if r[1] <= end and good(r[2], r[3])]
 
+    @property
     def _bridge_drives_pulley(self) -> bool:
         return self.cfg.drive_without_tablet and not (self.peripheral and self.peripheral.tablet_connected)
 

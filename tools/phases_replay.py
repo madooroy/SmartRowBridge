@@ -9,9 +9,10 @@ efforts, the Easy rowing by thirds, and with --csv writes one line per stroke: c
 catch, load, legs flat, finish and knees rise, and the seconds of each part. For checking the
 coach against video (pose_video.py), and for rows saved before the coach timed the parts itself.
 
-Sessions saved from 10 Nov 2026 have the drive flag's edges (flag_on_t / flag_off_t). Older ones
-have only the flag's durations: their finish is then placed --lag seconds before the stroke record
-(0.38-0.52 s on video), which makes their drive and recovery good to only about 0.1 s.
+Sessions saved from 10 Nov 2026 have the drive flag's times (flag_on_t / flag_off_t: the first
+record with the flag on / off, as checked on film). Older ones have only the flag's durations: their
+finish is then placed --lag seconds before the stroke record (0.38-0.52 s on video), which makes
+their drive and recovery good to only about 0.1 s.
 """
 
 from __future__ import annotations
@@ -53,11 +54,15 @@ def replay(strokes: dict, seat: tuple[list[float], list[float]], lag: float) -> 
             on = off - d["flag_drive_s"]
         ev = None
         if on is not None and off is not None:
-            prev_off = prev[phases.I_FLAG_OFF] if prev else None
-            prev_legs = prev[phases.I_LEGS] if prev else None
-            start = (prev_off if prev_off and on - prev_off <= phases.MAX_RECOVERY_S + 2 else on - phases.LOOK_BACK_S) - 0.5
+            rec = d.get("flag_recovery_s") or 0.0  # as the coach does it (coach._seat_events)
+            own = on - rec if rec else 0.0
+            partial = (0, 0, 0, 0, 0, 0, (), 0, 0, rec, on, off)
+            prev_off = phases.previous_finish(prev, partial) or 0.0
+            prev_legs = prev[phases.I_LEGS] if prev_off and prev else 0.0
+            base = prev_off or own
+            start = (base if base and on - base <= phases.MAX_RECOVERY_S + 2 else on - phases.LOOK_BACK_S) - 0.5
             i, j = bisect.bisect_left(st, start), bisect.bisect_right(st, d["t"])
-            ev = phases.stroke_events(list(zip(st[i:j], sc[i:j])), on, off, prev_off or None, prev_legs or None)
+            ev = phases.stroke_events(list(zip(st[i:j], sc[i:j])), on, off, base or None, prev_legs or None)
         row = (d["t"], d.get("distance_m"), d.get("power_w"), d.get("spm"), d.get("heart_rate"), d.get("length_cm"),
                (), d.get("drive_s"), d.get("flag_drive_s"), d.get("flag_recovery_s"), on or 0.0, off or 0.0,
                ev["catch"] if ev else 0.0, ev["legs"] if ev else 0.0, (ev["knees_before"] or 0.0) if ev else 0.0)
@@ -77,7 +82,8 @@ def main(argv: list[str] | None = None) -> int:
     sp = Path(args.strokes)
     seat_path = Path(args.seat) if args.seat else sp.with_name(sp.name.replace(".strokes.json", ".seat.csv"))
     strokes = json.loads(sp.read_text(encoding="utf-8"))
-    rows, exact = replay(strokes, load_seat(seat_path), args.lag)
+    seat = load_seat(seat_path)
+    rows, exact = replay(strokes, seat, args.lag)
     pairs = phases.rows_durations(rows)
     print(f"{strokes.get('id', sp.stem)}: {len(pairs)} of {len(rows)} strokes timed"
           + ("" if exact else f" (older file: finish placed {args.lag} s before the stroke record, about +-0.1 s)"))
@@ -102,12 +108,22 @@ def main(argv: list[str] | None = None) -> int:
         with open(args.csv, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             w.writerow(["t", "power_w", "spm", "catch_t", "load_t", "legs_flat_t", "finish_t", "knees_before_t",
-                        *phases.PARTS])
+                        *phases.PARTS, "seat_range_parked_cm"])
+            st, sc = seat
+            by_t = {r[0]: k for k, r in enumerate(rows)}
             for r, d in pairs:
+                # how far the seat moved while parked before this catch (creep and roll; review 10 Nov)
+                k = by_t[r[0]]
+                prev = rows[k - 1] if k else None
+                rng = ""
+                if prev is not None and prev[phases.I_LEGS] and r[phases.I_KNEES]:
+                    a, b = bisect.bisect_left(st, prev[phases.I_LEGS]), bisect.bisect_right(st, r[phases.I_KNEES])
+                    if b > a:
+                        rng = max(sc[a:b]) - min(sc[a:b])
                 w.writerow([r[0], r[2], r[3], *(round(r[i], 3) if r[i] else "" for i in
                                                 (phases.I_CATCH, phases.I_FLAG_ON, phases.I_LEGS, phases.I_FLAG_OFF,
                                                  phases.I_KNEES)),
-                            *("" if d[k] is None else round(d[k], 3) for k in phases.PARTS)])
+                            *("" if d[k] is None else round(d[k], 3) for k in phases.PARTS), rng])
         print(f"  wrote {args.csv}")
     return 0
 

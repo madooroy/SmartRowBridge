@@ -59,17 +59,17 @@ class PhasesTest(unittest.TestCase):
         plan = stroke_plan()
         rows = log_rows(plan, seat_readings(plan))
         for s, r in zip(plan, rows):
-            self.assertAlmostEqual(r[phases.I_CATCH], s["catch"], delta=0.06)
-            self.assertAlmostEqual(r[phases.I_LEGS], s["flat"], delta=0.12)
+            self.assertAlmostEqual(r[phases.I_CATCH], s["catch"], delta=0.04)
+            self.assertAlmostEqual(r[phases.I_LEGS], s["flat"], delta=0.04)
         for s, r in zip(plan[:-1], rows[1:]):
-            self.assertAlmostEqual(r[phases.I_KNEES], s["knees"], delta=0.12)
+            self.assertAlmostEqual(r[phases.I_KNEES], s["knees"], delta=0.04)
         d = phases.durations(rows[4], rows[5])
         self.assertAlmostEqual(d["drive"], 0.9 + 0.25, delta=0.07)
         self.assertAlmostEqual(d["load"], 0.3, delta=0.07)
-        self.assertAlmostEqual(d["legs"], 0.9, delta=0.12)
-        self.assertAlmostEqual(d["body"], 0.25, delta=0.12)
+        self.assertAlmostEqual(d["legs"], 0.9, delta=0.06)  # cosine easing: each end ~0.03 s
+        self.assertAlmostEqual(d["body"], 0.25, delta=0.04)
         self.assertAlmostEqual(d["recovery"], 3.4 - 1.15, delta=0.07)
-        self.assertAlmostEqual(d["parked"], 1.2, delta=0.12)
+        self.assertAlmostEqual(d["parked"], 1.2, delta=0.04)
         self.assertAlmostEqual(d["parked"] + d["slide"], d["recovery"], places=6)
         self.assertIsNone(phases.durations(None, rows[0])["recovery"])  # the first stroke has no recovery before it
 
@@ -99,7 +99,7 @@ class PhasesTest(unittest.TestCase):
         self.assertEqual(len(easy["thirds"]), 3)
         text = " ".join(rhythm.rhythm_findings(rh))
         self.assertIn("timed with the seat sensor", text)
-        self.assertIn("Stroke parts (Easy): legs 0.8 s (the handle taking load 0.3 s into it), body and arms 0.3 s",
+        self.assertIn("Stroke parts (Easy): legs 0.9 s (the handle taking load 0.3 s into it), body and arms 0.2 s",
                       text)
         self.assertIn("then parked 1.", text)
         self.assertNotIn("Over the row", text)  # nothing moved
@@ -117,6 +117,8 @@ class PhasesTest(unittest.TestCase):
                       "parked after the finish 0.90 → 1.20 s.", text)
         same = " ".join(rhythm.rhythm_findings({"easy": easy, "efforts": [], "last": easy}))
         self.assertIn("Stroke parts as in the last row.", same)
+        faster = " ".join(rhythm.rhythm_findings({"easy": easy, "efforts": [], "last": {**last, "spm": 20.0}}))
+        self.assertIn("Since the last row: rate 20 \u2192 18 spm in Easy rowing, so the parts aren't compared.", faster)
 
     def test_a_row_without_the_seat_still_gets_the_pulley_estimate(self):
         rows = [(t * 3.0 + 200, 0, 110.0, 20, 0, 120, (0,) * 24, 0.0, 0.82, 2.18) for t in range(60)]
@@ -124,9 +126,6 @@ class PhasesTest(unittest.TestCase):
         self.assertEqual(rh["easy"]["source"], "pulley")
         self.assertNotIn("phases", rh["easy"])
 
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class ReplayToolTest(unittest.TestCase):
@@ -161,3 +160,89 @@ class ReplayToolTest(unittest.TestCase):
             self.assertNotIn("older file", out.getvalue())
             lines = Path(d, "out.csv").read_text().splitlines()
             self.assertEqual(len(lines), 41)
+
+
+def real_seat(plan, seed=1, rate=100):
+    """A seat closer to 9 Nov's file: it slows into the front (about 1 cm per 50 ms at the end), sits
+    there 0.25 s, pushes off quickly; reaches the back, creeps back 2 cm in the body swing, reads
+    46/45/47 at rest (1 cm flicker), rolls 2 cm forward before the knees rise."""
+    import random
+    rnd = random.Random(seed)
+    out, t = [], plan[0]["catch"] - 2.0
+    end = plan[-1]["knees"] + 0.5
+    while t <= end:
+        cm = FRONT
+        for i, s in enumerate(plan):
+            nxt = plan[i + 1]["catch"] if i + 1 < len(plan) else s["knees"] + 2.0
+            sit = 0.25
+            if s["catch"] <= t < s["flat"]:  # quick push from rest: steady acceleration, then easing in
+                x = (t - s["catch"]) / (s["flat"] - s["catch"])
+                cm = FRONT - (FRONT - BACK) * (x * x * 2 if x < 0.5 else 1 - 2 * (1 - x) ** 2)
+            elif s["flat"] <= t < s["knees"]:
+                creep = min(2.0, 8.0 * (t - s["flat"])) if t < s["off"] else 2.0  # back 2 cm in the swing
+                roll = min(2.0, max(0.0, (t - (s["knees"] - 0.4)) * 5)) if t > s["knees"] - 0.4 else 0.0
+                cm = BACK - creep + roll + rnd.choice((0, 0, 0, -1, 1))
+            elif s["knees"] <= t < nxt - sit:  # the slide, slowing into the front
+                x = (t - s["knees"]) / (nxt - sit - s["knees"])
+                base = BACK + 0.0
+                cm = base + (FRONT - base) * (1 - (1 - x) ** 2)
+            elif nxt - sit <= t < nxt:
+                cm = FRONT + rnd.choice((0, 0, -1))
+        out.append((round(t, 3), float(round(cm))))
+        t += 1.0 / rate
+    return out
+
+
+class HarderSeatTest(unittest.TestCase):
+    """The cases from the 10 Nov review: slow arrival and a sit at the front, flicker and creep at rest,
+    a stroke missing from the log, the seat dropping out."""
+
+    def test_slow_arrival_sit_creep_and_flicker(self):
+        plan = stroke_plan(n=14)
+        rows = log_rows(plan, real_seat(plan))
+        for s, r in list(zip(plan, rows))[2:]:
+            self.assertAlmostEqual(r[phases.I_CATCH], s["catch"], delta=0.06)  # the seat leaving, not mid-sit
+            self.assertAlmostEqual(r[phases.I_LEGS], s["flat"], delta=0.08)  # not moved by the 2 cm creep
+        for s, r in list(zip(plan[:-1], rows[1:]))[2:]:
+            self.assertAlmostEqual(r[phases.I_KNEES], s["knees"], delta=0.1)  # not moved by the 2 cm roll
+
+    def test_first_stroke_after_a_wait_at_the_front(self):
+        plan = stroke_plan(n=3)
+        readings = [(t, 110.0 + (1 if int(t * 100) % 7 == 0 else 0)) for t in [x / 100 for x in range(500, 1000)]]
+        readings += [r for r in real_seat(plan) if r[0] >= 10.0]
+        ev = phases.stroke_events(readings, plan[0]["on"], plan[0]["off"], None, None)
+        self.assertAlmostEqual(ev["catch"], plan[0]["catch"], delta=0.08)
+
+    def test_a_missing_stroke_is_not_paired_across(self):
+        plan = stroke_plan(n=8)
+        rows = log_rows(plan, seat_readings(plan))
+        # this stroke's own count of the time since the last finish (flag recovery)
+        rows = [r[:9] + ((plan[i]["on"] - plan[i - 1]["off"]) if i else 0.0,) + r[10:] for i, r in enumerate(rows)]
+        gap = rows[:4] + rows[5:]  # stroke 5 never reached the log
+        self.assertIsNotNone(phases.durations(gap[2], gap[3])["recovery"])
+        self.assertIsNone(phases.durations(gap[3], gap[4])["recovery"])  # not 4 s of "recovery"
+
+    def test_seat_dropping_out_mid_row_keeps_the_screens_going(self):
+        plan = stroke_plan(n=10)
+        rows = log_rows(plan, seat_readings(plan))
+        rows += [(r[0] + 40, *r[1:12], 0.0, 0.0, 0.0) for r in rows[-3:]]  # arms only / lidar gone
+        bar = rhythm.live(rows, now=rows[-1][0] + 1)
+        self.assertTrue(bar is None or bar["source"] in ("pulley", "seat"))
+        self.assertEqual(phases.medians([None, {"drive": 1.0}])["drive"], 1.0)
+
+
+class BridgeWithSeatTest(unittest.TestCase):
+    def test_bridge_starts_with_the_coach_and_seat_sensor(self):
+        import tempfile
+        from smartrow_bridge import bridge, config
+        with tempfile.TemporaryDirectory() as d:
+            cfg = config.parse(["--coach", "--session-dir", d, "--status-file", f"{d}/status.json",
+                                "--seat-sensor", "/dev/null-seat"])
+            b = bridge.Bridge(cfg)
+            self.assertIsNotNone(b.seat)
+            self.assertEqual(b.coach.seat_window(0.0, 1.0), [])
+            self.assertIsInstance(b._bridge_drives_pulley, bool)
+
+
+if __name__ == "__main__":
+    unittest.main()

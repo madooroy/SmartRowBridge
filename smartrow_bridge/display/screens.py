@@ -236,8 +236,9 @@ def countdown(status: dict | None, now: float) -> dict | None:
         return None
     left = w["left_s"] - age
     text = _step_text(nxt.get("target_w"), nxt["kind"], nxt["length"])
-    if left <= 0:
-        return {"phase": "go", "left": 0.0, "digit": None, "zone": nxt.get("zone"), "text": text}
+    if left <= 0:  # the bridge hasn't written the change yet: GO on a time step (exact), wait on a distance
+        return ({"phase": "go", "left": 0.0, "digit": None, "zone": nxt.get("zone"), "text": text}
+                if w.get("kind", "time") == "time" else None)
     if left <= COUNT_S:
         return {"phase": "count", "left": left, "digit": math.ceil(left), "zone": nxt.get("zone"), "text": text}
     if left <= SOON_S:

@@ -785,10 +785,11 @@ class IntervalCoach:
         # Every stroke, for the session's activity file and later analysis:
         # (time, distance m, power W, strokes/min, heart rate, stroke length cm, force curve N, drive s)
         # (time, distance, power, spm, heart rate, length, force curve, drive_s, flag_drive_s, flag_recovery_s,
-        #  flag_on_t, flag_off_t, catch_t, legs_flat_t, knees_before_t): the last three from the seat
-        #  sensor (phases.py; 0 = none), knees_before_t being the knees rise in the recovery before this catch
+        #  flag_on_t, flag_off_t, catch_t, legs_flat_t, knees_before_t, flag_on_prev_t, flag_off_prev_t):
+        #  catch/legs/knees from the seat sensor (phases.py; 0 = none), knees_before_t being the knees rise in
+        #  the recovery before this catch; the *_prev_t the pulley records just before each flag change
         self.stroke_log: list[tuple[float, int, float, float, int, int, tuple[int, ...], float, float, float,
-                                    float, float, float, float, float]] = []
+                                    float, float, float, float, float, float, float]] = []
 
     # ------------------------------------------------------------ reference
 
@@ -835,13 +836,18 @@ class IntervalCoach:
             return None
         from . import phases
         prev = self.stroke_log[-1] if self.stroke_log else None
-        prev_off = prev[phases.I_FLAG_OFF] if prev is not None and len(prev) > phases.I_FLAG_OFF else 0.0
-        prev_legs = prev[phases.I_LEGS] if prev is not None and len(prev) > phases.I_LEGS else 0.0
-        start = (prev_off if prev_off and s.flag_on_t - prev_off <= phases.MAX_RECOVERY_S + 2
+        # The previous finish by this stroke's own count (flag recovery); the last row's events only if
+        # that row is really the previous stroke (a stroke can be missing from the log).
+        own = s.flag_on_t - s.flag_recovery_s if s.flag_recovery_s else 0.0
+        row = (0, 0, 0, 0, 0, 0, (), 0, 0, s.flag_recovery_s, s.flag_on_t, s.flag_off_t)
+        prev_off = phases.previous_finish(prev, row) or 0.0
+        prev_legs = prev[phases.I_LEGS] if prev_off and len(prev) > phases.I_LEGS else 0.0
+        base = prev_off or own
+        start = (base if base and s.flag_on_t - base <= phases.MAX_RECOVERY_S + 2
                  else s.flag_on_t - phases.LOOK_BACK_S) - 0.5
         try:
             readings = self.seat_window(start, s.time)
-            return phases.stroke_events(readings, s.flag_on_t, s.flag_off_t, prev_off or None, prev_legs or None)
+            return phases.stroke_events(readings, s.flag_on_t, s.flag_off_t, base or None, prev_legs or None)
         except Exception:  # noqa: BLE001 - the seat must never break coaching
             log.exception("Timing the stroke with the seat sensor failed")
             return None
@@ -875,7 +881,8 @@ class IntervalCoach:
                                 s.stroke_length_cm, tuple(s.force_n), s.drive_s,
                                 s.flag_drive_s, s.flag_recovery_s, s.flag_on_t, s.flag_off_t,
                                 events["catch"] if events else 0.0, events["legs"] if events else 0.0,
-                                (events["knees_before"] or 0.0) if events else 0.0))
+                                (events["knees_before"] or 0.0) if events else 0.0,
+                                s.flag_on_prev_t, s.flag_off_prev_t))
         self.recent.append(s)
         if self.workout is not None:
             if not self.workout.started:

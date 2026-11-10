@@ -742,13 +742,13 @@ const cdStep = (target, kind, length) => `${target !== null && target !== undefi
   (kind === "time" ? fmtTime(length) : `${Math.round(length)} m`);
 function countdown(st) {
   const w = st && st.coach && st.coach.workout;
-  if (!w || w.state !== "running" || st.age_s === null || st.age_s > STALE_S) return null;
-  const age = Math.max(0, performance.now() / 1000 - stateAt), n = w.next;
+  const age = Math.max(0, performance.now() / 1000 - stateAt), n = w && w.next;
+  if (!w || w.state !== "running" || st.age_s === null || age > STALE_S) return null;  // the Pi stopped answering: no countdown
   if (w.step > 1 && w.step_elapsed_s !== null && w.step_elapsed_s !== undefined && w.step_elapsed_s + age < CD_GO_S)
     return { phase: "go", left: 0, key: `${w.step}`, zone: w.zone, text: cdStep(w.target_w, w.kind, w.length) };
   if (!n || w.left_s === null || w.left_s === undefined) return null;
   const left = w.left_s - age, text = cdStep(n.target_w, n.kind, n.length), key = `${w.step + 1}`;
-  if (left <= 0) return { phase: "go", left: 0, key, zone: n.zone, text };
+  if (left <= 0) return w.kind === "time" ? { phase: "go", left: 0, key, zone: n.zone, text } : null;  // distance: wait for the change
   if (left <= CD_SOON_S) return { phase: left <= CD_COUNT_S ? "count" : "soon", left, digit: Math.ceil(left), key, zone: n.zone, text };
   return null;
 }
@@ -770,6 +770,7 @@ function beep(at, freq, dur) {
   o.connect(v).connect(audio.destination); o.start(at); o.stop(at + dur + 0.02);
 }
 function scheduleBeeps(cd) {  // once per change of step, from 4.5 s out: three short, then a long higher one
+  if (cd && cd.phase === "go") beepedFor = null;  // after a change: a workout run again beeps again
   if (!beepsOn || !audio || audio.state !== "running" || !cd || cd.phase === "go" || cd.left > 4.5 || beepedFor === cd.key) return;
   beepedFor = cd.key;
   const t0 = audio.currentTime;
@@ -2032,7 +2033,7 @@ function partsCard(s) {
                                                      `1:${easy.ratio.toFixed(1)}`, C.fg];
   g.font = "700 28px system-ui, sans-serif";  // up to three lines, broken between the items
   const lines = [""];
-  for (const part of verdict[0].split(/(?<=[,:]) /)) {
+  for (const part of verdict[0].replace(/([,:]) /g, "$1\u0000").split("\u0000")) {  // (no lookbehind: older Safari)
     const tryLine = lines[lines.length - 1] ? `${lines[lines.length - 1]} ${part}` : part;
     if (g.measureText(tryLine).width > W && lines[lines.length - 1]) lines.push(part);
     else lines[lines.length - 1] = tryLine;

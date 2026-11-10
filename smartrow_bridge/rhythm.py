@@ -112,8 +112,7 @@ def live(log: list[tuple], now: float) -> dict | None:
     pairs = with_prev(log[-(LIVE_STROKES + 1):])[1:]
     got = [(r, x) for p, r in pairs if (x := stroke_rhythm(r, p))]
     seat = [(r, x) for r, x in got if x[2] == "seat"]
-    if len(seat) >= LIVE_MIN:
-        got = seat
+    got = seat if len(seat) >= LIVE_MIN else [(r, x) for r, x in got if x[2] != "seat"]  # never mixed
     if len(got) < LIVE_MIN:
         return None
     drive = statistics.median(x[0] for _, x in got)
@@ -168,7 +167,8 @@ def _ratio(x: float) -> str:
 PART_NAMES = {"load": "catch to load", "legs": "legs", "body": "body and arms", "drive": "drive",
               "parked": "parked after the finish", "slide": "slide", "recovery": "recovery"}
 CHANGE_S = 0.1  # a part that moves this much from the first third of the row to the last is mentioned
-LAST_CHANGE_S = 0.05  # ... or since the last row (medians of hundreds of strokes: steady to a few hundredths)
+LAST_CHANGE_S = 0.05  # ... or since the last row (medians of hundreds of strokes: steady to about 0.01 s)
+SAME_RATE_SPM = 1.0  # parts are only compared at rates this close: at 20 spm, 1 spm is 0.15 s of stroke
 EARLY_LOAD_S = -0.05  # the handle loaded this long before the seat moved: arms or back first
 
 
@@ -189,7 +189,10 @@ def phase_findings(easy: dict, last: dict | None = None) -> list[str]:
     if ph["load"] is not None and ph["load"] <= EARLY_LOAD_S:
         out.append("The handle took load before the seat moved: arms or back first. Push with the legs first.")
     thirds = easy.get("thirds")
-    if thirds:
+    if thirds and abs(thirds[-1]["spm"] - thirds[0]["spm"]) > SAME_RATE_SPM:
+        out.append(f"Over the row the rate went from {thirds[0]['spm']:.0f} to {thirds[-1]['spm']:.0f} spm, "
+                   "so its parts aren't compared.")
+    elif thirds:
         moved = []
         for k in ("drive", "recovery", "load", "legs", "body", "parked", "slide"):
             a, b = thirds[0]["phases"].get(k), thirds[-1]["phases"].get(k)
@@ -197,7 +200,10 @@ def phase_findings(easy: dict, last: dict | None = None) -> list[str]:
                 moved.append(f"{PART_NAMES[k]} {a:.2f} → {b:.2f} s")
         if moved:
             out.append("Over the row (first third to last): " + ", ".join(moved) + ".")
-    if last and last.get("phases"):
+    if last and last.get("phases") and last.get("spm") and abs(last["spm"] - easy["spm"]) > SAME_RATE_SPM:
+        out.append(f"Since the last row: rate {last['spm']:.0f} \u2192 {easy['spm']:.0f} spm in Easy rowing, so the "
+                   "parts aren't compared.")
+    elif last and last.get("phases"):
         since = []
         for k in ("drive", "recovery", "load", "legs", "body", "parked", "slide"):
             a, b = last["phases"].get(k), ph.get(k)
@@ -218,9 +224,12 @@ def rhythm_findings(rh: dict | None) -> list[str]:
         return []
     out = []
     easy = rh.get("easy")
-    sources = {x.get("source") for x in [easy, *rh.get("efforts", [])] if x}
-    estimated = (" (drive estimated from the pulley)" if "pulley" in sources
-                 else " (timed with the seat sensor)" if "seat" in sources else "")
+    def label(src: set) -> str:
+        return (" (drive estimated from the pulley)" if "pulley" in src
+                else " (timed with the seat sensor)" if "seat" in src else "")
+
+    # each line says how its own strokes were timed (the Easy rowing's, else the efforts')
+    estimated = label({easy.get("source")} if easy else {x.get("source") for x in rh.get("efforts", [])})
     if easy:
         text = (f"Rhythm in Easy rowing at {easy['spm']:.0f} spm{estimated}: drive about {easy['drive_s']:.1f} s, "
                 f"recovery {easy['recovery_s']:.1f} s, {_ratio(easy['ratio'])}{' (rough at this rate)' if _rough(easy) else ''}.")
@@ -237,6 +246,9 @@ def rhythm_findings(rh: dict | None) -> list[str]:
         out.append(text)
         if easy.get("source") == "seat":
             out.extend(phase_findings(easy, rh.get("last")))
+        effort_src = {x.get("source") for x in rh.get("efforts", [])}
+        if effort_src and effort_src != {easy.get("source")}:
+            estimated = label(effort_src)
     efforts = rh.get("efforts") or []
     if efforts:
         if len(efforts) <= 4:
