@@ -696,7 +696,26 @@ and logs `Seat sensor: TF-Luna lidar on /dev/ttyUSB0`. It can be plugged in or o
 session's readings are saved beside its strokes as `<id>.seat.csv` (`t` in seconds from the first stroke, as
 in the strokes file, then `cm` and `strength`; strength under 100 is unreliable); the newest 100 are kept.
 The readings are timed on the Pi with the same clock as the strokes, so seat position lines up with the
-pulley's force curves and drive flag. Nothing uses them yet beyond saving them.
+pulley's force curves and drive flag.
+
+With the coach on, the seat and the pulley's drive flag time each stroke part by part
+(`smartrow_bridge/phases.py`): the catch (the seat leaving the front), the handle taking load (flag on),
+legs flat (the seat at the back), the finish (flag off) and the knees rising (the seat starting forward).
+The drive (catch to finish) and recovery (finish to the next catch) are then measured rather than
+estimated: the rhythm bar shows the parts, and the session summary, the "Stroke parts" photo card and the
+Progress page report them. `tools/phases_replay.py SESSION.strokes.json --csv OUT.csv` works them out
+again from a saved session, for checking against video.
+
+**Film mode**, for lining up a video with the pulley: while it is on, the Display HAT's LED lights full
+green while the drive flag is on (within a few milliseconds of each pulley record), and the screen shows a
+green FILM label. Turn it on before a filmed row and off after (a reboot also turns it off):
+
+```bash
+sudo touch /run/smartrow-bridge/film
+sudo rm /run/smartrow-bridge/film
+```
+
+`python3 -m smartrow_bridge.display --led-test` (with `smartrow-display` stopped) shows each LED colour.
 
 ## Optional: planned workouts (FIT files)
 

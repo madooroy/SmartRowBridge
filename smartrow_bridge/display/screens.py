@@ -536,7 +536,7 @@ def phase_segments(rhythm: dict) -> list[tuple[str, float]] | None:
     k_r = recovery / (max(0.0, parked) + slide) if parked + slide > 0 else 1.0
     legs_s, body_s, parked_s, slide_s = legs * k_d, body * k_d, max(0.0, parked) * k_r, slide * k_r
     out = []
-    if load is not None and load < -0.05:
+    if load is not None and load <= 0.0:  # as rhythm.EARLY_LOAD_S
         early = min(0.15 * legs_s, -load)
         out += [("early", early / total), ("legs", (legs_s - early) / total)]
     elif load and load > 0:

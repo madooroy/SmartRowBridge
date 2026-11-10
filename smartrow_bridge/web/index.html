@@ -459,7 +459,7 @@ function phaseSegments(rhythm) {
   body = Math.max(0, body);
   const kd = legs + body > 0 ? drive / (legs + body) : 1, kr = parked + slide > 0 ? recovery / (Math.max(0, parked) + slide) : 1;
   const legsS = legs * kd, bodyS = body * kd, parkedS = Math.max(0, parked) * kr, slideS = slide * kr, out = [];
-  if (load != null && load < -0.05) {
+  if (load != null && load <= 0) {  // as rhythm.EARLY_LOAD_S
     const early = Math.min(0.15 * legsS, -load);
     out.push(["early", early / total], ["legs", (legsS - early) / total]);
   } else if (load && load > 0) {
@@ -770,7 +770,6 @@ function beep(at, freq, dur) {
   o.connect(v).connect(audio.destination); o.start(at); o.stop(at + dur + 0.02);
 }
 function scheduleBeeps(cd) {  // once per change of step, from 4.5 s out: three short, then a long higher one
-  if (cd && cd.phase === "go") beepedFor = null;  // after a change: a workout run again beeps again
   if (!beepsOn || !audio || audio.state !== "running" || !cd || cd.phase === "go" || cd.left > 4.5 || beepedFor === cd.key) return;
   beepedFor = cd.key;
   const t0 = audio.currentTime;
@@ -832,6 +831,8 @@ function drawCountdown(g, W, H, cd) {
   }
 }
 setInterval(() => {  // ten times a second (slower when the browser holds this page back): fine for 3, 2, 1
+  const w = state && state.coach && state.coach.workout;
+  if (!w || w.state !== "running") beepedFor = null;  // between workouts: one run again beeps again
   const cd = countdown(state);
   scheduleBeeps(cd);
   if (renderCountdown(cd)) drawPip();
@@ -2013,7 +2014,7 @@ function partsCard(s) {
   });
   // The key.
   const ky = ty + 60 + rowsOf.length * rowH + 50;
-  const early = ph.load != null && ph.load <= -0.05;
+  const early = ph.load != null && ph.load <= 0;
   const key = [["slack", "legs, before the handle takes load"], ["legs", "legs"], ["body", "body and arms"],
                ["parked", "parked: hands away, body over"], ["slide", "slide"],
                ...(early ? [["early", "handle loaded before the seat moved"]] : []), ["aim", "where the drive would end at 1:2"]];
@@ -2027,8 +2028,8 @@ function partsCard(s) {
   // The coach's line: what moved, else how it stands.
   const f = (s.findings || []).find((x) => x.startsWith("Since the last row"))
     || (s.findings || []).find((x) => x.startsWith("Over the row"))
-    || (ph.load != null && ph.load <= -0.05 ? "Handle loaded before the seat moved: push with the legs first." : null);
-  const verdict = ph.load != null && ph.load <= -0.05 ? ["Coach: arms or back first, push with the legs first", C.amber]
+    || (ph.load != null && ph.load <= 0 ? "Handle loaded before the seat moved: push with the legs first." : null);
+  const verdict = ph.load != null && ph.load <= 0 ? ["Coach: arms or back first, push with the legs first", C.amber]
     : f ? [`Coach: ${f.replace(/\.$/, "").replace(" (Easy)", "").replace("parked after the finish", "parked")}`, C.fg] : [`Coach: parked ${ph.parked?.toFixed(1) ?? "–"} s after the finish, ` +
                                                      `1:${easy.ratio.toFixed(1)}`, C.fg];
   g.font = "700 28px system-ui, sans-serif";  // up to three lines, broken between the items

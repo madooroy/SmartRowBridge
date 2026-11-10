@@ -357,6 +357,7 @@ def preview(directory: str) -> None:
 
 
 FILM_POLL_S = 0.004  # film mode: how often the flag file is read (the LED follows within this)
+FILM_REAPPLY_S = 0.25  # ... and the LED set again anyway this often
 
 
 def film_loop(hat, path: str, film: threading.Event, stopping) -> None:
@@ -365,27 +366,36 @@ def film_loop(hat, path: str, film: threading.Event, stopping) -> None:
     LED change is the moment the Pi received the pulley record with the change (a few ms later at
     most). Turned on and off with the film file; the LED goes back to normal when it is removed."""
     film_file, flag_file = status_file.film_path(path), status_file.flag_path(path)
-    shown = None
+    shown, applied_at = None, 0.0
     while not stopping():
-        if os.path.exists(film_file):
-            if not film.is_set():
-                film.set()
-                log.info("Film mode on: the LED shows the pulley's drive flag")
-            try:
-                with open(flag_file, encoding="ascii") as f:
-                    on = f.read(1) == "1"
-            except OSError:
-                on = False
-            if on != shown:
-                hat.film_led(on)
-                shown = on
-            time.sleep(FILM_POLL_S)
-        else:
-            if film.is_set():
-                film.clear()
-                hat.film_led(False)
-                shown = None
-                log.info("Film mode off")
+        try:
+            if os.path.exists(film_file):
+                if not film.is_set():
+                    film.set()
+                    log.info("Film mode on: the LED shows the pulley's drive flag")
+                try:
+                    with open(flag_file, encoding="ascii") as f:
+                        on = f.read(1) == "1"
+                except OSError:
+                    on = False
+                now = time.monotonic()
+                # on each change, and again every FILM_REAPPLY_S: the main loop may have set the LED
+                # once just as film mode came on
+                if on != shown or now - applied_at >= FILM_REAPPLY_S:
+                    hat.film_led(on)
+                    shown, applied_at = on, now
+                time.sleep(FILM_POLL_S)
+            else:
+                if film.is_set():
+                    film.clear()
+                    hat.film_led(False)
+                    shown = None
+                    log.info("Film mode off")
+                time.sleep(0.5)
+        except Exception:  # noqa: BLE001 - keep trying; never leave FILM showing with a dead LED
+            log.exception("Film mode: the LED could not be set")
+            film.clear()
+            shown = None
             time.sleep(0.5)
 
 

@@ -33,6 +33,8 @@ SMOOTH = 5  # readings averaged (about 0.05 s): the lidar reads whole centimetre
 CROSS_CM = 3.0  # the seat is moving once it is this far from where it rests (front or back)
 SPEED_S = 0.05  # its speed at a reading: a line through the readings this far either side
 V_LO, V_HI = 20.0, 60.0  # cm/s: the speed rising (or falling) through this range is extended to zero
+STILL_CMS = 6.0  # cm/s: slower than this the seat is still; a start is never placed before the last such
+#                  reading (nor a stop after the first): a slide that never reaches V_HI bends the line
 MAX_BACK_S = 0.4  # ... at most this far from where it reached V_LO
 REST_BAND_CM = 1.5  # where the seat rests: the median of the readings within this of its extreme
 MIN_TRAVEL_CM = 15.0  # less seat travel than this (arms-only drills, a pause): no phases
@@ -137,7 +139,13 @@ def _from_crossing(ts: list[float], cms: list[float], k: int, level: float, leav
         return t_cross
     t0 = mt - mv / slope  # where the speed line reaches zero
     edge = ts[idx[0]] if leaving else ts[idx[-1]]
-    return max(t0, edge - MAX_BACK_S) if leaving else min(t0, edge + MAX_BACK_S)
+    if leaving:
+        still = [i for i in range(0, k) if v(i) < STILL_CMS and ts[k] - ts[i] <= MAX_BACK_S + 0.3]
+        floor = ts[still[-1]] if still else edge - MAX_BACK_S
+        return min(t_cross, max(t0, edge - MAX_BACK_S, floor))
+    still = [i for i in range(k, n) if v(i) < STILL_CMS and ts[i] - ts[k] <= MAX_BACK_S + 0.3]
+    ceiling = ts[still[0]] if still else edge + MAX_BACK_S
+    return max(t_cross, min(t0, edge + MAX_BACK_S, ceiling))
 
 
 def stroke_events(readings: Sequence[tuple[float, float]], flag_on: float, flag_off: float,
@@ -156,7 +164,10 @@ def stroke_events(readings: Sequence[tuple[float, float]], flag_on: float, flag_
     if w is None:
         return None
     ts, cms = w
-    end_drive = max(i for i, t in enumerate(ts) if t <= flag_off) + 1  # the catch is before the finish
+    before = [i for i, t in enumerate(ts) if t <= flag_off]
+    if not before:  # no reading before the finish (the sensor just started)
+        return None
+    end_drive = before[-1] + 1  # the catch is before the finish
     i_front = max(range(end_drive), key=lambda i: (cms[i], i))  # the last reading at the front-most point
     front = _rest(cms, max(0, i_front - 40), i_front + 1, top=True)
     i_back = min(range(i_front, len(cms)), key=lambda i: cms[i])

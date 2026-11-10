@@ -99,8 +99,8 @@ class PhasesTest(unittest.TestCase):
         self.assertEqual(len(easy["thirds"]), 3)
         text = " ".join(rhythm.rhythm_findings(rh))
         self.assertIn("timed with the seat sensor", text)
-        self.assertIn("Stroke parts (Easy): legs 0.9 s (the handle taking load 0.3 s into it), body and arms 0.2 s",
-                      text)
+        self.assertIn("Stroke parts (Easy): legs 0.9 s (the handle taking load 0.3 s into it), body and arms 0.",
+                      text)  # 0.25 s, shown to one decimal
         self.assertIn("then parked 1.", text)
         self.assertNotIn("Over the row", text)  # nothing moved
         bar = rhythm.live(rows, now=rows[-1][0] + 1)
@@ -244,9 +244,6 @@ class BridgeWithSeatTest(unittest.TestCase):
             self.assertIsInstance(b._bridge_drives_pulley, bool)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class FilmModeTest(unittest.TestCase):
     def test_flag_reaches_the_led_only_in_film_mode(self):
@@ -273,13 +270,23 @@ class FilmModeTest(unittest.TestCase):
             hat, film, stop = Hat(), threading.Event(), [False]
             t = threading.Thread(target=display.film_loop, args=(hat, sp, film, lambda: stop[0]), daemon=True)
             t.start()
+            def wait_for(cond, timeout=3.0):  # threads: wait for the state, don't guess a delay
+                end = time.monotonic() + timeout
+                while not cond() and time.monotonic() < end:
+                    time.sleep(0.005)
+                self.assertTrue(cond())
+
+            wait_for(film.is_set)
             b.parser.on_flag(True, 2.0)
-            time.sleep(0.05)
+            wait_for(lambda: hat.leds and hat.leds[-1] is True)
             b.parser.on_flag(False, 3.0)
-            time.sleep(0.05)
-            self.assertTrue(film.is_set())
+            wait_for(lambda: hat.leds[-1] is False and True in hat.leds)
             os.remove(status.film_path(sp))
-            time.sleep(0.6)
+            wait_for(lambda: not film.is_set())
             stop[0] = True
-            self.assertFalse(film.is_set())
-            self.assertEqual(hat.leds, [False, True, False, False])  # off at the start, on, off, off at the end
+            self.assertIn(True, hat.leds)
+            self.assertFalse(hat.leds[-1])  # off when film mode ends
+
+
+if __name__ == "__main__":
+    unittest.main()

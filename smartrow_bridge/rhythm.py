@@ -169,7 +169,9 @@ PART_NAMES = {"load": "catch to load", "legs": "legs", "body": "body and arms", 
 CHANGE_S = 0.1  # a part that moves this much from the first third of the row to the last is mentioned
 LAST_CHANGE_S = 0.05  # ... or since the last row (medians of hundreds of strokes: steady to about 0.01 s)
 SAME_RATE_SPM = 1.0  # parts are only compared at rates this close: at 20 spm, 1 spm is 0.15 s of stroke
-EARLY_LOAD_S = -0.05  # the handle loaded this long before the seat moved: arms or back first
+EARLY_LOAD_S = 0.0  # the handle loaded before the seat moved (median): arms or back first. flag_on_t is the
+#                    first record with the flag, on average ~0.05 s after the change, so this is already
+#                    ~0.05 s of real lead
 
 
 def phase_findings(easy: dict, last: dict | None = None) -> list[str]:
