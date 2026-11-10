@@ -244,6 +244,20 @@ class DriveFlagTest(unittest.TestCase):
         self.stroke(p, 13.0, 13.8)
         self.assertEqual([(s.flag_drive_s, s.flag_recovery_s) for s in strokes], [(0.9, 0.0), (0.8, 2.1)])
 
+    def test_flag_edges_on_the_clock_midway_between_records(self):
+        p = SmartRowParser()
+        strokes = []
+        p.on_stroke = strokes.append
+        self.stroke(p, 10.0, 10.9)
+        p.feed(rec("c@@@@@ 90  900", False), now=12.9)  # a record without the flag just before the next drive
+        self.stroke(p, 13.0, 13.8)
+        first, second = strokes
+        self.assertAlmostEqual(first.flag_on_t, 10.0)  # no record before it: placed at the first with the flag
+        self.assertAlmostEqual(first.flag_off_t, 10.85)  # last on 10.8, first off 10.9
+        self.assertAlmostEqual(second.flag_on_t, 12.95)
+        self.assertAlmostEqual(second.flag_off_t, 13.75)
+        self.assertEqual((second.flag_drive_s, second.flag_recovery_s), (0.8, 2.1))  # the raw times are unchanged
+
     def test_pause_gives_no_recovery_and_stale_drive_is_not_used(self):
         p = SmartRowParser()
         strokes = []

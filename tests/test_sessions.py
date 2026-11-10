@@ -182,13 +182,15 @@ class RecorderTest(unittest.TestCase):
     def test_stroke_rows_carry_drive_times(self):
         r = saturday()
         log = r.coach.stroke_log
-        log[0] = log[0][:8] + (0.9, 2.1)        # a pulley stroke with its drive flag
+        t0 = log[0][0]
+        log[0] = log[0][:8] + (0.9, 2.1, t0 - 0.95, t0 - 0.05)  # a pulley stroke with its drive flag and edges
         log[1] = log[1][:7] + (1.12,)            # a handle stroke from an older tuple
         rows = sessions.stroke_rows(r.coach)
-        self.assertEqual(sessions.STROKE_COLUMNS[-3:], ["drive_s", "flag_drive_s", "flag_recovery_s"])
-        self.assertEqual(rows[0][-3:], [None, 0.9, 2.1])
-        self.assertEqual(rows[1][-3:], [1.12, None, None])
-        self.assertEqual(rows[2][-3:], [None, None, None])
+        self.assertEqual(sessions.STROKE_COLUMNS[-5:], ["drive_s", "flag_drive_s", "flag_recovery_s",
+                                                        "flag_on_t", "flag_off_t"])
+        self.assertEqual(rows[0][-5:], [None, 0.9, 2.1, -0.95, -0.05])  # edges in s from the first stroke
+        self.assertEqual(rows[1][-5:], [1.12, None, None, None, None])
+        self.assertEqual(rows[2][-5:], [None, None, None, None, None])
         self.assertEqual(len(rows[0]), len(sessions.STROKE_COLUMNS))
 
     def test_bridge_handles_done_from_the_screen(self):
