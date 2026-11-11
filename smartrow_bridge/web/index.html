@@ -62,6 +62,8 @@
   #rowing.coached .grid4 { flex: none; grid-template-columns: repeat(3, 1fr); }
   #rowing.coached .grid4 .value { font-size: clamp(28px, 9vmin, 100px); }
   #rowing.coached #rDistTile { display: none; }
+  #rowing.coached .grid4.with-hr { grid-template-columns: repeat(4, 1fr); }
+  #rowing:not(.coached) #rHrTile { display: none; }
   #rCurveTile { flex: 1; min-height: 120px; }
   #rRhythm { flex: none; width: 100%; height: clamp(20px, 4.5vmin, 40px); display: block; }
   .footer.idle { color: var(--dim); }
@@ -69,6 +71,8 @@
   /* Interval */
   .clockrow { display: flex; justify-content: space-between; align-items: baseline; gap: var(--pad); }
   .clockrow .value, .clockrow .watts { font-size: clamp(36px, 11vmin, 124px); }  /* time and power alike */
+  .clockrow .hrmid { align-self: center; text-align: center; font-weight: 700; font-size: clamp(22px, 6vmin, 64px); line-height: 1; }
+  .clockrow .hrzone { font-size: 0.4em; letter-spacing: 0.05em; margin-top: 0.15em; }
   /* The summary's small force-against-steady blocks (as on the Pi's screen). */
   .trio { position: relative; }
   .trio .row { position: absolute; left: 0; right: 0; }
@@ -239,9 +243,10 @@
     <section id="rowing">
       <div class="grid4">
         <div class="tile"><div class="label">WATTS</div><div class="value" id="rWatts">–</div></div>
-        <div class="tile"><div class="label">STROKES / MIN</div><div class="value" id="rSpm">–</div></div>
+        <div class="tile"><div class="label" id="rSpmLabel">STROKES / MIN</div><div class="value" id="rSpm">–</div></div>
         <div class="tile"><div class="label">PACE / 500 M</div><div class="value" id="rPace">–</div></div>
         <div class="tile" id="rDistTile"><div class="label">METRES</div><div class="value" id="rDist">0</div></div>
+        <div class="tile" id="rHrTile" hidden><div class="label" id="rHrLabel">HEART RATE</div><div class="value" id="rHr">–</div></div>
       </div>
       <div class="tile curve" id="rCurveTile" hidden><canvas id="rCurve"></canvas><div class="clen" id="rNote"></div></div>
       <canvas id="rRhythm" hidden></canvas>
@@ -251,7 +256,7 @@
 
     <section id="interval">
       <div class="label" id="iTitle">INTERVAL</div>
-      <div class="clockrow"><div class="value" id="iClock">0:00</div><div class="value watts" id="iWatts">0 W</div></div>
+      <div class="clockrow"><div class="value" id="iClock">0:00</div><div class="hrmid" id="iHr"></div><div class="value watts" id="iWatts">0 W</div></div>
       <div class="tile curve live"><canvas id="iCurve"></canvas><div class="clen" id="iLen"></div></div>
       <div class="cue none" id="iCue">…</div>
     </section>
@@ -598,7 +603,11 @@ function renderInterval(live) {
   show("interval");
   const hr = state && state.metrics && state.metrics.heart_rate_bpm;
   $("iTitle").textContent = (live.intensity ? `${live.intensity.toUpperCase()} · ${live.index}` : `INTERVAL ${live.index}`)
-    + (hr ? ` · ♥ ${hr}` : "");
+    ;
+  // Heart rate and zone between the clock and the watts, in the zone's colour.
+  const hz = hr ? hrNow(state) : null;
+  $("iHr").innerHTML = hz ? `♥ ${hz.bpm}` + (hz.zone ? `<div class="hrzone">ZONE ${hz.zone}</div>` : "") : "";
+  $("iHr").style.color = hz ? hz.colour : "";
   $("iClock").textContent = fmtTime(live.elapsed_s);
   $("iWatts").textContent = `${live.power_w} W`;
   const judged = live.balance !== null && live.balance !== undefined;
@@ -644,6 +653,19 @@ function renderRowing(st) {
   const set = (id, v) => { $(id).textContent = v; $(id).classList.toggle("idle", v === "–"); };
   set("rWatts", live(String(m.power_w ?? 0)));
   set("rSpm", live(String(Math.round(m.stroke_rate_spm ?? 0))));
+  // A workout step with a rate target: the aim in the label, your rate green within it, amber outside.
+  const wkr = st.coach && st.coach.workout && st.coach.workout.state === "running" ? st.coach.workout : null;
+  $("rSpmLabel").textContent = wkr && wkRate(wkr) ? `STROKES / MIN · aim ${wkRate(wkr)}` : "STROKES / MIN";
+  $("rSpm").style.color = wkr && wkRate(wkr) && rowing ? wkRateColour(wkr) : "";
+  // Heart rate and its zone, in the zone's colour (with the coach: a fourth tile; without: the footer has it).
+  const hrz = hrNow(st);
+  $("rHrTile").hidden = !hrz;
+  $("rHrTile").closest(".grid4").classList.toggle("with-hr", !!hrz);
+  if (hrz) {
+    $("rHrLabel").textContent = hrz.zone ? `HEART RATE · ZONE ${hrz.zone}` : "HEART RATE";
+    $("rHr").textContent = String(hrz.bpm);
+    $("rHr").style.color = hrz.colour;
+  }
   set("rPace", live(fmtPace(m.pace_s_per_500m ?? 0)));
   set("rDist", String(m.distance_m ?? 0));
   const coach = st.coach;
@@ -708,6 +730,21 @@ function wkNext(w) {
   return `next ${n.target_w !== null && n.target_w !== undefined ? n.target_w + " W" : "free"} · ${len}`;
 }
 const wkColour = (w) => w.on_target === "on" ? C.green : w.on_target ? C.amber : C.fg;
+// A step's stroke-rate range (a FIT workout's second target) and your rate against it.
+const wkRate = (w) => w && w.spm_low !== null && w.spm_low !== undefined
+  ? (w.spm_low === w.spm_high ? `${w.spm_low}` : `${w.spm_low}–${w.spm_high}`) : null;
+const wkRateColour = (w) => w.spm_on === "on" ? C.green : w.spm_on ? C.amber : C.fg;
+// Heart rate and its zone (your intervals.icu zones: the top of each, in bpm), coloured as on the cards.
+const HR_COLOURS = ["#878787", "#58a6ff", "#3fb950", "#e3b341", "#f85149", "#d860a8", "#d860a8"];
+function hrNow(st) {
+  const bpm = st && st.metrics && st.metrics.heart_rate_bpm;
+  if (!bpm) return null;
+  const tops = (st.coach && st.coach.hr_zones && st.coach.hr_zones.tops) || [];
+  if (!tops.length) return { bpm, zone: null, colour: C.fg };
+  let i = tops.findIndex((t) => bpm <= t);
+  if (i < 0) i = tops.length - 1;
+  return { bpm, zone: i + 1, colour: HR_COLOURS[Math.min(i, HR_COLOURS.length - 1)] };
+}
 function wkNote(w) {  // a workout waiting for its first stroke, or just done
   if (!w) return null;
   if (w.state === "ready") return `READY: ${w.name} · ${w.steps} steps` + (w.total_s ? ` · ${Math.round(w.total_s / 60)} min` : "")
@@ -727,7 +764,9 @@ function renderWorkout(st) {
   el.innerHTML = `<span class="dimmed">STEP ${w.step}/${w.steps}</span>` +
     `<span>TARGET <span class="big">${esc(wkTarget(w))}</span>${w.target_w !== null && w.target_w !== undefined ? " W" : ""}</span>` +
     `<span>NOW <span class="big ${cls}">${w.power_w ?? "–"}</span> W</span>` +
+    (wkRate(w) ? `<span>RATE <span class="big" style="color:${wkRateColour(w)}">${w.spm ?? "–"}</span> spm <span class="dimmed">aim ${wkRate(w)}</span></span>` : "") +
     `<span><span class="big">${esc(wkLeft(w))}</span> left</span>` +
+
     `<span class="dimmed">${esc(wkNext(w))}</span><div class="bar" style="width:${done}%"></div>`;
 }
 
@@ -2476,11 +2515,25 @@ function drawPipView() {
     else if (session.trim()) text(session.trim(), W / 2, H - FOOT / 2 - 2, 22, C.dim, "center", false);
   };
   const wkWatts = (fallback) => wk && wk.power_w != null ? `${wk.power_w} W` : fallback;
+  // The second line, under the big numbers: your stroke rate against the step's rate target (green
+  // within it, amber outside) on the left, heart rate and zone in the centre (in the zone's colour), the
+  // rate aim on the right. Left out when there is neither.
+  const hr = hrNow(st), rateAim = wk ? wkRate(wk) : null;
+  const RATE_H = hr || rateAim ? 30 : 0;
+  const narrow = W < 450;  // the tall floating window
+  const rateRow = (y) => {
+    if (rateAim) {
+      text(`${wk.spm ?? "–"} spm`, 16, y, narrow ? 24 : 26, wkRateColour(wk), "left");
+      text(`aim ${rateAim}`, W - 16, y, narrow ? 17 : 20, C.dim, "right", false);
+    }
+    if (hr) text(`♥ ${hr.bpm}` + (hr.zone ? ` · Z${hr.zone}` : ""), W / 2, y, narrow ? 23 : 26, hr.colour, "center");
+  };
   if (live) {
     text(wk ? wkLeft(wk) : fmtTime(live.elapsed_s), 16, 42, 54, C.fg);  // effort (or step) time and power, the same size
     text(wkWatts(`${live.power_w} W`), W - 16, 42, 54, wk ? wkColour(wk) : C.fg, "right");
+    rateRow(88);
     const [, curveColour] = CUES[live.cue] || ["", C.fg];
-    const top = 80, cueY = H - FOOT - CUE_H - 6;
+    const top = 80 + RATE_H + (RATE_H ? 6 : 0), cueY = H - FOOT - CUE_H - 6;
     box(top, cueY - top - 8, C.tile);
     plotCurve(g, 10, top, W - 20, cueY - top - 8, live.stroke_curve || live.curve, live.steady_curve, curveColour, "both", false, 1, live.stall);
     if (live.balance !== null && live.balance !== undefined && live.length_delta_cm !== null && live.length_delta_cm !== undefined)
@@ -2522,7 +2575,8 @@ function drawPipView() {
     if (wk) text(`${wkLeft(wk)} left`, W - 16, 36, 30, C.fg, "right");
     else text(rowing ? `${fmtPace(m.pace_s_per_500m)} · ${Math.round(m.stroke_rate_spm)} spm` : "paused",
               W - 16, 36, 24, rowing ? C.fg : C.dim, "right", false);
-    const top = 70, cueY = H - FOOT - CUE_H - 6;
+    rateRow(80);
+    const top = 70 + RATE_H + (RATE_H ? 8 : 0), cueY = H - FOOT - CUE_H - 6;
     const rhythm = rowing ? coach.rhythm : null, RH = 24;  // the drive:recovery bar, as on the screen
     const curveH = cueY - top - 8 - (rhythm ? RH + 6 : 0);
     box(top, curveH, C.tile);

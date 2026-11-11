@@ -232,6 +232,13 @@ def preview(directory: str) -> None:
     legs_last = {**good_last, "index": 4, "finish_pct": 14, "curve": late, "length_delta_cm": 0.0,
                  "drive_late": 4.3, "legs_late": True, "peak_at_pct": 52, "steady_peak_at_pct": 41,
                  "balance": 1.4, "length_balance": 0.0}
+    def with_hr(status, workout, bpm):
+        """A status with heart rate and intervals.icu zones (tops in bpm), and the workout when given."""
+        coach = {**(status.get("coach") or {}), "hr_zones": {"tops": [121, 140, 158, 178, 185]}}
+        if workout:
+            coach["workout"] = workout
+        return {**status, "metrics": {**status["metrics"], "heart_rate_bpm": bpm}, "coach": coach}
+
     wk_base = {"name": "Adrestia", "steps": 11, "total_s": 1800, "state": "running", "kind": "time",
                "elapsed_s": 500, "intensity": "interval", "step_name": ""}
     wk_ready = {"name": "Adrestia", "steps": 11, "total_s": 1800, "state": "ready", "step": 0, "target_w": 120}
@@ -298,6 +305,21 @@ def preview(directory: str) -> None:
         "18e-workout-done": screens.rowing_screen({**coached(), "coach": {**coached()["coach"], "intensity": "Recovery",
                                                                        "workout": {"state": "done", "name": "Adrestia",
                                                                                    "steps": 11, "step": 11}}}, now, up),
+        # With heart rate (zone from intervals.icu) and a step with a stroke-rate target.
+        "18f-workout-rate-hr": screens.rowing_screen(with_hr(coached(), {**wk_easy, "step": 7, "steps": 10,
+                                                                          "target_w": 180, "low_w": 180, "high_w": 180,
+                                                                          "power_w": 182, "left": 131, "spm_low": 22,
+                                                                          "spm_high": 24, "spm": 21, "spm_on": "under"}, 146),
+                                                     now, up),
+        "18g-workout-effort-rate-hr": screens.interval_screen(with_hr(coached(live("good", full, 2, 4, 0.2, 1.5)), {
+            **wk_hard, "step": 8, "steps": 10, "kind": "distance", "left": 612, "target_w": 232, "low_w": 230,
+            "high_w": 235, "power_w": 233, "on_target": "on", "spm_low": 25, "spm_high": 28, "spm": 26, "spm_on": "on"},
+            163), now, up),
+        "18h-workout-recovery-hr": screens.rowing_screen(with_hr({**coached(), "coach": {**coached()["coach"],
+                                                                                    "intensity": "Recovery"}}, wk_rest, 121),
+                                                         now, up),
+        "07s-rowing-hr": screens.rowing_screen(with_hr(st("connected", "SmartRow-34", True, True, True, **rowing), None, 152),
+                                               now, up),
         "09-hold-to-switch-off": screens.hold_screen(0.6),
         "10-switching-off": screens.switching_off_screen(),
         "11-safe-to-unplug": screens.final_screen("poweroff"),
