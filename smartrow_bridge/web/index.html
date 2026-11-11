@@ -72,7 +72,12 @@
   .clockrow { display: flex; justify-content: space-between; align-items: baseline; gap: var(--pad); }
   .clockrow .value, .clockrow .watts { font-size: clamp(36px, 11vmin, 124px); }  /* time and power alike */
   .clockrow .hrmid { align-self: center; text-align: center; font-weight: 700; font-size: clamp(22px, 6vmin, 64px); line-height: 1; }
-  .clockrow .hrzone { font-size: 0.4em; letter-spacing: 0.05em; margin-top: 0.15em; }
+  .clockrow .hrmid { flex: 1; max-width: 40%; }
+  .hrzone { font-size: 0.6em; }
+  #rHr > div { width: 85%; }
+  .hrbar { position: relative; display: flex; gap: 2px; height: 12px; margin-top: 8px; border-radius: 3px; }
+  .hrmark { position: absolute; top: -5px; width: 6px; height: 18px; margin-left: -5px; background: #f0f0f0;
+    border: 2px solid; border-radius: 3px; }
   /* The summary's small force-against-steady blocks (as on the Pi's screen). */
   .trio { position: relative; }
   .trio .row { position: absolute; left: 0; right: 0; }
@@ -256,7 +261,7 @@
 
     <section id="interval">
       <div class="label" id="iTitle">INTERVAL</div>
-      <div class="clockrow"><div class="value" id="iClock">0:00</div><div class="hrmid" id="iHr"></div><div class="value watts" id="iWatts">0 W</div></div>
+      <div class="clockrow"><div class="value watts" id="iWatts">0 W</div><div class="hrmid" id="iHr"></div><div class="value" id="iClock">0:00</div></div>
       <div class="tile curve live"><canvas id="iCurve"></canvas><div class="clen" id="iLen"></div></div>
       <div class="cue none" id="iCue">…</div>
     </section>
@@ -606,7 +611,7 @@ function renderInterval(live) {
     ;
   // Heart rate and zone between the clock and the watts, in the zone's colour.
   const hz = hr ? hrNow(state) : null;
-  $("iHr").innerHTML = hz ? `♥ ${hz.bpm}` + (hz.zone ? `<div class="hrzone">ZONE ${hz.zone}</div>` : "") : "";
+  $("iHr").innerHTML = hz ? `♥ ${hz.bpm}` + (hz.zone ? ` <span class="hrzone">Z${hz.zone}</span>` + hrBarHtml(hz) : "") : "";
   $("iHr").style.color = hz ? hz.colour : "";
   $("iClock").textContent = fmtTime(live.elapsed_s);
   $("iWatts").textContent = `${live.power_w} W`;
@@ -663,7 +668,7 @@ function renderRowing(st) {
   $("rHrTile").closest(".grid4").classList.toggle("with-hr", !!hrz);
   if (hrz) {
     $("rHrLabel").textContent = hrz.zone ? `HEART RATE · ZONE ${hrz.zone}` : "HEART RATE";
-    $("rHr").textContent = String(hrz.bpm);
+    $("rHr").innerHTML = `<div>${hrz.bpm}${hrBarHtml(hrz)}</div>`;
     $("rHr").style.color = hrz.colour;
   }
   set("rPace", live(fmtPace(m.pace_s_per_500m ?? 0)));
@@ -740,10 +745,44 @@ function hrNow(st) {
   const bpm = st && st.metrics && st.metrics.heart_rate_bpm;
   if (!bpm) return null;
   const tops = (st.coach && st.coach.hr_zones && st.coach.hr_zones.tops) || [];
-  if (!tops.length) return { bpm, zone: null, colour: C.fg };
+  if (!tops.length) return { bpm, zone: null, colour: C.fg, bands: [] };
   let i = tops.findIndex((t) => bpm <= t);
   if (i < 0) i = tops.length - 1;
-  return { bpm, zone: i + 1, colour: HR_COLOURS[Math.min(i, HR_COLOURS.length - 1)] };
+  // The zones as bpm ranges for the bar: zone 1 starts as far below its top as zone 2 is wide.
+  const floor = tops.length > 1 ? tops[0] - (tops[1] - tops[0]) : tops[0] - 20;
+  const bands = tops.map((top, k) => ({ lo: k ? tops[k - 1] : floor, hi: top, colour: HR_COLOURS[Math.min(k, HR_COLOURS.length - 1)] }));
+  return { bpm, zone: i + 1, colour: HR_COLOURS[Math.min(i, HR_COLOURS.length - 1)], bands };
+}
+// Where bpm sits along the zone bar, 0-1 (clamped to the bar's ends).
+const hrAt = (h) => {
+  const lo = h.bands[0].lo, hi = h.bands[h.bands.length - 1].hi;
+  return Math.max(0, Math.min(1, (h.bpm - lo) / (hi - lo)));
+};
+// The zone bar on a canvas: the zones side by side, each as wide as its bpm range, in its colour (dimmed),
+// the current zone at full colour, and a marker at your heart rate carrying the number.
+function drawHrBar(g, x, y, w, h, hr, size) {
+  if (!hr.bands.length) return;
+  const lo = hr.bands[0].lo, span = hr.bands[hr.bands.length - 1].hi - lo;
+  hr.bands.forEach((b, k) => {
+    const x0 = x + (b.lo - lo) / span * w, x1 = x + (b.hi - lo) / span * w;
+    g.globalAlpha = k + 1 === hr.zone ? 1 : 0.35;
+    g.fillStyle = b.colour; g.fillRect(x0 + (k ? 1 : 0), y, x1 - x0 - (k ? 1 : 0), h);
+  });
+  g.globalAlpha = 1;
+  const mx = x + hrAt(hr) * w, label = String(hr.bpm);
+  g.font = `700 ${size}px system-ui, sans-serif`;
+  const bw = g.measureText(label).width + 12, bh = size + 6;
+  const bx = Math.max(x, Math.min(x + w - bw, mx - bw / 2)), by = y + h / 2 - bh / 2;
+  g.fillStyle = C.bg; g.strokeStyle = hr.colour; g.lineWidth = 2;
+  g.beginPath(); g.roundRect(bx, by, bw, bh, bh / 2); g.fill(); g.stroke();
+  g.fillStyle = hr.colour; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(label, bx + bw / 2, by + bh / 2 + 1);
+}
+// The same bar as HTML (web page tiles).
+function hrBarHtml(hr) {
+  if (!hr || !hr.bands.length) return "";
+  const lo = hr.bands[0].lo, span = hr.bands[hr.bands.length - 1].hi - lo;
+  const segs = hr.bands.map((b, k) => `<div style="flex:${(b.hi - b.lo) / span};background:${b.colour};opacity:${k + 1 === hr.zone ? 1 : 0.35}"></div>`).join("");
+  return `<div class="hrbar">${segs}<div class="hrmark" style="left:${(hrAt(hr) * 100).toFixed(1)}%;border-color:${hr.colour}"></div></div>`;
 }
 function wkNote(w) {  // a workout waiting for its first stroke, or just done
   if (!w) return null;
@@ -2526,11 +2565,15 @@ function drawPipView() {
       text(`${wk.spm ?? "–"} spm`, 16, y, narrow ? 24 : 26, wkRateColour(wk), "left");
       text(`aim ${rateAim}`, W - 16, y, narrow ? 17 : 20, C.dim, "right", false);
     }
-    if (hr) text(`♥ ${hr.bpm}` + (hr.zone ? ` · Z${hr.zone}` : ""), W / 2, y, narrow ? 23 : 26, hr.colour, "center");
+    if (hr && hr.bands.length) {  // the zone bar between them (the whole width without a rate target)
+      const x0 = rateAim ? (narrow ? 112 : 132) : 16, x1 = rateAim ? W - (narrow ? 108 : 128) : W - 16;
+      drawHrBar(g, x0, y - 5, x1 - x0, 10, hr, narrow ? 17 : 19);
+    } else if (hr) text(`♥ ${hr.bpm}`, W / 2, y, narrow ? 23 : 26, hr.colour, "center");
   };
   if (live) {
-    text(wk ? wkLeft(wk) : fmtTime(live.elapsed_s), 16, 42, 54, C.fg);  // effort (or step) time and power, the same size
-    text(wkWatts(`${live.power_w} W`), W - 16, 42, 54, wk ? wkColour(wk) : C.fg, "right");
+    // Power on the left, the effort's (or step's) time on the right, as in every view; the same size.
+    text(wkWatts(`${live.power_w} W`), 16, 42, 54, wk ? wkColour(wk) : C.fg, "left");
+    text(wk ? wkLeft(wk) : fmtTime(live.elapsed_s), W - 16, 42, 54, C.fg, "right");
     rateRow(88);
     const [, curveColour] = CUES[live.cue] || ["", C.fg];
     const top = 80 + RATE_H + (RATE_H ? 6 : 0), cueY = H - FOOT - CUE_H - 6;
