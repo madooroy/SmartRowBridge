@@ -8,7 +8,9 @@ edges are placed to about +-0.05 s (protocol.StrokeCurve.flag_on_t / flag_off_t)
     catch ........ the seat leaves the front stop (seat sensor)
     load ......... the flag comes on: the handle takes load (pulley)
     legs flat .... the seat reaches the back (seat sensor)
-    finish ....... the flag goes off (pulley; within 0.02 s of the finish on film, 4 Nov 2026)
+    finish ....... the flag goes off: the load ends as the paddle runs on (pulley). Filmed 10 Nov 2026:
+                   the hands then still move 0.1-0.2 s (1-4 % of their travel) to the body; the drive is
+                   timed to the load ending (Marc's choice), not to the hands
     knees rise ... the seat starts forward again (seat sensor)
     next catch
 

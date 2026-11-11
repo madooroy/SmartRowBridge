@@ -2208,8 +2208,9 @@ function glossary(s) {
     ...(s.rhythm ? [["Rhythm", C.fg, "Drive time against recovery time. 1:2 means the recovery takes twice as long " +
       "as the drive, the usual aim at low rates; at higher rates it shortens. " +
       (((s.rhythm.easy || {}).source === "seat")
-        ? "Timed with the seat sensor and the pulley: the drive from the seat leaving the front to the handle " +
-          "letting go, the recovery from there to the next catch. On the screen\u2019s bar: legs (dark blue until the " +
+        ? "Timed with the seat sensor and the pulley: the drive from the seat leaving the front to the load ending " +
+          "(the paddle running on; the hands reach the body about 0.1\u20130.2\u00a0s later), the recovery from there " +
+          "to the next catch. On the screen\u2019s bar: legs (dark blue until the " +
           "handle takes load), body and arms (light blue), parked after the finish (grey: hands away and body over " +
           "before the knees rise), the slide (dark grey)."
         : s.rower ? "" : "The drive is estimated from the pulley\u2019s drive signal, to about 0.1\u00a0s over many strokes.")]] : []),
