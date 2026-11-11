@@ -133,7 +133,24 @@ def _save_part(coach: IntervalCoach, totals: dict, save_dir: Path, part: int, en
     record = sessions.build_record(coach, started_at, started_at + elapsed, True, distance, elapsed, source="replay")
     if rower:  # someone else's rows: the pictures describe them neutrally ("the rower's", not "my")
         record["rower"] = rower
+    if any(r[7] for r in coach.stroke_log):  # drive times in the export: a SmartRow handle, not the pulley
+        record = handle_record(record)
     return sessions.save(save_dir, record, sessions.stroke_rows(coach))
+
+
+HANDLE_NOTE = ("From a SmartRow handle: its force curves are recorded differently from the pulley's, which the "
+               "coach's shape checks (finish, stall after the peak, where along the stroke) were built and tested "
+               "on, so those aren't judged here. Power, rate, rhythm (the handle's own drive time) and heart rate are.")
+
+
+def handle_record(record: dict) -> dict:
+    """A session from a SmartRow handle export: marked as such, with the pulley-only shape findings
+    (curves cut off, stall after the peak, finish) left out, and a line saying why. The cards
+    (web/index.html) leave the same things out for device "handle"."""
+    shape = ("cut off", "stall", "finish faded", "stronger finish", "finish held", "late push", "earlier push")
+    record = dict(record, device="handle")
+    record["findings"] = [f for f in record.get("findings", []) if not any(w in f.lower() for w in shape)] + [HANDLE_NOTE]
+    return record
 
 
 def describe(path: Path, result: dict) -> str:

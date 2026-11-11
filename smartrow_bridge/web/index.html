@@ -1718,7 +1718,14 @@ function effortCardTop(s, rows) {
 }
 
 // Under the stall %: how it moved through the effort (when it rose), and your usual range.
+// A SmartRow handle's export (tools/coach_replay.py handle_record): its curves aren't spaced like the
+// pulley's, so the cards leave out what assumes the pulley: centimetres along the stroke, the sensor's
+// end, the finish and the stall after the peak.
+const isHandle = (s) => s.device === "handle";
+const curveAxis = (s) => isHandle(s) ? { xFmt: (v) => v === 0 ? "catch" : v === 140 ? "end of curve" : "" }
+                                     : { xFmt: (v) => v === 140 ? "140 cm" : `${v}` };
 function stallNote(s, i) {
+  if (isHandle(s)) return "not judged on a handle";
   if (i.stall_pct === undefined) return "";
   const t = i.stall_thirds, parts = [];
   if (t && Math.max(t[1], t[2]) - t[0] >= 8) parts.push(`${t[0]} \u2192 ${Math.max(t[1], t[2])}% over it`);
@@ -1743,7 +1750,7 @@ function effortCard(s, i, rows, sharedTop = null) {
                                     ...(strokes.length ? [] : i.curve || []));
   const yStep = niceStep(top, 7), yMax = Math.ceil(top / yStep) * yStep;  // gridlines every 100 N or so
   const ax = cardAxes(g, text, box, { title: "FORCE (N) ALONG THE DRIVE", xMax: 140, yMax, yStep, xStep: 20,
-                                      xFmt: (v) => v === 140 ? "140 cm" : `${v}` });
+                                      ...curveAxis(s) });
   const path = (curve) => {  // from the catch (0 force) out along the stroke
     g.beginPath(); g.moveTo(ax.X(0), ax.Y(0));
     driveOnly(curve).forEach((v, k) => g.lineTo(ax.X((k + 1) * CM_PER_SAMPLE), ax.Y(v)));
@@ -1755,7 +1762,8 @@ function effortCard(s, i, rows, sharedTop = null) {
   const marks = [];  // [from cm, to cm, label]
   const easyEnd = i.steady_curve && i.steady_curve.length ? driveEnd(i.steady_curve) : driveEnd(i.curve || []);
   // The stall, flagged or small: shaded where it happens, each stalled stroke's flat spot in amber.
-  const stalls = i.transition || i.small_stall || i.habitual_stall ? strokes.map((r) => [r, stallSpan(r.force_n)]).filter(([, sp]) => sp) : [];
+  const stalls = !isHandle(s) && (i.transition || i.small_stall || i.habitual_stall)
+    ? strokes.map((r) => [r, stallSpan(r.force_n)]).filter(([, sp]) => sp) : [];
   if (stalls.length) {
     const med = (xs) => xs.slice().sort((x, y) => x - y)[Math.floor(xs.length / 2)];
     marks.push([sampleCm(med(stalls.map(([, sp]) => sp[0]))) - 1, sampleCm(med(stalls.map(([, sp]) => sp[1]))) + 1,
@@ -1793,7 +1801,7 @@ function effortCard(s, i, rows, sharedTop = null) {
   }
   const full = strokes.filter((r) => r.length_cm >= shortAt);
   if (full.length >= 3) smoothLine(g, ax, meanCurve(full.map((r) => r.force_n)));  // the average, on top
-  if (i.rating === "unknown" && !i.no_reference) {  // the sensor's last sample: the drive went on past it
+  if (i.rating === "unknown" && !i.no_reference && !isHandle(s)) {  // the sensor's last sample: the drive went on past it
     const x = ax.X(sampleCm(23));
     g.strokeStyle = C.amber; g.lineWidth = 3; g.setLineDash([10, 8]);
     g.beginPath(); g.moveTo(x, ax.y0 + 70); g.lineTo(x, ax.Y(0)); g.stroke(); g.setLineDash([]);
@@ -1825,7 +1833,8 @@ function effortCard(s, i, rows, sharedTop = null) {
   }
   // The numbers the coach judged it by.
   const tiles = [
-    i.rating === "unknown"
+    isHandle(s) ? ["FINISH", "\u2013", "not judged on a handle", C.dim]
+    : i.rating === "unknown"
       ? ["FINISH", "\u2013", i.no_reference ? "no Easy rowing before it" : `not read: ${i.cut_off_pct}% of curves cut off`, C.dim]
       : ["FINISH", signed(i.finish_pct, "%"), `vs ${s.rower ? "the" : "your"} usual ${i.intensity || "effort"}`, ratingColour(i)],
     lengthKnown(i)
@@ -1836,8 +1845,8 @@ function effortCard(s, i, rows, sharedTop = null) {
       ? ["CONSISTENCY", "\u2013", "no Easy rowing before it", C.dim]
       : ["CONSISTENCY", i.variation_ratio !== undefined ? `${i.variation_ratio.toFixed(1)}\u00d7` : "\u2013",
          i.variation_ratio !== undefined ? "variation stroke to stroke, vs Easy" : "", i.uneven ? C.amber : C.fg],
-    ["STALL AFTER THE PEAK", i.stall_pct !== undefined ? `${i.stall_pct}%` : "\u2013", stallNote(s, i),
-     i.transition ? C.amber : C.fg],
+    ["STALL AFTER THE PEAK", !isHandle(s) && i.stall_pct !== undefined ? `${i.stall_pct}%` : "\u2013", stallNote(s, i),
+     isHandle(s) ? C.dim : i.transition ? C.amber : C.fg],
   ];
   const tw = (CARD_W - 2 * P - 24) / 2, th = 150;
   tiles.forEach(([l, v, sub, colour], k) => {
@@ -1847,14 +1856,16 @@ function effortCard(s, i, rows, sharedTop = null) {
     text(v, x + 24, y + 98, 52, colour, true);
     text(sub, x + 24, y + 134, 22, C.dim);
   });
-  const flags = [i.uneven ? "uneven strokes" : null, i.transition ? "stall after the peak" : null,
-                 i.legs_late ? "late push" : null, i.rating === "short" ? "finish faded" : null].filter(Boolean);
+  const hd = isHandle(s);
+  const flags = [i.uneven ? "uneven strokes" : null, !hd && i.transition ? "stall after the peak" : null,
+                 !hd && i.legs_late ? "late push" : null, !hd && i.rating === "short" ? "finish faded" : null].filter(Boolean);
   const verdict = flags.length ? `Coach: ${flags.join(" \u00b7 ")}`
     : i.rating === "unknown" ? "Coach: nothing flagged" : "Coach: kept its shape";
   text(verdict, P, 1258, 30, flags.length ? C.amber : C.green, true);
-  const asides = [i.small_stall ? "small stall after the peak" : null,  // under the flag, but not nothing: in grey
-                  i.habitual_stall ? "stall as in Easy rowing" : null,
-                  i.rating === "unknown" ? "finish not read" : null].filter(Boolean);
+  const asides = hd ? ["shape not judged on a handle"]
+    : [i.small_stall ? "small stall after the peak" : null,  // under the flag, but not nothing: in grey
+       i.habitual_stall ? "stall as in Easy rowing" : null,
+       i.rating === "unknown" ? "finish not read" : null].filter(Boolean);
   if (!flags.length && asides.length) {
     g.font = `700 30px system-ui, "DejaVu Sans", sans-serif`;
     text(` \u00b7 ${asides.join(" \u00b7 ")}`, P + g.measureText(verdict).width, 1258, 30, C.dim, true);
@@ -1891,7 +1902,7 @@ function easyCard(s, rows) {
   const top = Math.max(1, ...strokes.flatMap((r) => r.force_n), ...fresh);
   const yStep = niceStep(top, 7), yMax = Math.ceil(top / yStep) * yStep;
   const ax = cardAxes(g, text, box, { title: "FORCE (N) ALONG THE DRIVE", xMax: 140, yMax, yStep, xStep: 20,
-                                      xFmt: (v) => v === 140 ? "140 cm" : `${v}` });
+                                      ...curveAxis(s) });
   const path = (curve) => {
     g.beginPath(); g.moveTo(ax.X(0), ax.Y(0));
     driveOnly(curve).forEach((v, k) => g.lineTo(ax.X((k + 1) * CM_PER_SAMPLE), ax.Y(v)));
@@ -1928,7 +1939,7 @@ function easyCard(s, rows) {
     hasLen ? ["LENGTH", `${Math.round(med(lens))} cm`, fresh.length ? `fresh stroke ${Math.round(s.fresh_easy.length_cm)} cm` : "median", C.fg]
            : ["LENGTH", "\u2013", "not in this export", C.dim],
     hasFinish ? ["FINISH OVER THE ROW", d && d.finish_pct != null ? signed(d.finish_pct, "%") : "\u2013", "last minutes against the first", finishOk ? C.green : C.amber]
-              : ["FINISH OVER THE ROW", "\u2013", `not read: ${cutPct}% of curves cut off`, C.dim],
+              : ["FINISH OVER THE ROW", "\u2013", isHandle(s) ? "not judged on a handle" : `not read: ${cutPct}% of curves cut off`, C.dim],
     hasLen ? ["LENGTH OVER THE ROW", d && d.length_delta_cm != null ? signed(d.length_delta_cm, " cm") : "\u2013", "last minutes against the first", lengthOk ? C.green : C.amber]
            : ["LENGTH OVER THE ROW", "\u2013", "not in this export", C.dim],
   ];
@@ -1942,6 +1953,7 @@ function easyCard(s, rows) {
   });
   const held = finishOk && lengthOk, kind = (s.intervals || []).length ? "Easy" : "Steady";
   const verdict = s.drill ? ["Coach: drills, no force-curve analysis", C.dim]
+    : isHandle(s) ? ["Coach: from a SmartRow handle: curve shape not judged", C.dim]
     : !hasFinish && !hasLen ? ["Coach: finish and length not readable from this export", C.dim]
     : !d ? [`Coach: not enough ${kind.toLowerCase()} rowing to compare`, C.dim]
     : held ? [`Coach: ${kind} rowing held its shape`, C.green] : [`Coach: ${kind} rowing faded over the row`, C.amber];
@@ -2062,7 +2074,7 @@ function overCard(s) {
   const yStep = niceStep(top, 6), yMax = Math.ceil(top / yStep) * yStep;
   const ax = cardAxes(g, text, box, { title: `I${star.index}${star.intensity ? ` ${star.intensity.toUpperCase()}` : ""} · ` +
                                        "FORCE (N), BY THIRDS", xMax: 140, yMax, yStep, xStep: 20,
-                                      xFmt: (v) => v === 140 ? "140 cm" : `${v}` });
+                                      ...curveAxis(s) });
   T.forEach((t, k) => smoothLine(g, ax, t.curve, THIRD_COLOURS[k]));
   const names = ["first third", "middle", "last third"];
   T.forEach((t, k) => text(`——  ${names[k]} · ${Math.round(t.power_w)} W · peak ${t.peak_n} N`,
@@ -2121,7 +2133,7 @@ function ladderCard(s, lad, k, n) {
   const top = Math.max(1, ...st.flatMap((x) => x.curve)) * 1.3;  // room for the key
   const yStep = niceStep(top, 6), yMax = Math.ceil(top / yStep) * yStep;
   const ax = cardAxes(g, text, box, { title: "FORCE (N), EACH STEP\u2019S AVERAGE STROKE", xMax: 140, yMax, yStep, xStep: 20,
-                                      xFmt: (v) => v === 140 ? "140 cm" : `${v}` });
+                                      ...curveAxis(s) });
   st.forEach((x, j) => x.curve.length && smoothLine(g, ax, x.curve, colour(j)));
   // the key: one coloured label per step, in a row along the top
   g.font = `700 22px system-ui, "DejaVu Sans", sans-serif`;
@@ -2225,7 +2237,9 @@ function glossary(s) {
   ];
 }
 // Under the list: what the pulley can and can't tell, and what tells the rest.
-const glossaryNote = (s) => ((s.intervals || []).some((i) => i.rating === "unknown" && !i.no_reference)
+const glossaryNote = (s) => (isHandle(s) ? "These curves come from a SmartRow handle, recorded differently from the " +
+  "pulley's: the coach's shape checks (finish, stall after the peak) were built on the pulley, so they aren't judged here. " :
+  (s.intervals || []).some((i) => i.rating === "unknown" && !i.no_reference)
   ? "Here the sensor stops at about 140 cm of handle travel, before the end of this drive, so the finish isn't read. " : "") +
   `All of this comes from the ${s.rower ? "SmartRow sensor" : "pulley"} alone: it measures how hard and how far the handle is ` +
   "pulled, not which muscles pull it. An early pull with the arms, say, shows only as a curve of a different shape. " +
