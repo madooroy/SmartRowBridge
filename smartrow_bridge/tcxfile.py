@@ -7,7 +7,9 @@ starts "Rowed using SmartRow". Unlike SmartRow's, it has a point per stroke, a l
 effort (Active) and one for the rowing between them (Resting) (activity.py). Standard library only.
 
 Per point: time, distance from the session's start, heart rate (when the bridge had a
-strap), power and stroke rate (as RunCadence, as SmartRow does).
+strap), power and stroke rate: in the standard Cadence field (per point and each lap's average,
+which Strava shows for a rowing activity; added 10 Nov 2026, when uploads showed no cadence) and
+as RunCadence too, as SmartRow does.
 """
 
 from __future__ import annotations
@@ -52,14 +54,19 @@ def build(record: dict, strokes: list[dict]) -> bytes:
         if hrs:
             out += [f"    <AverageHeartRateBpm><Value>{round(sum(hrs) / len(hrs))}</Value></AverageHeartRateBpm>",
                     f"    <MaximumHeartRateBpm><Value>{max(hrs)}</Value></MaximumHeartRateBpm>"]
-        out += [f'    <Intensity>{"Active" if lap["interval"] else "Resting"}</Intensity>',
-                "    <TriggerMethod>Manual</TriggerMethod>",
+        out.append(f'    <Intensity>{"Active" if lap["interval"] else "Resting"}</Intensity>')
+        rates = [s["spm"] for s in inside if s.get("spm")]
+        if rates:  # the lap's average stroke rate, in the standard Cadence field (schema order: after Intensity)
+            out.append(f"    <Cadence>{min(254, round(sum(rates) / len(rates)))}</Cadence>")
+        out += ["    <TriggerMethod>Manual</TriggerMethod>",
                 "    <Track>"]
         for s in inside:
             point = [f"      <Time>{_time(t0 + s['t'])}</Time>",
                      f"      <DistanceMeters>{dist(s)}</DistanceMeters>"]
             if s.get("heart_rate"):
                 point.append(f"      <HeartRateBpm><Value>{int(s['heart_rate'])}</Value></HeartRateBpm>")
+            if s.get("spm"):  # stroke rate in the standard Cadence field too: Strava reads it for a rowing
+                point.append(f"      <Cadence>{min(254, round(s['spm']))}</Cadence>")  # activity, not RunCadence
             point.append(f'      <Extensions><ns3:TPX><ns3:Watts>{round(s["power_w"])}</ns3:Watts>'
                          f'<ns3:RunCadence>{round(s["spm"])}</ns3:RunCadence></ns3:TPX></Extensions>')
             out += ["     <Trackpoint>", *point, "     </Trackpoint>"]

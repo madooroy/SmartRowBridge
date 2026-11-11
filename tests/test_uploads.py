@@ -599,11 +599,17 @@ class FitFileTest(unittest.TestCase):
         points = root.findall(".//t:Trackpoint", ns)
         self.assertEqual(len(points), len(strokes))
         self.assertEqual(points[100].find(".//x:Watts", ns).text, str(round(strokes[100]["power_w"])))
+        # stroke rate in the standard Cadence field (Strava shows it), after the heart rate, before Extensions
+        self.assertEqual(points[100].find("t:Cadence", ns).text, str(round(strokes[100]["spm"])))
+        tags = [c.tag.split("}")[1] for c in points[100]]
+        self.assertLess(tags.index("Cadence"), tags.index("Extensions"))
         laps = root.findall(".//t:Lap", ns)
         self.assertEqual(len(laps), 2 * len(record["intervals"]) + 1)
         total = sum(int(lap.find("t:DistanceMeters", ns).text) for lap in laps)
         self.assertEqual(total, int(points[-1].find("t:DistanceMeters", ns).text))
         self.assertEqual(laps[0].get("StartTime"), "2027-01-15T08:00:00Z")
+        lap_tags = [c.tag.split("}")[1] for c in laps[0]]
+        self.assertEqual(lap_tags.index("Cadence"), lap_tags.index("Intensity") + 1)  # TCX schema order
 
     def test_no_strokes(self):
         with self.assertRaises(ValueError):
