@@ -733,6 +733,13 @@ stroke`, and the screen shows `READY: Adrestia`. The workout starts with your fi
 - **Steps** last a time or a distance; a step's time runs whether or not you are rowing. FIT repeats are
   unrolled. **Targets** are watts as written in the file; a target saved as a % of FTP becomes watts with your
   FTP.
+- **Stroke rate:** a step can also carry a stroke-rate range (a FIT cadence target, as the second target
+  beside the power or on its own). Your rate (average of the last 3 strokes, whole strokes/min) then shows
+  green inside the range and amber outside it, with the aim beside it; after the row each step gets its
+  average rate against the range and the share of its strokes inside it (the Workout card's SPM column).
+- **Heart rate** (with a strap): the number and a bar of your intervals.icu heart-rate zones, each as wide
+  as its range, the current zone lit and a marker where you are; in the top line of the screen, under the
+  big numbers in the floating window, a tile on the web page. Watts are always on the left, time on the right.
 - **After the row:** each step's average power against its target (its first 8 s left out) and the share of
   its strokes within 5%, in the session's findings and on a **Workout card**; the session card draws the plan
   as a dashed line over your power.

@@ -90,11 +90,11 @@ class CoachTest(unittest.TestCase):
         r.row(21, 152, FULL)
         r.row(5, 110)  # the effort's end is confirmed: summary up
         self.assertTrue(r.state()["show_summary"])
-        r.row(4, 110)
-        self.assertTrue(r.state()["show_summary"])  # 4 strokes after it appeared
+        r.row(2, 110)
+        self.assertTrue(r.state()["show_summary"])  # 2 strokes after it appeared
         r.row(1, 110)
         st = r.state()
-        self.assertFalse(st["show_summary"])  # gone after 5
+        self.assertFalse(st["show_summary"])  # gone after 3
         self.assertEqual(st["last"]["index"], 1)  # still there for the X button
 
     def test_short_burst_is_not_an_interval(self):

@@ -70,7 +70,8 @@ class Bridge:
                 reference=(lambda: sessions.latest_fresh_easy(cfg.session_dir, max_age_days=coach.FRESH_MAX_AGE_DAYS))
                 if saved else None)
             self.coach.w_prime = w_prime_joules(cfg.coach_w_prime)
-            self.parser.on_stroke = self.coach.add
+            self.parser.on_stroke = self._stroke
+        self._status_now: asyncio.Event | None = None  # set after each stroke: write the status now
         self.hr_link = None  # heartrate.HeartRateLink, created once the pulley's adapter is known
         self.recorder: sessions.SessionRecorder | None = None
         if self.coach and cfg.session_dir.lower() != "off":
@@ -314,10 +315,19 @@ class Bridge:
             self.uploader.check_now(request.get("token"))
         self._finish_result = {"token": request.get("token"), "session": session}
 
+    def _stroke(self, stroke) -> None:
+        """A finished stroke: to the coach, then the status file straight away (not at the next second),
+        so the screen, the page and the floating window show its curve as soon as they can."""
+        self.coach.add(stroke)
+        if self._status_now is not None:
+            self._status_now.set()
+
     async def _status_loop(self) -> None:
-        """Keep the status file (read by the optional screen) up to date."""
+        """Keep the status file (read by the optional screen) up to date: once a second, and at once
+        after each stroke."""
         path = self.cfg.status_file
         failed = False
+        self._status_now = asyncio.Event()
         while True:
             try:
                 self._handle_request()
@@ -352,7 +362,11 @@ class Bridge:
                     self.uploader.tick()
                 except Exception:  # noqa: BLE001 - nor the uploads
                     log.exception("Uploads failed")
-            await asyncio.sleep(STATUS_INTERVAL_S)
+            try:
+                await asyncio.wait_for(self._status_now.wait(), STATUS_INTERVAL_S)
+            except asyncio.TimeoutError:
+                pass
+            self._status_now.clear()
 
     async def _ftp_loop(self, read_ftp: bool = True) -> None:
         """Read the rowing sport settings from intervals.icu (when set up) once, at start: the FTP

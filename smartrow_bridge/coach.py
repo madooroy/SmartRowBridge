@@ -186,8 +186,8 @@ def bands_text(ftp: float | None, easy_w: float | None) -> str:
                      else f"{label} {lo}\u2013{hi} W")
     return ", ".join(parts)
 SHORTER_CM = -2.0  # an interval's strokes this much shorter than steady are called out
-SUMMARY_SHOW_STROKES = 5  # the summary is shown for this many strokes after an effort ends (Marc, 9 Nov)
-SUMMARY_SHOW_S = 45.0  # ... and never longer than this (e.g. stopped rowing); X brings it back
+SUMMARY_SHOW_STROKES = 3  # the summary is shown for this many strokes after an effort ends (Marc: 5 on 9 Nov, 3 on 11 Nov)
+SUMMARY_SHOW_S = 15.0  # ... and never longer than this (e.g. stopped rowing); X brings it back
 
 
 @dataclass(frozen=True)
@@ -1341,7 +1341,8 @@ class IntervalCoach:
         rowing = self.last_time is not None and now - self.last_time <= GAP_S
         recent = statistics.fmean(r[2] for r in self.stroke_log[-3:]) if rowing and self.stroke_log else None
         since_end = self._strokes_after(self.workout.ended_at) if self.workout.done else 0
-        out = self.workout.state(now, distance, recent, since_end)
+        rate = statistics.fmean(r[3] for r in self.stroke_log[-3:]) if rowing and self.stroke_log else None
+        out = self.workout.state(now, distance, recent, since_end, rate)
         if out and out.get("state") == "running":
             # The effort level of this step's and the next step's targets (INTENSITIES): the colour
             # of the screens' countdown to the next step, and of its "GO".

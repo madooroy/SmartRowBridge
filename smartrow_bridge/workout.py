@@ -34,6 +34,7 @@ DONE_SHOW_STROKES = 5  # "workout done" stays on the screens this many strokes
 DUR_TIME, DUR_DISTANCE, DUR_OPEN = 0, 1, 5
 DUR_REPEAT_STEPS = 6  # repeat_until_steps_cmplt: duration_value = step to go back to, target_value = times
 POWER_TARGETS = {4, 7, 8, 9, 10}  # power, power_3s, power_10s, power_30s, power_lap
+CADENCE_TARGET = 3  # cadence: for rowing, the stroke rate (strokes/min), as the main or the second target
 INTENSITY = {0: "active", 1: "rest", 2: "warmup", 3: "cooldown", 4: "recovery", 5: "interval", 6: "other"}
 
 
@@ -47,6 +48,8 @@ class Step:
     high_pct: float | None = None
     intensity: str = "active"
     name: str = ""
+    spm_low: float | None = None  # stroke-rate range (a cadence target, main or second); None: no rate target
+    spm_high: float | None = None
 
     @property
     def target_w(self) -> float | None:
@@ -99,6 +102,11 @@ def _get(msg, name: str):
         return None
 
 
+def rate_verdict(spm: float, low: float, high: float) -> str:
+    """A stroke rate (whole strokes/min) against a rate range: "on", "under" or "over"."""
+    return "on" if low <= spm <= high else "under" if spm < low else "over"
+
+
 def _target(value) -> tuple[float | None, float | None]:
     """A FIT custom power target: (watts, None) above 1000 (1000 + W), (None, % of FTP) up to 1000."""
     if value is None or value <= 0:
@@ -144,8 +152,21 @@ def read_fit(path: str, fallback_name: str = "Workout") -> Workout:
             (low_w, low_pct), (high_w, high_pct) = _target(lo), _target(hi)
             if (low_w is None) != (high_w is None):  # one in watts, one in %: not something we can show
                 low_w = high_w = low_pct = high_pct = None
+        spm_low = spm_high = None
+        if _get(m, "target_type") == CADENCE_TARGET:
+            spm_low = _get(m, "custom_target_cadence_low") or _get(m, "custom_target_value_low")
+            spm_high = _get(m, "custom_target_cadence_high") or _get(m, "custom_target_value_high")
+        elif _get(m, "secondary_target_type") == CADENCE_TARGET:
+            spm_low = _get(m, "secondary_custom_target_cadence_low") or _get(m, "secondary_custom_target_value_low")
+            spm_high = (_get(m, "secondary_custom_target_cadence_high")
+                        or _get(m, "secondary_custom_target_value_high"))
+        if not spm_low or spm_low <= 0:
+            spm_low = spm_high = None
+        elif not spm_high or spm_high < spm_low:
+            spm_high = spm_low
         return Step(kind_name, float(length), low_w, high_w, low_pct, high_pct,
-                    INTENSITY.get(_get(m, "intensity"), "active"), _get(m, "workout_step_name") or "")
+                    INTENSITY.get(_get(m, "intensity"), "active"), _get(m, "workout_step_name") or "",
+                    float(spm_low) if spm_low else None, float(spm_high) if spm_high else None)
 
     # Unroll repeats: a repeat step sends us back to an earlier step a number of times.
     steps: list[Step] = []
@@ -241,7 +262,8 @@ class Player:
 
     # ------------------------------------------------------------ live
 
-    def state(self, now: float, distance: float, recent_power: float | None, strokes_since_end: int) -> dict | None:
+    def state(self, now: float, distance: float, recent_power: float | None, strokes_since_end: int,
+              recent_spm: float | None = None) -> dict | None:
         """For status.json (the screens): None once "done" has been shown long enough."""
         w = self.workout
         out: dict = {"name": w.name, "steps": len(w.steps), "total_s": w.total_s}
@@ -278,6 +300,10 @@ class Player:
              else "under" if recent_power < s.low_w else "over"),
             "next": {"target_w": _round(nxt.target_w), "kind": nxt.kind, "length": nxt.length} if nxt else None,
         })
+        if s.spm_low is not None:  # a stroke-rate target: your rate (whole strokes/min) against it
+            spm = round(recent_spm) if recent_spm else None
+            out.update({"spm_low": _round(s.spm_low), "spm_high": _round(s.spm_high), "spm": spm,
+                        "spm_on": None if spm is None else rate_verdict(spm, s.spm_low, s.spm_high)})
         return out
 
     # ------------------------------------------------------------ after
@@ -308,6 +334,12 @@ class Player:
                 lengths = [r[5] for r in judged if r[5]]
                 if lengths:
                     d["length_cm"] = round(statistics.fmean(lengths))
+                if s.spm_low is not None:  # the rate target: strokes within it, and the step's average against it
+                    rates = [round(r[3]) for r in judged if r[3]]
+                    d.update({"spm_low": _round(s.spm_low), "spm_high": _round(s.spm_high)})
+                    if rates:
+                        d["spm_on_pct"] = round(sum(s.spm_low <= x <= s.spm_high for x in rates) * 100 / len(rates))
+                        d["spm_verdict"] = rate_verdict(round(d["spm"]), s.spm_low, s.spm_high)
                 if s.target_w is not None:
                     lo, hi = s.low_w - tolerance(s.low_w), s.high_w + tolerance(s.high_w)
                     d["on_target_pct"] = round(sum(lo <= p <= hi for p in power) * 100 / len(power))
