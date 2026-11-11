@@ -89,6 +89,18 @@ class ReadTest(unittest.TestCase):
                          [("time", 300, 110)] + [("distance", 500, 200), ("time", 60, 90)] * 3 + [("time", 300, 100)])
         self.assertIsNone(w.total_s)  # not all by time
 
+    def test_stroke_rate_target_second_or_main(self):
+        # Power with a cadence (stroke rate) range as the second target, and a step with only a rate target.
+        write_fit(self.path(), "Rate", [
+            {**timed(300, 180), "secondary_target_type": 3, "secondary_custom_target_cadence_low": 22,
+             "secondary_custom_target_cadence_high": 24},
+            {"duration_type": workout.DUR_TIME, "duration_time": 60, "intensity": 0, "target_type": 3,
+             "custom_target_cadence_low": 26, "custom_target_cadence_high": 26},
+            timed(60, 120)])
+        w = workout.read_fit(self.path())
+        self.assertEqual([(s.low_w, s.spm_low, s.spm_high) for s in w.steps],
+                         [(180.0, 22.0, 24.0), (None, 26.0, 26.0), (120.0, None, None)])
+
     def test_not_a_workout(self):
         with open(self.path("x.fit"), "wb") as f:
             f.write(b"hello")
@@ -140,6 +152,24 @@ class PlayerTest(unittest.TestCase):
         lines = workout.findings(r)
         self.assertIn("all 3 steps; on target in 2 of 3", lines[0])
         self.assertIn("step 2 185 W for 200", lines[1])
+
+    def test_stroke_rate_live_and_in_the_result(self):
+        p = workout.Player(workout.Workout("Rate", [workout.Step("time", 60, 180, 180, spm_low=22, spm_high=24),
+                                                    workout.Step("time", 60, 120, 120)]))
+        p.start(1000.0, 0, ftp=None)
+        log, t = [], 1000.0
+        while t < 1060:
+            log.append(stroke(t, (t - 1000) * 4, 180, spm=21 if t < 1030 else 23))
+            p.advance(t, (t - 1000) * 4)
+            t += 3
+        st = p.state(1020.0, 80, 180, 0, 21.4)
+        self.assertEqual((st["spm_low"], st["spm_high"], st["spm"], st["spm_on"]), (22, 24, 21, "under"))
+        self.assertEqual(p.state(1040.0, 160, 180, 0, 23.0)["spm_on"], "on")
+        p.advance(1061.0, 244)
+        self.assertNotIn("spm_low", p.state(1062.0, 248, 120, 0, 20.0))  # no rate target on step 2
+        r = p.result(log, 1000.0)["steps"][0]
+        self.assertEqual((r["spm_low"], r["spm_high"], r["spm_verdict"]), (22, 24, "on"))  # average 22.2
+        self.assertEqual(r["spm_on_pct"], 59)  # the step's strokes after the settle: 10 of 17 at 23, inside
 
     def test_a_time_step_runs_on_while_you_stop(self):
         p = workout.Player(self.plan())

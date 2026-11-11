@@ -419,7 +419,9 @@ const C = { bg: "#000", fg: "#f0f0f0", dim: "#878787", faint: "#464646", tile: "
             green: "#46cd5f", amber: "#f5af2d", red: "#eb4b41", gap: "#d7d7d7",
             blue: "#5aa5f0", drill: "#b48cf0" };  // drill: the drill stretches of a class on its skyline  // blue: the force curve during steady rowing (no cue; steady is the reference)
 const GOOD_PCT = -5, OK_PCT = -12, METER_MIN = -30, METER_MAX = 15, FORCE_HALF = 12;
-const STALE_S = 5, RECALL_S = 20, POLL_MS = 1000, POLL_TIMEOUT_MS = 3000;
+// The bridge writes its status after each stroke (and once a second): four looks a second show a new
+// stroke within a quarter of a second, without redrawing when nothing changed.
+const STALE_S = 5, RECALL_S = 20, POLL_MS = 250, POLL_TIMEOUT_MS = 3000;
 // Two words: what to do, and the part of the stroke; never a muscle (see coach.py).
 if (!CanvasRenderingContext2D.prototype.roundRect) {  // Safari before 16.4, older WebViews
   CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
@@ -978,9 +980,12 @@ async function poll() {
   try {
     const r = await fetch("/status.json", { cache: "no-store", signal: ac.signal });
     if (!r.ok) throw new Error(r.status);
-    state = await r.json();
+    const next = await r.json();
+    const same = state && next.time === state.time;  // the bridge hasn't written since the last look
+    state = next;
     stateAt = performance.now() / 1000 - (state.age_s || 0);  // when the bridge wrote it, on this device's clock
     failures = 0;
+    if (same && (state.age_s ?? 0) < 2) return;  // nothing new to draw (a stopped bridge still shows as stale)
     render();
   } catch (e) {
     if (++failures >= 3) {
@@ -1727,7 +1732,14 @@ function workoutCard(s) {
     text(d.target_w ? `${d.target_w} W` : "free", cols[2][0], y, size, C.fg, false, "right");
     text(d.power_w ? `${d.power_w} W` : "\u2013", cols[3][0], y, size, colour, true, "right");
     text(d.on_target_pct !== undefined ? `${d.on_target_pct}%` : "\u2013", cols[4][0], y, size, C.fg, false, "right");
-    text(d.spm ? `${d.spm}` : "\u2013", cols[5][0], y, size, C.fg, false, "right");
+    // With a rate target: the step's average rate in green within it, amber outside, and the aim in grey.
+    const spmColour = !d.spm_verdict ? C.fg : d.spm_verdict === "on" ? C.green : C.amber;
+    const aim = d.spm_low !== undefined && d.spm_low !== null ? (d.spm_low === d.spm_high ? `${d.spm_low}` : `${d.spm_low}–${d.spm_high}`) : null;
+    if (aim && d.spm) {
+      text(`/${aim}`, cols[5][0], y, Math.round(size * 0.7), C.dim, false, "right");
+      g.font = `${Math.round(size * 0.7)}px system-ui, sans-serif`;
+      text(`${Math.round(d.spm)}`, cols[5][0] - g.measureText(`/${aim}`).width - 4, y, size, spmColour, true, "right");
+    } else text(d.spm ? `${d.spm}` : "\u2013", cols[5][0], y, size, spmColour, false, "right");
   }
   const tol = wk.tolerance || {};
   text(`On target: within ${tol.pct ?? 5}% (at least ${tol.min_w ?? 5} W) \u00b7 the first ${tol.settle_s ?? 8} s of each step left out`,
@@ -2650,7 +2662,7 @@ async function togglePip() {
       return;
     }
     pipOn = true; drawPip();
-    if (!pipVideo.srcObject) pipVideo.srcObject = pipCanvas.captureStream(2);
+    if (!pipVideo.srcObject) pipVideo.srcObject = pipCanvas.captureStream(10);  // a new stroke shows within 0.1 s
     await pipVideo.play();
     if (pipVideo.requestPictureInPicture) await pipVideo.requestPictureInPicture();
     else pipVideo.webkitSetPresentationMode("picture-in-picture");
