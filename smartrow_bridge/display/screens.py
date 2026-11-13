@@ -10,10 +10,14 @@ screen it switches to.
 
 from __future__ import annotations
 
+import math
+
 from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
+
+FORCE_HALF = 12  # samples in the first half of the drive (smartrow_bridge.coach.back_share)
 
 WIDTH, HEIGHT = 320, 240
 
@@ -24,7 +28,9 @@ FAINT = (70, 70, 70)
 TILE = (26, 26, 26)
 GREEN = (70, 205, 95)
 AMBER = (245, 175, 45)
+BLUE = (90, 165, 240)  # the force curve during steady rowing (no cue: steady is the reference)
 RED = (235, 75, 65)
+GAP = (215, 215, 215)  # force missing in the finish, against the steady shape
 
 STALE_AFTER_S = 5.0  # status file older than this: the bridge is not running
 BOOT_GRACE_S = 90.0  # before this much uptime, a missing bridge is still "starting"
@@ -81,10 +87,35 @@ def _icon_status(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, colour) ->
         draw.line((cx - r + 7, y, cx + r, y), fill=colour, width=2)
 
 
-_ICONS = {"power": _icon_power, "rowing": _icon_rowing, "status": _icon_status}
+def _icon_curve(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, colour) -> None:
+    """Force curve: a single hump."""
+    draw.arc((cx - r, cy - r + 2, cx + r, cy + r + 8), start=200, end=340, fill=colour, width=2)
+    draw.line((cx - r, cy + r, cx + r, cy + r), fill=colour, width=1)
 
 
-def _button(draw: ImageDraw.ImageDraw, corner: str, icon: str, label: str) -> None:
+def _icon_check(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, colour) -> None:
+    """Done: a tick."""
+    draw.line((cx - r, cy, cx - r // 3, cy + r - 1, cx + r, cy - r + 1), fill=colour, width=3, joint="curve")
+
+
+def _icon_close(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, colour) -> None:
+    """Cancel: a cross."""
+    d = r - 2
+    draw.line((cx - d, cy - d, cx + d, cy + d), fill=colour, width=2)
+    draw.line((cx - d, cy + d, cx + d, cy - d), fill=colour, width=2)
+
+
+_ICONS = {"power": _icon_power, "rowing": _icon_rowing, "status": _icon_status, "curve": _icon_curve,
+          "check": _icon_check, "close": _icon_close}
+
+
+def add_tab(image: Image.Image, corner: str, icon: str, label: str) -> Image.Image:
+    """Put a button tab on a finished screen (used for Y: Done, when there is a session to finish)."""
+    _button(ImageDraw.Draw(image), corner, icon, label)
+    return image
+
+
+def _button(draw: ImageDraw.ImageDraw, corner: str, icon: str, label: str, colour=None) -> None:
     """A small tab in the screen corner next to a button: icon + word."""
     f = font(13)
     tab_h, r = 22, 7
@@ -97,16 +128,19 @@ def _button(draw: ImageDraw.ImageDraw, corner: str, icon: str, label: str) -> No
                             x0 + width if left else WIDTH + 8, y0 + tab_h if top else HEIGHT + 8),
                            radius=8, fill=TILE)
     _ICONS[icon](draw, x0 + 8 + r, y0 + tab_h // 2, r, FG)
-    draw.text((x0 + 8 + 2 * r + 6, y0 + tab_h // 2), label, font=f, fill=FG, anchor="lm")
+    draw.text((x0 + 8 + 2 * r + 6, y0 + tab_h // 2), label, font=f, fill=colour or FG, anchor="lm")
 
 
-def _hints(draw: ImageDraw.ImageDraw, view: str) -> None:
-    """A: hold to switch off. B: go to the other screen."""
+def _hints(draw: ImageDraw.ImageDraw, view: str, x_label: str | None = None, drill: bool = False) -> None:
+    """A: hold to switch off. B: go to the other screen; held: drills on/off. X (optional): the last interval."""
     _button(draw, "A", "power", "Hold: off")
-    if view == "status":
-        _button(draw, "B", "rowing", "Rowing")
+    if view == "status":  # short: the web page's address sits beside it (the hold works here too)
+        _button(draw, "B", "rowing", "Drills on" if drill else "Rowing", AMBER if drill else FG)
     else:
-        _button(draw, "B", "status", "Status")
+        _button(draw, "B", "status", "Status \u00b7 " + ("DRILLS ON" if drill else "Hold: drills"),
+                AMBER if drill else FG)
+    if x_label:
+        _button(draw, "X", "curve", x_label)
 
 
 def _centered(draw: ImageDraw.ImageDraw, lines: list[tuple[str, int, bool, tuple]], centre_y: int = HEIGHT // 2):
@@ -136,14 +170,224 @@ def format_time(seconds: int) -> str:
     return f"{hours}:{rest // 60:02d}:{rest % 60:02d}" if hours else f"{rest // 60}:{rest % 60:02d}"
 
 
+# ---------------------------------------------------------------- planned workout
+
+TARGET_COLOURS = {"on": GREEN, "under": AMBER, "over": AMBER}
+
+
+def _workout(status: dict | None) -> dict | None:
+    """The planned workout being followed (coach state "workout"), when it is running."""
+    w = ((status or {}).get("coach") or {}).get("workout")
+    return w if w and w.get("state") == "running" else None
+
+
+def workout_left(w: dict) -> str:
+    """Time or metres left in the step."""
+    return format_time(w["left"]) if w.get("kind") == "time" else f"{w['left']} m"
+
+
+def workout_target(w: dict) -> str:
+    if w.get("target_w") is None:
+        return "free"
+    if w.get("low_w") is not None and w.get("high_w") is not None and w["low_w"] != w["high_w"]:
+        return f"{w['low_w']}\u2013{w['high_w']}"
+    return str(w["target_w"])
+
+
+def workout_rate(w: dict | None) -> str | None:
+    """The step's stroke-rate range (a FIT workout's second target), or None without one."""
+    if not w or w.get("spm_low") is None:
+        return None
+    return str(w["spm_low"]) if w["spm_low"] == w.get("spm_high") else f"{w['spm_low']}\u2013{w['spm_high']}"
+
+
+# Heart-rate zones, coloured as on the session cards (grey, blue, green, amber, red, then purple).
+HR_COLOURS = [DIM, BLUE, GREEN, AMBER, RED, (216, 96, 168), (216, 96, 168)]
+
+
+def hr_now(status: dict | None) -> tuple[str, tuple] | None:
+    """Heart rate and its zone ("\u2665 146 Z3") in the zone's colour, from your intervals.icu zones."""
+    bpm = ((status or {}).get("metrics") or {}).get("heart_rate_bpm")
+    if not bpm:
+        return None
+    tops = ((((status or {}).get("coach") or {}).get("hr_zones") or {}).get("tops")) or []
+    if not tops:
+        return f"\u2665 {bpm}", FG
+    zone = next((i for i, top in enumerate(tops) if bpm <= top), len(tops) - 1)
+    return f"\u2665 {bpm} Z{zone + 1}", HR_COLOURS[min(zone, len(HR_COLOURS) - 1)]
+
+
+def hr_bands(tops: list) -> list[tuple[float, float, tuple]]:
+    """The zones as (low, high, colour) in bpm; zone 1 starts as far below its top as zone 2 is wide."""
+    floor = tops[0] - (tops[1] - tops[0]) if len(tops) > 1 else tops[0] - 20
+    return [(tops[k - 1] if k else floor, top, HR_COLOURS[min(k, len(HR_COLOURS) - 1)]) for k, top in enumerate(tops)]
+
+
+def _hr_top(draw: ImageDraw.ImageDraw, status: dict | None, right: int = WIDTH - 8) -> bool:
+    """Heart rate in the top line, between the hint tab and `right`: the number, then the zone bar (each
+    zone as wide as its bpm range, the current one at full colour) with a marker where you are. True when drawn."""
+    bpm = ((status or {}).get("metrics") or {}).get("heart_rate_bpm")
+    hr = hr_now(status)
+    if not hr:
+        return False
+    tops = ((((status or {}).get("coach") or {}).get("hr_zones") or {}).get("tops")) or []
+    x = 94  # clear of the A tab
+    draw.text((x, 12), f"\u2665{bpm}", font=font(15, True), fill=hr[1], anchor="lm")
+    if not tops:
+        return True
+    x0 = x + int(draw.textlength(f"\u2665{bpm}", font=font(15, True))) + 6
+    bands, (lo, hi) = hr_bands(tops), (hr_bands(tops)[0][0], tops[-1])
+    span, zone = hi - lo, next((i for i, top in enumerate(tops) if bpm <= top), len(tops) - 1)
+    w = right - x0
+    for k, (b_lo, b_hi, colour) in enumerate(bands):
+        c = colour if k == zone else _shade(colour, 0.35)
+        draw.rectangle((x0 + (b_lo - lo) / span * w + (1 if k else 0), 8, x0 + (b_hi - lo) / span * w, 16), fill=c)
+    mx = x0 + max(0.0, min(1.0, (bpm - lo) / span)) * w
+    draw.rounded_rectangle((mx - 3, 3, mx + 3, 21), radius=2, fill=FG, outline=BG)
+    return True
+
+
+def workout_next(w: dict) -> str:
+    n = w.get("next")
+    if not n:
+        return "last step"
+    what = f"{n['target_w']} W" if n.get("target_w") is not None else "free"
+    length = format_time(int(n["length"])) if n["kind"] == "time" else f"{int(n['length'])} m"
+    return f"next {what} \u00b7 {length}"
+
+
+# The countdown to the next step (the web page and floating window draw the same): a heads-up
+# band from SOON_S seconds out, then a big 3, 2, 1 in the colour of the next step's effort level,
+# then "GO" with the new target for GO_S seconds. Times come from the status file (written once
+# a second) and are carried forward to now with its timestamp, so the digits change on time.
+SOON_S, COUNT_S, GO_S = 10.0, 3.0, 1.5
+ZONE_COLOURS = {"Recovery": (139, 148, 158), "Easy": (46, 160, 67), "Moderate": (227, 192, 42),
+                "Challenging": (240, 136, 62), "Max": (229, 83, 75)}  # as the Workout card's blocks
+# The HAT's LED (only dim red, green and blue to mix): what each effort level lights at "GO".
+ZONE_LEDS = {"Recovery": "blue", "Easy": "green", "Moderate": "yellow", "Challenging": "red", "Max": "magenta"}
+
+
+def _step_text(target_w, kind: str, length: float) -> str:
+    what = f"{target_w} W" if target_w is not None else "free"
+    return f"{what} \u00b7 " + (format_time(int(length)) if kind == "time" else f"{int(length)} m")
+
+
+def countdown(status: dict | None, now: float) -> dict | None:
+    """{"phase": "soon" | "count" | "go", "left": seconds to the change, "digit", "text", "zone"}, or None.
+
+    "soon" and "count" are about the next step ("text": its target and length); "go" is the step just
+    begun, or about to begin when the bridge hasn't written the change yet."""
+    w = _workout(status)
+    if not w:
+        return None
+    age = max(0.0, now - float((status or {}).get("time", now)))
+    nxt = w.get("next")
+    if w.get("step", 1) > 1 and w.get("step_elapsed_s") is not None and w["step_elapsed_s"] + age < GO_S:
+        return {"phase": "go", "left": 0.0, "digit": None, "zone": w.get("zone"),
+                "text": _step_text(w.get("target_w"), w.get("kind", "time"), w.get("length", 0))}
+    if not nxt or w.get("left_s") is None:
+        return None
+    left = w["left_s"] - age
+    text = _step_text(nxt.get("target_w"), nxt["kind"], nxt["length"])
+    if left <= 0:  # the bridge hasn't written the change yet: GO on a time step (exact), wait on a distance
+        return ({"phase": "go", "left": 0.0, "digit": None, "zone": nxt.get("zone"), "text": text}
+                if w.get("kind", "time") == "time" else None)
+    if left <= COUNT_S:
+        return {"phase": "count", "left": left, "digit": math.ceil(left), "zone": nxt.get("zone"), "text": text}
+    if left <= SOON_S:
+        return {"phase": "soon", "left": left, "digit": math.ceil(left), "zone": nxt.get("zone"), "text": text}
+    return None
+
+
+def countdown_led(cd: dict | None) -> str | None:
+    """The LED during the countdown: amber (red and green) for the first half of each of 3, 2, 1;
+    the next step's colour at GO. None: the LED as it would be anyway."""
+    if not cd:
+        return None
+    if cd["phase"] == "count":
+        return "yellow" if cd["left"] - math.floor(cd["left"]) > 0.5 or cd["left"] == math.floor(cd["left"]) else "off"
+    if cd["phase"] == "go":
+        return ZONE_LEDS.get(cd.get("zone"), "white")
+    return None
+
+
+def film_badge(image: Image.Image) -> Image.Image:
+    """Film mode: a small green FILM label in the top-right corner, so it isn't left on by mistake."""
+    out = image.copy()
+    draw = ImageDraw.Draw(out)
+    w = image.size[0]
+    draw.rounded_rectangle((w - 58, 4, w - 4, 22), radius=4, fill=GREEN)
+    draw.text((w - 31, 13), "FILM", font=font(12, True), fill=BG, anchor="mm")
+    return out
+
+
+def countdown_overlay(image: Image.Image, cd: dict | None) -> Image.Image:
+    """The countdown drawn over whatever screen is up (rowing, interval or summary)."""
+    if not cd:
+        return image
+    colour = ZONE_COLOURS.get(cd.get("zone"), FG)
+    w, h = image.size
+    if cd["phase"] == "soon":
+        out = image.copy()
+        draw = ImageDraw.Draw(out)
+        band = 34
+        draw.rectangle((0, h - band, w, h), fill=colour)
+        text = f"NEXT {cd['text']} \u00b7 IN {cd['digit']} s"
+        draw.text((w // 2, h - band // 2), text, font=_fit(draw, text, 22, w - 12, True), fill=BG, anchor="mm")
+        return out
+    if cd["phase"] == "go":
+        out = Image.blend(image.convert("RGB"), Image.new("RGB", (w, h), colour), 0.93)
+        draw = ImageDraw.Draw(out)
+        draw.text((w // 2, int(h * 0.38)), "GO", font=font(int(h * 0.42), True), fill=BG, anchor="mm")
+        draw.text((w // 2, int(h * 0.80)), cd["text"], font=_fit(draw, cd["text"], int(h * 0.16), w - 16, True),
+                  fill=BG, anchor="mm")
+        return out
+    # 3, 2, 1: the screen dimmed, the digit over it, the next step along the bottom
+    out = Image.blend(image.convert("RGB"), Image.new("RGB", (w, h), BG), 0.6)
+    band = int(h * 0.17)
+    ImageDraw.Draw(out).rectangle((0, h - band, w, h), fill=BG)
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ld = ImageDraw.Draw(layer)
+    size = int((h - band) * 0.95)
+    ld.text((w // 2, (h - band) // 2 + 4), str(cd["digit"]), font=font(size, True), fill=(*colour, 220),
+            anchor="mm", stroke_width=max(3, size // 30), stroke_fill=(0, 0, 0, 235))
+    out = Image.alpha_composite(out.convert("RGBA"), layer).convert("RGB")
+    draw = ImageDraw.Draw(out)
+    text = f"NEXT {cd['text']}"
+    draw.text((w // 2, h - band // 2), text, font=_fit(draw, text, int(band * 0.6), w - 12, True), fill=colour,
+              anchor="mm")
+    return out
+
+
+def workout_note(status: dict | None) -> tuple[str, tuple] | None:
+    """A line for a workout that is ready (waiting for the first stroke) or just done."""
+    w = ((status or {}).get("coach") or {}).get("workout")
+    if not w:
+        return None
+    if w.get("state") == "ready":
+        length = f" \u00b7 {round(w['total_s'] / 60)} min" if w.get("total_s") else ""
+        return f"READY: {w['name']} \u00b7 {w['steps']} steps{length}", GREEN
+    if w.get("state") == "done":
+        return f"WORKOUT DONE: {w['name']}", GREEN
+    return None
+
+
 # ---------------------------------------------------------------- screens
 
 def status_screen(status: dict | None, now: float, uptime: float, address: str = "") -> Image.Image:
     image, draw = _canvas()
     state = bridge_state(status, now, uptime)
-    _hints(draw, "status")
+    _hints(draw, "status", drill=bool((status or {}).get("drill")))
     if address:
-        draw.text((WIDTH - 4, HEIGHT - 4), address, font=_fit(draw, address, 13, 170), fill=DIM, anchor="rd")
+        # One line (host and IP) or two (the web page's address by name and by IP), bottom right,
+        # clear of the B tab: the first line brightest, so it reads at a glance.
+        lines = address.split("\n")
+        widest = max(lines, key=len)
+        f = _fit(draw, widest, 15 if len(lines) > 1 else 13, WIDTH - 104)
+        for i, line in enumerate(reversed(lines)):
+            first = i == len(lines) - 1
+            draw.text((WIDTH - 4, HEIGHT - 4 - i * (f.size + 3)), line, font=f,
+                      fill=FG if first and len(lines) > 1 else DIM, anchor="rd")
 
     if state != "ok":
         if state == "starting":
@@ -155,9 +399,11 @@ def status_screen(status: dict | None, now: float, uptime: float, address: str =
         return image
 
     stage = status.get("stage")
-    connected = stage in ("connected", "reconnecting")  # virtual devices are up
+    connected = stage in ("connected", "reconnecting", "resting")  # virtual devices are up
     if stage == "connected":
         pulley = (status.get("pulley") or "Pulley"), "Connected", GREEN
+    elif stage == "resting":  # let go of after no rowing, so it can switch itself off
+        pulley = (status.get("pulley") or "Pulley"), "Resting - pull the handle", DIM
     elif stage == "reconnecting":
         pulley = (status.get("pulley") or "Pulley"), "Lost - pull the handle", AMBER
     elif stage == "searching":
@@ -175,59 +421,536 @@ def status_screen(status: dict | None, now: float, uptime: float, address: str =
         app_row("SmartRow app", bool(status.get("smartrow_app"))),
         app_row(f"{status.get('fitness_name') or 'PiRower'} (fitness app)", bool(status.get("fitness_app"))),
     ]
-    y = 30
+    hr = status.get("heart_rate")  # only when the bridge reads a strap (SRB_HEART_RATE)
+    if hr is not None:
+        bpm = (status.get("metrics") or {}).get("heart_rate_bpm")
+        label = hr.get("name") or "Heart rate strap"  # its own name once found, like the pulley's
+        if not connected:
+            rows.append((label, "After the pulley connects", FAINT))
+        elif hr.get("connected"):
+            rows.append((label, f"Connected \u00b7 \u2665 {bpm} bpm" if bpm else "Connected \u00b7 \u2665", GREEN))
+        else:
+            rows.append((label, "Looking - put it on", AMBER))
+    two_line_address = "\n" in address
+    if len(rows) > 3:  # four rows: a little smaller, so they fit above the web page's address
+        y, step, big, small, gap, dot = (22, 43, 18, 15, 21, 16) if two_line_address else (24, 48, 19, 16, 23, 16)
+    else:
+        y, step, big, small, gap, dot = (26, 55, 21, 18, 28, 18) if two_line_address else (30, 60, 21, 18, 28, 18)
     for label, text, colour in rows:
-        draw.ellipse((14, y + 8, 32, y + 26), fill=colour if colour != FAINT else None,
+        top = y + (big - dot) // 2 + 2
+        draw.ellipse((14, top, 14 + dot, top + dot), fill=colour if colour != FAINT else None,
                      outline=colour, width=2)
-        draw.text((44, y), label, font=_fit(draw, label, 21, WIDTH - 54, bold=True), fill=FG)
-        draw.text((44, y + 28), text, font=_fit(draw, text, 18, WIDTH - 54), fill=colour)
-        y += 60
+        draw.text((44, y), label, font=_fit(draw, label, big, WIDTH - 54, bold=True), fill=FG)
+        draw.text((44, y + gap), text, font=_fit(draw, text, small, WIDTH - 54), fill=colour)
+        y += step
     return image
 
 
 def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image:
     image, draw = _canvas()
-    _hints(draw, "rowing")
+    coach = (status or {}).get("coach") or {}
+    _hints(draw, "rowing", "Last" if coach.get("last") else None, bool((status or {}).get("drill")))
     if bridge_state(status, now, uptime) != "ok":
         _centered(draw, [("No data", 28, True, DIM), ("B shows the status", 16, False, DIM)])
         return image
 
     m = status.get("metrics") or {}
     rowing = bool(status.get("rowing"))
-    live = (lambda v: v) if rowing else (lambda v: "–")
+    live = (lambda v: v) if rowing else (lambda v: "\u2013")
+    footer = f"{format_time(m.get('elapsed_s', 0))}  \u00b7  {m.get('distance_m', 0)} m"
+    if m.get("heart_rate_bpm"):
+        footer += f"  \u00b7  \u2665 {m['heart_rate_bpm']}"
+    if not rowing:
+        footer += "  \u00b7  paused"
+
+    if coach.get("stroke_curve") and coach.get("intensity") != "Recovery":
+        # Easy rowing with the coach: three numbers, each stroke's force curve over your early Easy
+        # strokes, and the cue (none while the coach is still learning them).
+        wk = _workout(status)
+        tiles = [("WATTS", live(str(m.get("power_w", 0))), None),
+                 ("PACE", live(format_pace(int(m.get("pace_s_per_500m", 0)))), None),
+                 ("SPM", live(str(round(m.get("stroke_rate_spm", 0)))), None)]
+        if wk:  # following a planned workout: the target, your watts against it, and the step's time left
+            tiles = [("WATTS", live(str(wk["power_w"] if wk.get("power_w") is not None else m.get("power_w", 0))),
+                      TARGET_COLOURS.get(wk.get("on_target"))),
+                     (f"TARGET {wk['step']}/{wk['steps']}", workout_target(wk), None),
+                     ("LEFT", workout_left(wk), None)]
+            if workout_rate(wk):  # with a rate target: watts and rate, each with its aim in the label
+                tiles = [(f"W \u00b7 aim {workout_target(wk)}",
+                          live(str(wk["power_w"] if wk.get("power_w") is not None else m.get("power_w", 0))),
+                          TARGET_COLOURS.get(wk.get("on_target"))),
+                         (f"SPM \u00b7 aim {workout_rate(wk)}", live(str(wk.get("spm") or round(m.get("stroke_rate_spm", 0)))),
+                          TARGET_COLOURS.get(wk.get("spm_on"))),
+                         (f"LEFT {wk['step']}/{wk['steps']}", workout_left(wk), None)]
+        top, tile_w, tile_h, gap = 26, 101, 50, 4
+        for i, (label, value, colour) in enumerate(tiles):
+            x0 = 4 + i * (tile_w + gap)
+            draw.rounded_rectangle((x0, top, x0 + tile_w, top + tile_h), radius=8, fill=TILE)
+            draw.text((x0 + 8, top + 4), label, font=_fit(draw, label, 12, tile_w - 12), fill=DIM)
+            draw.text((x0 + tile_w // 2, top + 32), value, font=_fit(draw, value, 28, tile_w - 12, bold=True),
+                      fill=colour or (FG if value != "\u2013" else FAINT), anchor="mm")
+        steady = coach.get("steady_curve") or []
+        cue = coach.get("cue")
+        drift = coach.get("drift")  # a slow change over the Easy rowing: a note in place of LOOKS GOOD
+        if cue == "good" and drift:
+            cue = None
+        text, colour = CUES.get(cue, ("", BLUE)) if cue else ("", BLUE)
+        rhythm = coach.get("rhythm") if rowing else None
+        _plot_curves(draw, (4, 80, WIDTH - 4, 163 if rhythm else 179), coach["stroke_curve"], steady, colour, "both")
+        if rhythm:
+            _rhythm_bar(draw, (4, 166, WIDTH - 4, 179), rhythm)
+        head = f"EASY  \u00b7  {format_time(m.get('elapsed_s', 0))}"
+        if wk:
+            head = f"EASY  \u00b7  {workout_next(wk)}"
+        if m.get("heart_rate_bpm") and not _hr_top(draw, status):
+            head += f"  \u00b7  \u2665 {m['heart_rate_bpm']}"
+        draw.text((12, 85), head, font=font(12, True), fill=DIM)
+        banner = (4, 183, WIDTH - 4, 216)
+        if cue:
+            draw.rounded_rectangle(banner, radius=8, fill=colour)
+            draw.text((WIDTH // 2, 199), text, font=_fit(draw, text, 26, WIDTH - 24, True), fill=BG, anchor="mm")
+        else:
+            draw.rounded_rectangle(banner, radius=8, fill=TILE)
+            waiting = coach.get("waiting") or ("warming up" if coach.get("warming_up") else "learning your Easy stroke")
+            if drift and coach.get("cue"):  # judged (not learning), and nothing more pressing
+                draw.text((WIDTH // 2, 199), drift, font=_fit(draw, drift, 15, WIDTH - 24, False), fill=AMBER, anchor="mm")
+            else:
+                draw.text((WIDTH // 2, 199), waiting, font=font(16), fill=DIM, anchor="mm")
+        return image
+
     tiles = [
-        ("WATTS", live(str(m.get("power_w", 0)))),
-        ("STROKES / MIN", live(str(round(m.get("stroke_rate_spm", 0))))),
-        ("PACE / 500 M", live(format_pace(int(m.get("pace_s_per_500m", 0))))),
-        ("METRES", str(m.get("distance_m", 0))),
+        ("WATTS", live(str(m.get("power_w", 0))), None),
+        ("STROKES / MIN", live(str(round(m.get("stroke_rate_spm", 0)))), None),
+        ("PACE / 500 M", live(format_pace(int(m.get("pace_s_per_500m", 0)))), None),
+        ("METRES", str(m.get("distance_m", 0)), None),
     ]
+    wk = _workout(status)
+    if wk:  # following a planned workout (in a Recovery step, or before the coach has your Easy stroke)
+        tiles = [
+            ("WATTS", live(str(wk["power_w"] if wk.get("power_w") is not None else m.get("power_w", 0))),
+             TARGET_COLOURS.get(wk.get("on_target"))),
+            ("LEFT IN STEP", workout_left(wk), None),
+            (f"TARGET  \u00b7  STEP {wk['step']}/{wk['steps']}", workout_target(wk), None),
+            ("NEXT", (workout_next(wk)[5:] if wk.get("next") else "last step"), None),
+        ]
     top, tile_w, tile_h, gap = 26, 154, 82, 4
-    for i, (label, value) in enumerate(tiles):
+    for i, (label, value, tint) in enumerate(tiles):
         x0 = 4 + (i % 2) * (tile_w + gap)
         y0 = top + (i // 2) * (tile_h + gap)
         draw.rounded_rectangle((x0, y0, x0 + tile_w, y0 + tile_h), radius=8, fill=TILE)
-        draw.text((x0 + 10, y0 + 7), label, font=font(13), fill=DIM)
-        colour = FG if value != "–" else FAINT
+        draw.text((x0 + 10, y0 + 7), label, font=_fit(draw, label, 13, tile_w - 20), fill=DIM)
+        colour = tint or (FG if value != "\u2013" else FAINT)
         draw.text((x0 + tile_w // 2, y0 + 53), value, font=_fit(draw, value, 46, tile_w - 16, bold=True),
                   fill=colour, anchor="mm")
 
-    footer = f"{format_time(m.get('elapsed_s', 0))}   ·   {m.get('stroke_count', 0)} strokes"
+    footer = f"{format_time(m.get('elapsed_s', 0))}   \u00b7   {m.get('stroke_count', 0)} strokes"
+    shown = _hr_top(draw, status)
+    if m.get("heart_rate_bpm") and not shown:
+        footer = f"{format_time(m.get('elapsed_s', 0))}  \u00b7  {m.get('stroke_count', 0)} strokes  \u00b7  \u2665 {m['heart_rate_bpm']}"
     if not rowing:
-        footer += "   ·   paused"
-    draw.text((WIDTH // 2, top + 2 * tile_h + gap + 14), footer, font=font(16), fill=FG if rowing else DIM,
-              anchor="mm")
+        footer += "   \u00b7   paused"
+    note = workout_note(status)
+    recovery = coach.get("intensity") == "Recovery"  # no coaching while you recover: the numbers
+    if recovery:
+        footer = f"RECOVERY  \u00b7  {format_time(m.get('elapsed_s', 0))}" + (
+            f"  \u00b7  \u2665 {m['heart_rate_bpm']}" if m.get("heart_rate_bpm") and not shown else "")
+    if note:  # a workout ready to start, or just done
+        footer, recovery = note[0], True
+    draw.text((WIDTH // 2, top + 2 * tile_h + gap + 14), footer, font=_fit(draw, footer, 16, WIDTH - 16, recovery),
+              fill=(note[1] if note else BLUE) if recovery else FG if rowing else DIM, anchor="mm")
     return image
 
 
-def hold_screen(progress: float) -> Image.Image:
+# ---------------------------------------------------------------- interval coach
+
+CUES = {
+    # Two words: what to do, and the part of the stroke; never a muscle (see coach.py).
+    "finish": ("STRONGER FINISH", AMBER),
+    "legs": ("EARLIER PUSH", AMBER),
+    "length": ("LONGER STROKES", AMBER),
+    "transition": ("BETTER TRANSITION", AMBER),
+    "good": ("LOOKS GOOD", GREEN),
+}
+RATING_COLOURS = {"good": GREEN, "ok": AMBER, "short": RED}
+GOOD_FINISH_PCT, OK_FINISH_PCT = -5, -12  # same bands as smartrow_bridge.coach (GOOD_FINISH, OK_FINISH)
+METER_MIN_PCT, METER_MAX_PCT = -30, 15
+
+
+# The stroke's parts on the rhythm bar (seat sensor, phases.py): the drive in blues, the recovery in greys.
+PHASE_COLOURS = {"slack": (40, 82, 130), "legs": BLUE, "body": (160, 210, 250), "parked": (120, 120, 120),
+                 "slide": (52, 52, 52), "early": AMBER}
+
+
+def phase_segments(rhythm: dict) -> list[tuple[str, float]] | None:
+    """The bar's segments, as (part, share of the stroke), from catch to catch: the legs (their start in
+    a darker blue until the handle takes load, or amber if it was loaded before the seat moved), body
+    and arms, parked after the finish, the slide. The parts' medians are scaled to the drive and the
+    recovery so the segments add up. None without the seat sensor's parts."""
+    ph = rhythm.get("phases") or {}
+    drive, recovery = rhythm["drive_s"], rhythm["recovery_s"]
+    legs, body, parked, slide, load = (ph.get(k) for k in ("legs", "body", "parked", "slide", "load"))
+    if not (legs and body is not None and parked is not None and slide):
+        return None
+    total = drive + recovery
+    body = max(0.0, body)
+    k_d = drive / (legs + body) if legs + body > 0 else 1.0
+    k_r = recovery / (max(0.0, parked) + slide) if parked + slide > 0 else 1.0
+    legs_s, body_s, parked_s, slide_s = legs * k_d, body * k_d, max(0.0, parked) * k_r, slide * k_r
+    out = []
+    if load is not None and load <= 0.0:  # as rhythm.EARLY_LOAD_S
+        early = min(0.15 * legs_s, -load)
+        out += [("early", early / total), ("legs", (legs_s - early) / total)]
+    elif load and load > 0:
+        slack = min(load * k_d, legs_s)
+        out += [("slack", slack / total), ("legs", (legs_s - slack) / total)]
+    else:
+        out.append(("legs", legs_s / total))
+    return out + [("body", body_s / total), ("parked", parked_s / total), ("slide", slide_s / total)]
+
+
+def _rhythm_bar(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], rhythm: dict) -> None:
+    """One stroke to scale: the drive (blue) then the recovery (grey), with a tick where the drive
+    would end at the aim (1:2). A recovery that grows moves the blue/grey edge toward the tick.
+    With the seat sensor the bar shows the stroke's parts (phase_segments)."""
+    x0, y0, x1, y1 = box
+    drive, recovery = rhythm["drive_s"], rhythm["recovery_s"]
+    w = x1 - x0
+    edge = x0 + w * drive / (drive + recovery)
+    draw.rounded_rectangle(box, radius=4, fill=TILE)
+    segments = phase_segments(rhythm)
+    if segments:
+        x = float(x0)
+        for part, share in segments:
+            nx = x + w * share
+            if nx - x >= 0.5:  # a 1-pixel gap between parts
+                draw.rectangle((round(x), y0, max(round(x), round(nx) - 2), y1), fill=PHASE_COLOURS[part])
+            x = nx
+    else:
+        draw.rounded_rectangle((x0, y0, edge, y1), radius=4, fill=BLUE)
+    aim = x0 + w / (1 + rhythm.get("aim", 2.0))
+    draw.line((aim, y0 - 2, aim, y1 + 2), fill=FG, width=2)
+    text = (f"{drive:.1f} s \u00b7 1:{rhythm['ratio']:.1f}" if segments
+            else f"drive {drive:.1f} s  \u00b7  1:{rhythm['ratio']:.1f}")
+    draw.text((x1 - 6, (y0 + y1) // 2), text, font=font(11), fill=FG if segments else DIM, anchor="rm")
+
+
+def finish_colour(pct: int | None) -> tuple:
+    if pct is None:
+        return DIM
+    return GREEN if pct >= GOOD_FINISH_PCT else AMBER if pct >= OK_FINISH_PCT else RED
+
+
+def _shade(colour: tuple, amount: float = 0.35) -> tuple:
+    return tuple(int(c * amount) for c in colour)
+
+
+def _plot_curves(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], curve: list, steady: list,
+                 colour: tuple, gap_half: str = "back", stall: dict | None = None) -> None:
+    """The effort's force curve, filled, over the steady curve as a thin grey line.
+
+    The steady curve is scaled to the same total force, so the picture compares shape
+    (where in the drive the force comes), not size: a weak finish shows as the
+    coloured curve dropping below the grey line in the back half.
+    """
+    if curve and steady and sum(steady):
+        scale = sum(curve) / sum(steady)
+        steady = [v * scale for v in steady]
+    x0, y0, x1, y1 = box
+    draw.rounded_rectangle(box, radius=8, fill=TILE)
+    x0, y0, x1, y1 = x0 + 8, y0 + 8, x1 - 8, y1 - 4
+    top = max([*curve, *steady, 1])
+
+    def points(values: list) -> list[tuple[float, float]]:
+        values = [0, *values]  # the curve starts at the catch with no force
+        step = (x1 - x0) / (len(values) - 1)
+        return [(x0 + i * step, y1 - (y1 - y0) * v / top) for i, v in enumerate(values)]
+
+    # Half-way along the steady drive (the samples are spaced by distance; the drive ends at
+    # the last sample above 5 % of the peak, as in coach.drive_end), +1 for the leading zero.
+    ref = steady or curve or [0]
+    top_ref = max(ref) or 1
+    end = max((i for i, v in enumerate(ref) if v > 0.05 * top_ref), default=len(ref) - 1)
+    half = end / 2 + 1
+    mid = x0 + (x1 - x0) * half / (len(curve or steady or [0]) + 1)
+    if curve:
+        pts = points(curve)
+        draw.polygon([(x0, y1), *pts, (x1, y1)], fill=_shade(colour))
+    if curve and steady:
+        # Fill the force missing against the steady shape in the half that matters:
+        # the back half normally, the front half after a late push.
+        sp = points(steady)
+        cut = math.ceil(half)
+        span = (range(cut, len(pts) - 1) if gap_half == "back" else range(0, cut)
+                if gap_half == "front" else range(0, len(pts) - 1))
+        for i in span:
+            a, b, c, d = pts[i], pts[i + 1], sp[i + 1], sp[i]
+            if c[1] < b[1] or d[1] < a[1]:  # steady above the effort here (smaller y = higher)
+                draw.polygon([a, b, (b[0], min(b[1], c[1])), (a[0], min(a[1], d[1]))], fill=GAP)
+    if curve:
+        draw.line(pts, fill=colour, width=3, joint="curve")
+    if steady:
+        draw.line(points(steady), fill=DIM, width=2, joint="curve")
+        draw.text((x1, y0), "Easy shape", font=font(12), fill=DIM, anchor="rt")
+    if curve:
+        for y in range(y0 + 16, y1, 8):  # dashed line half-way along the steady drive
+            draw.line((mid, y, mid, y + 3), fill=FAINT, width=1)
+    if curve and stall and 0 <= stall.get("sample", -1) < len(curve) - 1:
+        # BETTER TRANSITION: the stretch after the peak where the fall stalls, drawn over in white
+        # (this stroke's; grey where the recent strokes stalled when this one didn't), labelled.
+        k = stall["sample"] + 1  # +1: the leading zero
+        until = min(max(stall.get("until", stall["sample"] + 1), stall["sample"] + 1), len(curve) - 1) + 1
+        mark = FG if stall.get("now") else DIM
+        draw.line(pts[k:until + 1], fill=mark, width=6, joint="curve")
+        cx = (pts[k][0] + pts[until][0]) / 2
+        cy = min(pts[k][1], pts[until][1])
+        draw.text((cx, cy - 8), "stall", font=font(12, True), fill=mark, anchor="mb")
+
+
+BAR_RANGE = 2.0  # the summary's shape block moves up to +-2 cue thresholds
+STEADY_SHARE = 0.5  # the steady block's width, as a share of the meter
+SHIFT_PER_UNIT = 0.25  # the force block moves this share of the steady width per cue threshold
+
+
+def _block(draw: ImageDraw.ImageDraw, x0: float, y0: int, x1: float, y1: int, fill, outline=None) -> None:
+    draw.rounded_rectangle((round(x0), y0, round(x1), y1), radius=3, fill=fill, outline=outline)
+
+
+def _mini_shape(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], balance: float, colour: tuple) -> None:
+    """A small version of the force and steady blocks, for the summary's SHAPE tile."""
+    x0, y0, x1, y1 = box
+    mid, w = (x0 + x1) / 2, (x1 - x0) * STEADY_SHARE
+    shift = max(-BAR_RANGE, min(BAR_RANGE, balance)) * SHIFT_PER_UNIT * w
+    ym = (y0 + y1) // 2
+    _block(draw, mid - w / 2, ym + 1, mid + w / 2, y1, fill=FAINT)  # steady, below
+    _block(draw, mid - w / 2 + shift, y0, mid + w / 2 + shift, ym - 1, fill=colour)  # this interval, above
+
+
+def _mini_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct: int,
+                colour: tuple | None = None) -> None:
+    """A thin version of the finish meter's bar, for the summary's FINISH tile."""
+    x0, y0, x1, y1 = box
+
+    def at(p: float) -> float:
+        p = max(METER_MIN_PCT, min(METER_MAX_PCT, p))
+        return x0 + (x1 - x0) * (p - METER_MIN_PCT) / (METER_MAX_PCT - METER_MIN_PCT)
+
+    draw.rectangle(box, fill=FAINT)
+    draw.rectangle((x0, y0, at(pct), y1), fill=colour or finish_colour(pct))
+    draw.line((at(0), y0 - 2, at(0), y1 + 2), fill=FG, width=2)
+
+
+def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
+    """During an effort: time and watts, a finish meter, and one cue."""
     image, draw = _canvas()
-    _centered(draw, [("Keep holding to switch off", 22, True, FG), ("Let go to cancel", 16, False, DIM)],
-              centre_y=96)
+    _hints(draw, "rowing", drill=bool((status or {}).get("drill")))
+    live = status["coach"]["live"]
+    label = f"{live['intensity'].upper()}  \u00b7  {live['index']}" if live.get("intensity") else f"INTERVAL {live['index']}"
+    clock, watts = format_time(live["elapsed_s"]), f"{live['power_w']} W"
+    wk = _workout(status)
+    watts_colour = FG
+    if wk:  # following a planned workout: the step's time left, and your watts against its target
+        clock = workout_left(wk)
+        if wk.get("power_w") is not None:
+            watts = f"{wk['power_w']} W"
+        watts_colour = TARGET_COLOURS.get(wk.get("on_target"), FG)
+        label = f"STEP {wk['step']}/{wk['steps']}  \u00b7  " + (
+            f"TARGET {workout_target(wk)} W" if wk.get("target_w") is not None else "NO TARGET")
+    hr_shown = _hr_top(draw, status)  # heart rate in the top line: the label goes over the curve instead
+    if not hr_shown:
+        draw.text((WIDTH - 6, 4), label, font=_fit(draw, label, 15, 210, True), fill=DIM, anchor="rt")
+    size = min(_fit(draw, clock, 44, WIDTH // 2 - 14, True).size, _fit(draw, watts, 44, WIDTH // 2 - 14, True).size)
+    draw.text((8, 54), watts, font=font(size, True), fill=watts_colour, anchor="lm")  # watts left, time right, as everywhere
+    draw.text((WIDTH - 8, 54), clock, font=font(size, True), fill=FG, anchor="rm")
+    # The force curve, as in the SmartRow app: each stroke over your steady shape (grey), the force
+    # missing against steady filled in light grey. A shorter stroke ends before the steady curve does.
+    stroke = live.get("stroke_curve") or live.get("curve") or []
+    curve_colour = CUES.get(live.get("cue"), ("", FG))[1] if live.get("cue") else FG
+    _plot_curves(draw, (4, 84, WIDTH - 4, 179), stroke, live.get("steady_curve") or [], curve_colour, "both",
+                 live.get("stall"))
+    if live.get("balance") is not None and live.get("length_delta_cm") is not None:
+        length = f"length {live['length_delta_cm']:+d} cm".replace("-", "\u2212")
+        draw.text((12, 89), length, font=font(12), fill=DIM)
+    if wk and workout_rate(wk):  # your rate against the step's rate target, under the length note
+        rate = f"{wk.get('spm') or '\u2013'} spm \u00b7 aim {workout_rate(wk)}"
+        draw.text((12, 104), rate, font=font(14, True), fill=TARGET_COLOURS.get(wk.get("spm_on"), FG))
+    if hr_shown:  # the step and its target, moved down from the top line
+        if wk:
+            label = f"{wk['step']}/{wk['steps']} \u00b7 " + (f"{workout_target(wk)} W" if wk.get("target_w") is not None else "free")
+        draw.text((WIDTH - 12, 105), label, font=_fit(draw, label, 12, 110), fill=DIM, anchor="rt")
+
+    text, colour = CUES.get(live.get("cue"), ("…", DIM))
+    banner = (4, 183, WIDTH - 4, 216)
+    if colour == DIM:
+        draw.rounded_rectangle(banner, radius=8, fill=TILE)
+        draw.text((WIDTH // 2, 199), text, font=font(24, True), fill=DIM, anchor="mm")
+    else:
+        draw.rounded_rectangle(banner, radius=8, fill=colour)
+        draw.text((WIDTH // 2, 199), text, font=_fit(draw, text, 26, WIDTH - 24, True), fill=BG, anchor="mm")
+    return image
+
+
+def summary_screen(status: dict, now: float, uptime: float) -> Image.Image:
+    """After an effort: its average curve against steady, and three numbers."""
+    image, draw = _canvas()
+    _hints(draw, "rowing", "Close", bool((status or {}).get("drill")))
+    last = status["coach"]["last"]
+    legs_late = bool(last.get("legs_late"))
+    if last.get("balance") is not None:  # the same rule as the bars: green inside the cue markers
+        off = abs(last["balance"]) >= 1 or last.get("length_balance", 0) <= -1
+        colour = AMBER if off else GREEN
+    else:
+        colour = AMBER if legs_late else RATING_COLOURS.get(last.get("rating"), FG)
+    title = f"{last['intensity'].upper()}  ·  INTERVAL {last['index']}" if last.get("intensity") else f"INTERVAL {last['index']}"
+    draw.text((8, 28), title, font=font(15, True), fill=DIM, anchor="lt")
+    headline = f"{format_time(last['duration_s'])}  ·  {last['power_w']} W"
+    draw.text((WIDTH // 2, 62), headline, font=_fit(draw, headline, 34, WIDTH - 16, True), fill=FG, anchor="mm")
+    _plot_curves(draw, (4, 84, WIDTH - 4, 160), last.get("curve") or [], last.get("steady_curve") or [], colour,
+                 "both")
+
+    delta = last.get("length_delta_cm", 0)
+    # A late push: where the force peaked says more than the finish figure (which a late
+    # push inflates).
+    bal = last.get("balance")
+    if bal is None:  # saved before the shape bar existed
+        first = ("FINISH", f"{last['finish_pct']:+d}%", colour)
+    else:
+        word = "LATE" if bal >= 1 else "FADED" if bal <= -1 else "GOOD"
+        first = ("SHAPE", word, GREEN if abs(bal) < 1 else AMBER)
+    tiles = [
+        first,
+        ("LENGTH", f"{round(last['length_cm'])} cm", FG),
+        ("PEAK", f"{last['peak_n']} N", FG),
+    ]
+    tile_w, gap, y0, y1 = 100, 6, 165, 215
+    for i, (label, value, value_colour) in enumerate(tiles):
+        x0 = 5 + i * (tile_w + gap)
+        draw.rounded_rectangle((x0, y0, x0 + tile_w, y1), radius=8, fill=TILE)
+        draw.text((x0 + 8, y0 + 5), label, font=font(12), fill=DIM)
+        size, at_y = (20, y0 + 26) if label == "SHAPE" else (24, y0 + 30)
+        draw.text((x0 + tile_w // 2, at_y), value, font=_fit(draw, value, size, tile_w - 10, True),
+                  fill=value_colour, anchor="mm")
+        if label == "SHAPE":
+            _mini_shape(draw, (x0 + 10, y1 - 12, x0 + tile_w - 10, y1 - 4), bal, value_colour)
+        elif label == "FINISH":
+            _mini_meter(draw, (x0 + 8, y1 - 8, x0 + tile_w - 8, y1 - 4), last["finish_pct"],
+                        AMBER if legs_late else None)
+    if legs_late:
+        draw.text((WIDTH - 6, HEIGHT - 4),
+                  f"LATE PUSH \u00b7 peak {last.get('peak_at_pct', 0)}%, Easy {last.get('steady_peak_at_pct', 0)}%",
+                  font=font(12, True), fill=AMBER, anchor="rd")
+    elif bal is not None and bal <= -1:
+        draw.text((WIDTH - 6, HEIGHT - 4), f"FINISH {last['finish_pct']:+d}% vs Easy".replace("-", "\u2212"),
+                  font=font(12, True), fill=AMBER, anchor="rd")
+    else:
+        draw.text((WIDTH - 6, HEIGHT - 4), f"{delta:+.0f} cm vs Easy", font=font(12), fill=DIM, anchor="rd")
+    return image
+
+
+def hold_screen(progress: float, title: str = "Keep holding to switch off", colour: tuple | None = None) -> Image.Image:
+    image, draw = _canvas()
+    _centered(draw, [(title, 22, True, FG), ("Let go to cancel", 16, False, DIM)], centre_y=96)
     x0, y0, x1, y1 = 30, 150, WIDTH - 30, 174
     draw.rounded_rectangle((x0, y0, x1, y1), radius=12, outline=DIM, width=2)
     filled = x0 + int((x1 - x0) * max(0.0, min(1.0, progress)))
     if filled > x0 + 6:
-        draw.rounded_rectangle((x0, y0, filled, y1), radius=12, fill=AMBER)
+        draw.rounded_rectangle((x0, y0, filled, y1), radius=12, fill=colour or AMBER)
+    return image
+
+
+UPLOAD_WORDS = {  # how each destination stands with the newest session (uploads.Uploader.snapshot)
+    "sent": ("sent", GREEN), "failed": ("failed - see --status", RED), "retrying": ("will try again later", AMBER),
+    "waiting": ("waiting", DIM), "later": ("waiting", DIM), "rowing": ("waiting", DIM),
+}
+
+
+def _upload_rows(draw: ImageDraw.ImageDraw, status: dict | None, top: int) -> int:
+    """One line per destination: sent, sending..., waiting, will try again later, failed."""
+    ups = (status or {}).get("uploads") or {}
+    states = ((ups.get("latest") or {}).get("dests")) or {}
+    y = top
+    for label in ups.get("configured") or []:
+        state = states.get(label)
+        if state is None:
+            continue  # not for this session (rowed before it was set up, or from a CSV)
+        if ups.get("sending") == label and state != "sent":
+            word, colour = "sending\u2026", FG
+        else:
+            word, colour = UPLOAD_WORDS.get(state, (state, DIM))
+        draw.ellipse((16, y + 5, 28, y + 17), fill=colour if colour != DIM else None, outline=colour, width=2)
+        name = label.replace(" activity", "").replace(" note", " note")  # "intervals.icu", "Strava"
+        draw.text((38, y + 11), name, font=_fit(draw, name, 17, 150, True), fill=FG, anchor="lm")
+        draw.text((WIDTH - 12, y + 11), word, font=_fit(draw, word, 15, 128), fill=colour, anchor="rm")
+        y += 30
+    return y
+
+
+def finish_screen(status: dict | None, session: str | None, acked: bool) -> Image.Image:
+    """After Y (Done): the session saved as finished, and its uploads as they go."""
+    image, draw = _canvas()
+    _button(draw, "X", "close", "Close")
+    if not acked:
+        _centered(draw, [("Finishing\u2026", 26, True, FG)], centre_y=110)
+        return image
+    if session is None:
+        _centered(draw, [("No session to finish", 22, True, FG),
+                         ("Row at least 30 strokes first", 15, False, DIM)], centre_y=110)
+        return image
+    draw.text((WIDTH // 2, 48), "Session finished", font=font(24, True), fill=GREEN, anchor="mm")
+    y = _upload_rows(draw, status, 80)
+    if y == 80:
+        _centered(draw, [("Saved on the Pi", 18, True, FG), ("Summary on the web page", 15, False, DIM)],
+                  centre_y=130)
+    return image
+
+
+UPLOAD_NAMES = {"intervals_activity": "intervals.icu", "intervals_note": "intervals.icu", "strava": "Strava"}
+
+
+def discard_screen(status: dict | None, acked: bool) -> Image.Image:
+    """After X was held: the session deleted (or there was none), and what that does not undo."""
+    image, draw = _canvas()
+    if not acked:
+        _centered(draw, [("Discarding\u2026", 26, True, FG)], centre_y=110)
+        return image
+    result = (status or {}).get("finish") or {}
+    lines = [("Session discarded", 24, True, AMBER),
+             ("Not kept, not uploaded" if result.get("session") else "Nothing was saved yet", 16, False, FG)]
+    sent = sorted({UPLOAD_NAMES.get(d, d) for d in result.get("uploaded") or []})
+    if sent:
+        lines.append((f"Already on {' and '.join(sent)}: delete it there", 15, False, AMBER))
+    lines.append(("Start a new workout in the SmartRow app", 14, False, DIM))
+    lines.append(("to reset the pulley's metres", 14, False, DIM))
+    _centered(draw, lines, centre_y=120)
+    return image
+
+
+def drill_screen(on: bool) -> Image.Image:
+    """After B was held: this session is drills (or not any more)."""
+    image, draw = _canvas()
+    if on:
+        lines = [("Drills: on", 26, True, AMBER), ("Kept and uploaded,", 16, False, FG),
+                 ("no force-curve analysis", 16, False, FG), ("Hold B again to undo", 14, False, DIM)]
+    else:
+        lines = [("Drills: off", 26, True, FG), ("The coach analyses this session", 16, False, FG),
+                 ("Hold B again for drills", 14, False, DIM)]
+    _centered(draw, lines, centre_y=120)
+    return image
+
+
+def upload_off_screen(status: dict | None, closing: bool) -> Image.Image:
+    """A held with uploads still to go: upload first, then switch off by itself."""
+    image, draw = _canvas()
+    if closing:
+        _centered(draw, [("Switching off", 24, True, FG)], centre_y=48)
+    else:
+        _button(draw, "A", "power", "Off now")
+        _button(draw, "B", "close", "Cancel")
+        draw.text((WIDTH // 2, 48), "Uploading, then off", font=font(22, True), fill=FG, anchor="mm")
+    y = _upload_rows(draw, status, 80)
+    ups = (status or {}).get("uploads") or {}
+    if closing and ups.get("retrying"):
+        draw.text((WIDTH // 2, y + 14), "The rest goes next time the Pi is on", font=_fit(draw, "x" * 36, 14, WIDTH - 24),
+                  fill=DIM, anchor="mm")
     return image
 
 

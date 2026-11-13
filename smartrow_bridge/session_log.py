@@ -25,6 +25,12 @@ MILESTONES = (
     "Rower Data subscribed",
     "Central disconnected",
     "Data flow",
+    "Interval ",
+    "Session summary saved",
+    "Session finished",
+    "Session discarded",
+    "Heart rate strap connected",
+    "Upload: ",
 )
 
 

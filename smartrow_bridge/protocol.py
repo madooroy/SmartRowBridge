@@ -20,8 +20,12 @@ SmartRow app; decoding always works on a copy.
 
 from __future__ import annotations
 
+import logging
 import time
-from dataclasses import dataclass, replace
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
+
+log = logging.getLogger(__name__)
 
 SERVICE_UUID = "00001234-0000-1000-8000-00805f9b34fb"
 WRITE_CHAR_UUID = "00001235-0000-1000-8000-00805f9b34fb"
@@ -106,6 +110,76 @@ def keylock_response(notification: bytes) -> bytes:
     return b"\r" + f"{response & 0xFFFF:04x}".encode() + b"\r"
 
 
+# Force curve: each stroke arrives as three records, 'x', 'y' and 'z', whose
+# bytes 6-13 hold 8 samples each, in order from catch to finish (24 in all). A
+# sample is one printable character: (code - '!') x 16 N, so '!' is no force.
+# Worked out from captures/sniff2.log against a SmartRow app CSV export of the
+# same pulley, whose force columns are exactly these values (all multiples of
+# 16 N, up to 800 N) after a leading 0. The 'b' record that follows the 'z'
+# belongs to the same stroke: its work matches the curve's integral over the
+# stroke length to within about 10 %.
+FORCE_UNIT_N = 16
+FORCE_SAMPLES = 24
+
+# Drive flag: on a V3 pulley, bit 0x10 of byte 3 (one of the distance digits, whose high nibble
+# decode_packet() drops) is set while the handle is loaded, and clears at the finish, just before
+# the stroke's x/y/z curve (43 of 43 strokes in captures/sniff2.log, 122 of 122 and 155 of 155 on
+# 4 Nov 2026). It is off during holds. Filmed at 60 fps with the screen lit by the flag, it goes
+# off at the finish and comes on 0.3-0.6 s after the catch, once the handle takes load (see
+# rhythm.py for the drive time). Records come every 0.09-0.12 s, the resolution of each edge.
+FLAG_BYTE = 3
+FLAG_BIT = 0x10
+FLAG_PAIR_S = 3.0  # a drive that ended longer ago than this before the stroke's 'b' record isn't its drive
+FLAG_GAP_S = 6.0  # flag off for longer than this is a pause, not a recovery
+EDGE_GAP_S = 0.5  # a record further back than this doesn't bracket a flag change (no "record before")
+
+
+def drive_flag(packet: bytes) -> bool | None:
+    """The pulley's drive flag from a raw record, or None when the record can't carry it.
+
+    Only V3's scrambled digits (high nibble 4 or 5) carry it; a plain ASCII digit (0x3_) would
+    always look "on".
+    """
+    if len(packet) != PACKET_LENGTH:
+        return None
+    b = packet[FLAG_BYTE]
+    if b & 0xE0 != 0x40:
+        return None
+    return bool(b & FLAG_BIT)
+
+
+def decode_force(payload: bytes) -> list[int]:
+    """Force samples (N) from the 8 data bytes of an x/y/z record."""
+    return [max(0, c - 0x21) * FORCE_UNIT_N for c in payload]
+
+
+@dataclass
+class StrokeCurve:
+    """One completed stroke: its force curve plus the metrics current when it finished."""
+
+    time: float  # time.monotonic() when the stroke's 'b' record arrived
+    force_n: list[int] = field(default_factory=list)  # FORCE_SAMPLES values, catch -> finish
+    power_w: int = 0
+    stroke_rate_spm: float = 0.0
+    stroke_length_cm: int = 0
+    work_j: float = 0.0
+    stroke_count: int = 0
+    heart_rate_bpm: int = 0  # from the bridge's own strap connection, 0 = none
+    distance_m: int = 0  # the pulley's distance when the stroke finished
+    drive_s: float = 0.0  # drive time, only in exports that have it (the SmartRow handle's); 0 = not measured
+    flag_drive_s: float = 0.0  # how long the pulley's drive flag was on (raw, uncalibrated; see FLAG_BIT); 0 = none
+    flag_recovery_s: float = 0.0  # flag off from the previous drive to this one; 0 = none (first stroke, pause)
+    # When the flag went on and off, on this clock (time.monotonic(), as `time` and the seat sensor's
+    # readings): the arrival of the first record with the flag on / off, which is what was checked on
+    # film (the finish within 0.02 s, 4 Nov 2026). The change itself lies between the record before
+    # (flag_on_prev_t / flag_off_prev_t, records every 0.09-0.12 s) and that one; both are kept so a
+    # filmed row can settle which is closer. 0 = none.
+    flag_on_t: float = 0.0
+    flag_off_t: float = 0.0
+    flag_on_prev_t: float = 0.0
+    flag_off_prev_t: float = 0.0
+
+
 @dataclass
 class RowingMetrics:
     distance_m: int = 0
@@ -119,6 +193,7 @@ class RowingMetrics:
     stroke_length_cm: int = 0
     last_stroke_time: float = 0.0  # time.monotonic() when the stroke count last went up
     stopped: bool = False  # pulley sent its "not rowing" marker ('f' record with '!')
+    heart_rate_bpm: int = 0  # set by the bridge from a heart rate strap (heartrate.py), 0 = none
 
 
 class SmartRowParser:
@@ -128,6 +203,20 @@ class SmartRowParser:
         self.metrics = RowingMetrics()
         self.v3 = False
         self.bad_checksums = 0
+        self.on_stroke: Callable[[StrokeCurve], None] | None = None
+        # Called with (on, time) when the drive flag changes (film mode: bridge.py)
+        self.on_flag: Callable[[bool, float], None] | None = None
+        self._curve_parts: list[list[int]] = []
+        self._pending_curve: list[int] | None = None
+        self._flag_on = False
+        self._flag_start = 0.0
+        self._flag_recovery = 0.0
+        self._last_drive_end: float | None = None
+        self._drive: tuple[float, float, float, float, float, float] | None = None
+        # (flag time, recovery before it, end = flag off, flag on, record before the on, record before the off),
+        # not yet used
+        self._last_record: float | None = None  # when the previous record with the flag bit arrived
+        self._flag_on_prev = 0.0
 
     def feed(self, packet: bytes, now: float | None = None) -> bool:
         """Consume one notification. Returns True if metrics changed."""
@@ -141,6 +230,10 @@ class SmartRowParser:
             return False
 
         now = time.monotonic() if now is None else now
+        flag = drive_flag(packet)
+        self._track_flag(flag, now)
+        if flag is not None:
+            self._last_record = now
         p = decode_packet(packet)
         m = self.metrics
         m.distance_m = _atoi(p[1:6])
@@ -151,7 +244,11 @@ class SmartRowParser:
             # [11] repeats the current time with extra data and is harmless here.
             m.elapsed_s = _atoi(p[6:9]) * 60 + _atoi(p[9:11])
         elif kind == "b":
+            # " 2630108": work 263.0 J [6:11], stroke length 108 cm [11:14].
             m.stroke_length_cm = _atoi(p[11:14])
+            if self._pending_curve is not None:
+                curve, self._pending_curve = self._pending_curve, None
+                self._emit_stroke(curve, _atoi(p[6:11]) / 10.0, now)
         elif kind == "c":
             # " 45  358": instantaneous W [6:9], session average W x10 [9:14].
             # Matches the Concept2 pace->watts curve within ~2% from 45 to 264 W.
@@ -173,8 +270,60 @@ class SmartRowParser:
             # keeps repeating the last c/d/e values after that, so this is the stop signal.
             if p[11:12] == b"!":
                 m.stopped = True
-        # 'x'/'y'/'z' (force curve) only carry distance.
+        elif kind == "x":
+            self._curve_parts = [decode_force(p[6:14])]  # a repeated 'x' starts over
+        elif kind in "yz" and len(self._curve_parts) == "xyz".index(kind):
+            self._curve_parts.append(decode_force(p[6:14]))
+            if kind == "z":
+                self._pending_curve = [f for part in self._curve_parts for f in part]
+                self._curve_parts = []
         return True
+
+    def _before(self, now: float) -> float:
+        """The record before this one (with the flag bit), if recent enough to bracket a change; else 0."""
+        prev = self._last_record
+        return prev if prev is not None and 0 < now - prev <= EDGE_GAP_S else 0.0
+
+    def _track_flag(self, on: bool | None, now: float) -> None:
+        """Time the drive flag's runs (measured from the first record with it on to the first without),
+        keeping the record before each change for the strokes file."""
+        if on is None or on == self._flag_on:
+            return
+        self._flag_on = on
+        if self.on_flag is not None:
+            try:
+                self.on_flag(on, now)
+            except Exception:  # noqa: BLE001 - film mode must never break parsing
+                log.exception("on_flag failed")
+        if on:
+            self._flag_start = now
+            self._flag_on_prev = self._before(now)
+            gap = now - self._last_drive_end if self._last_drive_end is not None else None
+            self._flag_recovery = gap if gap is not None and gap <= FLAG_GAP_S else 0.0
+        else:
+            self._drive = (now - self._flag_start, self._flag_recovery, now, self._flag_start, self._flag_on_prev,
+                           self._before(now))
+            self._last_drive_end = now
+
+    def _emit_stroke(self, curve: list[int], work_j: float, now: float) -> None:
+        drive, self._drive = self._drive, None  # each flag run belongs to one stroke at most
+        if self.on_stroke is None or not any(curve):
+            return
+        flag_drive = flag_recovery = flag_on = flag_off = on_prev = off_prev = 0.0
+        if drive is not None and now - drive[2] <= FLAG_PAIR_S:
+            flag_drive, flag_recovery = round(drive[0], 3), round(drive[1], 3)
+            flag_on, flag_off, on_prev, off_prev = drive[3], drive[2], drive[4], drive[5]
+        m = self.metrics
+        stroke = StrokeCurve(time=now, force_n=curve, power_w=m.power_w, stroke_rate_spm=m.stroke_rate_spm,
+                             stroke_length_cm=m.stroke_length_cm, work_j=work_j, stroke_count=m.stroke_count,
+                             heart_rate_bpm=m.heart_rate_bpm, distance_m=m.distance_m,
+                             flag_drive_s=flag_drive, flag_recovery_s=flag_recovery,
+                             flag_on_t=flag_on, flag_off_t=flag_off, flag_on_prev_t=on_prev,
+                             flag_off_prev_t=off_prev)
+        try:
+            self.on_stroke(stroke)
+        except Exception:  # noqa: BLE001 - coaching must never break parsing
+            log.exception("Stroke handler failed")
 
     def snapshot(self, stale_after: float = 6.0, now: float | None = None) -> RowingMetrics:
         """Current metrics, with live values zeroed once the rower stops.

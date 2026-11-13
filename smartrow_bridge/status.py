@@ -25,6 +25,7 @@ STARTING = "starting"  # finding and preparing the two radios
 SEARCHING = "searching"  # scanning for the pulley (it sleeps until the handle is pulled)
 CONNECTED = "connected"  # pulley connected, virtual devices advertising
 RECONNECTING = "reconnecting"  # pulley link lost, scanning again
+RESTING = "resting"  # let go of after no rowing for a while (it switches itself off); a pull wakes it
 
 
 def pulley_label(name: str, manufacturer_data: dict[int, bytes]) -> str:
@@ -44,6 +45,11 @@ def build(
     metrics: RowingMetrics,
     rowing: bool,
     now: float | None = None,
+    coach: dict | None = None,
+    heart_rate: dict | None = None,
+    uploads: dict | None = None,
+    finish: dict | None = None,
+    drill: bool = False,
 ) -> dict:
     m = asdict(metrics)
     for key in ("last_stroke_time", "stopped"):
@@ -59,6 +65,11 @@ def build(
         "fitness_name": fitness_name,
         "rowing": rowing,
         "metrics": m,
+        "coach": coach,  # smartrow_bridge.coach.IntervalCoach.state(), or None when off
+        "heart_rate": heart_rate,  # {"name", "connected"} of the bridge's strap, or None when off
+        "uploads": uploads,  # smartrow_bridge.uploads.Uploader.snapshot(), or None without session saving
+        "finish": finish,  # the last "Done" request handled: {"token", "session"} (see request_path)
+        "drill": drill,  # this session is marked as drills (B held on the screen)
     }
 
 
@@ -71,6 +82,41 @@ def write(path: str, status: dict) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(status, f)
     os.replace(tmp, path)
+
+
+def request_path(status_path: str) -> str:
+    """Where the screen leaves a request for the bridge (button Y: "Done"), beside the status file."""
+    return os.path.join(os.path.dirname(status_path) or ".", "request.json")
+
+
+def film_path(status_path: str) -> str:
+    """Film mode is on while this file exists (beside the status file): the screen's LED shows the
+    pulley's drive flag, for lining a video up with the pulley (display/__main__.py)."""
+    return os.path.join(os.path.dirname(status_path) or ".", "film")
+
+
+def flag_path(status_path: str) -> str:
+    """In film mode the bridge writes the drive flag here at each change: "1" (on) or "0" (off)."""
+    return os.path.join(os.path.dirname(status_path) or ".", "flag")
+
+
+def send_request(status_path: str, action: str) -> str:
+    """Leave a request for the bridge; returns its token (echoed in the status when handled)."""
+    token = f"{time.time():.3f}"
+    write(request_path(status_path), {"action": action, "token": token})
+    return token
+
+
+def take_request(status_path: str) -> dict | None:
+    """The waiting request, if any (removed, so it is handled once)."""
+    path = request_path(status_path)
+    request = read(path)
+    if request is not None:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    return request
 
 
 def read(path: str) -> dict | None:

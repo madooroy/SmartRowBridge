@@ -9,6 +9,7 @@ from smartrow_bridge.protocol import RowingMetrics, SmartRowParser
 
 
 CAPTURE_2 = Path(__file__).resolve().parent.parent / "captures" / "sniff2.log"
+CAPTURE_DRIVE = Path(__file__).resolve().parent.parent / "captures" / "sniff-drive-2026-11-04.log"
 _LOG_LINE = re.compile(r"^\s*([\d.]+)\s+0x000C 1236\s+len=17\s+([0-9a-f ]+?)\s+\|")
 
 
@@ -111,6 +112,64 @@ class ParserTest(unittest.TestCase):
         self.assertEqual((idle.power_w, idle.stroke_rate_spm, idle.pace_s_per_500m), (0, 0.0, 0))
         self.assertEqual((idle.distance_m, idle.stroke_count, idle.avg_power_w), (472, 44, 148))
 
+    def test_force_curve_decoding(self):
+        self.assertEqual(protocol.decode_force(b"!$%(+.MU"), [0, 48, 64, 112, 160, 208, 704, 832])
+
+    def test_force_curve_assembled_per_stroke(self):
+        p = SmartRowParser()
+        strokes = []
+        p.on_stroke = strokes.append
+        for raw in (real("x@@AAI,18=BFIMB3"), real("y@@AAINNMLJIFB14"), real("z@@AAI>:50,'!!37")):
+            p.feed(raw, now=32.7)
+        self.assertEqual(strokes, [])  # waits for the stroke's 'b' record
+        p.feed(real("b@@ABA 54341232C"), now=32.9)
+        self.assertEqual(len(strokes), 1)
+        s = strokes[0]
+        self.assertEqual(len(s.force_n), protocol.FORCE_SAMPLES)
+        self.assertEqual(s.force_n[:3], [176, 256, 368])
+        self.assertEqual(max(s.force_n), 720)
+        self.assertEqual(s.force_n[-2:], [0, 0])
+        self.assertEqual((s.work_j, s.stroke_length_cm, s.time), (543.4, 123, 32.9))
+        p.feed(real("b@@ABB 54341232D"), now=33.4)  # repeats of the same 'b' add nothing
+        self.assertEqual(len(strokes), 1)
+
+    def test_incomplete_curve_is_dropped(self):
+        p = SmartRowParser()
+        strokes = []
+        p.on_stroke = strokes.append
+        p.feed(real("y@@AAINNMLJIFB14"))
+        p.feed(real("z@@AAI>:50,'!!37"))
+        p.feed(real("b@@ABA 54341232C"))
+        self.assertEqual(strokes, [])
+
+    def test_stroke_handler_errors_do_not_break_parsing(self):
+        p = SmartRowParser()
+
+        def boom(_):
+            raise RuntimeError("screen bug")
+
+        p.on_stroke = boom
+        for raw in (real("x@@AAI,18=BFIMB3"), real("y@@AAINNMLJIFB14"), real("z@@AAI>:50,'!!37")):
+            p.feed(raw)
+        with self.assertLogs("smartrow_bridge.protocol", "ERROR"):
+            self.assertTrue(p.feed(real("b@@ABA 54341232C")))
+        self.assertEqual(p.metrics.stroke_length_cm, 123)
+
+    @unittest.skipUnless(CAPTURE_2.exists(), "captures/sniff2.log not present")
+    def test_force_curves_in_capture(self):
+        """Every stroke of the captured session yields a curve whose integral is within ~10 % of its work."""
+        p = SmartRowParser()
+        strokes = []
+        p.on_stroke = strokes.append
+        for t, raw in load_capture(CAPTURE_2):
+            p.feed(raw, now=t)
+        self.assertEqual(len(strokes), 43)
+        hard = [s for s in strokes if s.work_j > 500]
+        self.assertGreater(len(hard), 5)
+        for s in hard:
+            integral = sum(s.force_n) * s.stroke_length_cm / 100 / protocol.FORCE_SAMPLES
+            self.assertAlmostEqual(integral / s.work_j, 1.0, delta=0.12)
+
     def test_stop_marker(self):
         p = SmartRowParser()
         p.feed(D_230, now=1.0)
@@ -149,6 +208,108 @@ class ParserTest(unittest.TestCase):
         idle = p.snapshot(now=110.0)
         self.assertEqual((idle.power_w, idle.avg_power_w), (0, 36))  # averages survive a pause
         self.assertEqual(p.metrics.power_w, 45)  # snapshot must not mutate state
+
+
+def rec(body: str, flag: bool) -> bytes:
+    """A V3 record: type + 13 chars, byte 3 carrying the drive flag, then its checksum and CR."""
+    b = bytearray(body.encode())
+    b[3] = (b[3] & 0x0F) | (0x50 if flag else 0x40)
+    return bytes(b) + f"{sum(b) & 0xFF:02X}".encode() + b"\r"
+
+
+class DriveFlagTest(unittest.TestCase):
+    CURVE = ("x@@@@@,18=BFIM", "y@@@@@NNMLJIFB", "z@@@@@>:50,'!!")
+
+    def stroke(self, p, t_on, t_off, end=None):
+        """Flag on from t_on, off at t_off with the curve, then the 'b' record."""
+        t = t_on
+        while t < t_off - 1e-9:
+            p.feed(rec("c@@@@@ 90  900", True), now=t)
+            t += 0.1
+        for i, body in enumerate(self.CURVE):
+            p.feed(rec(body, False), now=t_off + 0.1 * i)
+        p.feed(rec("b@@@@@ 4000120", False), now=end if end is not None else t_off + 0.3)
+
+    def test_flag_from_raw_bytes(self):
+        self.assertTrue(protocol.drive_flag(real("c@@PCA  0  37203")))
+        self.assertFalse(protocol.drive_flag(real("c@@@BH  0  349FD")))
+        self.assertIsNone(protocol.drive_flag(b"c00001  0  349FD\r"))  # plain digits carry no flag
+        self.assertIsNone(protocol.drive_flag(b"short"))
+
+    def test_drive_and_recovery_per_stroke(self):
+        p = SmartRowParser()
+        strokes = []
+        p.on_stroke = strokes.append
+        self.stroke(p, 10.0, 10.9)
+        self.stroke(p, 13.0, 13.8)
+        self.assertEqual([(s.flag_drive_s, s.flag_recovery_s) for s in strokes], [(0.9, 0.0), (0.8, 2.1)])
+
+    def test_flag_changes_on_the_clock_with_the_record_before(self):
+        p = SmartRowParser()
+        strokes = []
+        p.on_stroke = strokes.append
+        self.stroke(p, 10.0, 10.9)
+        p.feed(rec("c@@@@@ 90  900", False), now=12.9)  # a record without the flag just before the next drive
+        self.stroke(p, 13.0, 13.8)
+        first, second = strokes
+        self.assertEqual((first.flag_on_t, first.flag_on_prev_t), (10.0, 0.0))  # no record before it
+        self.assertAlmostEqual(first.flag_off_t, 10.9)  # first record without the flag
+        self.assertAlmostEqual(first.flag_off_prev_t, 10.8)  # ... and the last one with it
+        self.assertAlmostEqual(second.flag_on_t, 13.0)
+        self.assertAlmostEqual(second.flag_on_prev_t, 12.9)
+        self.assertAlmostEqual(second.flag_off_t, 13.8)
+        self.assertEqual((second.flag_drive_s, second.flag_recovery_s), (0.8, 2.1))  # the raw times are unchanged
+
+    def test_pause_gives_no_recovery_and_stale_drive_is_not_used(self):
+        p = SmartRowParser()
+        strokes = []
+        p.on_stroke = strokes.append
+        self.stroke(p, 10.0, 10.9)
+        self.stroke(p, 30.0, 30.8)  # 19 s later: a pause, not a recovery
+        self.stroke(p, 33.0, 33.9, end=40.0)  # the 'b' comes too long after the drive
+        self.assertEqual([(s.flag_drive_s, s.flag_recovery_s) for s in strokes],
+                         [(0.9, 0.0), (0.8, 0.0), (0.0, 0.0)])
+
+    def test_forwarded_bytes_untouched(self):
+        raw = rec("c@@@@@ 90  900", True)
+        before = bytes(raw)
+        SmartRowParser().feed(raw, now=1.0)
+        self.assertEqual(raw, before)
+
+    def _replay(self, path):
+        p = SmartRowParser()
+        strokes = []
+        p.on_stroke = strokes.append
+        for t, raw in load_capture(path):
+            p.feed(raw, now=t)
+        return strokes
+
+    @unittest.skipUnless(CAPTURE_2.exists(), "captures/sniff2.log not present")
+    def test_every_captured_stroke_has_a_drive(self):
+        strokes = self._replay(CAPTURE_2)
+        self.assertEqual(len(strokes), 43)
+        drives = [s.flag_drive_s for s in strokes[1:]]  # the capture starts mid-drive
+        self.assertTrue(all(0.5 <= d <= 1.1 for d in drives), drives)
+        self.assertAlmostEqual(sorted(drives)[len(drives) // 2], 0.78, delta=0.05)
+        recoveries = [s.flag_recovery_s for s in strokes[1:]]
+        self.assertTrue(all(1.5 <= r <= 2.2 for r in recoveries), recoveries)
+
+    @unittest.skipUnless(CAPTURE_DRIVE.exists(), "captures/sniff-drive-2026-11-04.log not present")
+    def test_drive_test_row(self):
+        """4 Nov: normal, slow and quick drives at 20 spm (timer = log - 63.4 s)."""
+        strokes = self._replay(CAPTURE_DRIVE)
+        self.assertEqual(len(strokes), 122)
+        # all but the curve the pulley sends on connecting, left over from before the sniffer started
+        self.assertEqual([s.time for s in strokes if not s.flag_drive_s], [strokes[0].time])
+
+        def median_drive(t0, t1):
+            ds = sorted(s.flag_drive_s for s in strokes if t0 + 63.4 <= s.time < t1 + 63.4)
+            return ds[len(ds) // 2]
+
+        normal, slow, quick = median_drive(15, 75), median_drive(75, 135), median_drive(135, 195)
+        self.assertLess(quick, normal)
+        self.assertLess(normal, slow)
+        self.assertAlmostEqual(slow - normal, 0.3, delta=0.1)
 
 
 class KeylockTest(unittest.TestCase):

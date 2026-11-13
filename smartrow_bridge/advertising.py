@@ -1,10 +1,12 @@
-"""Legacy (31-byte) advertising payloads for the two virtual devices on hci1.
+"""Legacy (31-byte) advertising payloads for the virtual devices on hci1.
 
-Normally the dongle runs two advertising sets with separate addresses and names:
+Normally the dongle runs one advertising set per device, each with its own address and name:
   * smartrow() - the pulley clone: service 0x1234 + the pulley's name and
     manufacturer data, for the SmartRow app;
   * fitness()  - a generic FTMS rower: service 0x1826 + rower service data and
     its own name, so Peloton never sees "SmartRow".
+  * heart_rate() - optional: a standard heart-rate sensor (0x180D) relaying the
+    bridge's strap, so a fitness app pairs heart rate with the Pi, not the strap.
 combined() is the fallback for controllers without extended advertising.
 """
 
@@ -21,6 +23,7 @@ _COMPLETE_16_BIT_UUIDS = 0x03
 _SHORTENED_NAME = 0x08
 _COMPLETE_NAME = 0x09
 _SERVICE_DATA_16 = 0x16
+_APPEARANCE = 0x19
 _MANUFACTURER_DATA = 0xFF
 
 
@@ -65,6 +68,20 @@ def fitness(name: str) -> tuple[bytes, bytes]:
         _GENERAL_DISCOVERABLE
         + _ad(_COMPLETE_16_BIT_UUIDS, struct.pack("<H", ftms.FTMS_SERVICE_UUID_16))
         + _FTMS_SERVICE_DATA
+    )
+    return _with_name(adv, name)
+
+
+HEART_RATE_SERVICE_UUID_16 = 0x180D
+APPEARANCE_HEART_RATE_BELT = 0x0341  # GAP appearance "Heart Rate Sensor: Heart Rate Belt"
+
+
+def heart_rate(name: str) -> tuple[bytes, bytes]:
+    """A standard heart-rate sensor, as the fitness apps' heart-rate lists look for."""
+    adv = (
+        _GENERAL_DISCOVERABLE
+        + _ad(_COMPLETE_16_BIT_UUIDS, struct.pack("<H", HEART_RATE_SERVICE_UUID_16))
+        + _ad(_APPEARANCE, struct.pack("<H", APPEARANCE_HEART_RATE_BELT))
     )
     return _with_name(adv, name)
 

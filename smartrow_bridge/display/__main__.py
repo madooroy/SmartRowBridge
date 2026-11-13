@@ -15,6 +15,7 @@ import os
 import signal
 import socket
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -26,6 +27,7 @@ log = logging.getLogger("smartrow_bridge.display")
 
 TICK_S = 0.05  # button polling
 REDRAW_S = 0.5  # screen refresh while no button is in use
+REDRAW_FAST_S = 0.1  # ... during a workout's 3, 2, 1 and GO, so the digits and the LED change on time
 ADDRESS_EVERY_S = 15.0
 
 
@@ -40,15 +42,29 @@ def _uptime() -> float:
         return 1e9
 
 
+WEB_UNIT = Path("/etc/systemd/system/smartrow-web.service")
+
+
 def _address() -> str:
-    """Host name and IP address, so you can find the Pi for SSH."""
+    """For the status screen's corner: the web page's address once it is set up
+    (tools/setup_web.sh), by name and by IP address, as Android does not always find
+    .local names; otherwise the host name and IP address, so you can find the Pi for SSH."""
     host = socket.gethostname()
     try:
         ips = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=2).stdout.split()
     except (OSError, subprocess.TimeoutExpired):
         ips = []
     ipv4 = [ip for ip in ips if "." in ip]
-    return f"{host}  {ipv4[0]}" if ipv4 else host
+    return address_lines(host, ipv4[0] if ipv4 else None, _env("SRB_WEB_PORT", "8080") if WEB_UNIT.exists() else None)
+
+
+def address_lines(host: str, ip: str | None, web_port: str | None) -> str:
+    if web_port:
+        lines = [f"http://{host}.local:{web_port}"]
+        if ip:
+            lines.append(f"http://{ip}:{web_port}")
+        return "\n".join(lines)
+    return f"{host}  {ip}" if ip else host
 
 
 def _system_stopping() -> bool:
@@ -78,9 +94,12 @@ def run() -> None:
     path = _env("SRB_STATUS_FILE", status_file.DEFAULT_PATH)
     use_led = _env("SRB_DISPLAY_LED", "1") not in ("0", "false", "no")
     hold_s = float(_env("SRB_DISPLAY_HOLD_S", "2"))
+    sleep_s = float(_env("SRB_DISPLAY_SLEEP_S", "3600"))
 
     hat = DisplayHat(led=use_led)
-    controller = Controller(hold_s=hold_s)
+    if hat.flip:
+        log.info("Screen flipped (SRB_DISPLAY_FLIP=1): picture turned 180 degrees, buttons by corner")
+    controller = Controller(hold_s=hold_s, sleep_s=sleep_s)
     stop = False
 
     def on_term(*_):
@@ -97,18 +116,30 @@ def run() -> None:
         _record("Button A read as pressed when the screen started; ignored until released")
 
     address, address_at = "", 0.0
-    last_draw, last_buttons = 0.0, {}
+    last_draw, last_buttons, lit, fast = 0.0, {}, True, False
+    film = threading.Event()  # film mode: the LED shows the drive flag (film_loop), the screen says FILM
+    threading.Thread(target=film_loop, args=(hat, path, film, lambda: stop), daemon=True).start()
     while not stop:
         now = time.monotonic()
         buttons = {name: hat.pressed(name) for name in ("A", "B", "X", "Y")}
         busy = buttons != last_buttons or buttons["A"]
-        if busy or now - last_draw >= REDRAW_S:
+        if busy or now - last_draw >= (REDRAW_FAST_S if fast else REDRAW_S):
             if now - address_at >= ADDRESS_EVERY_S:
                 address, address_at = _address(), now
             frame = controller.step(status_file.read(path), time.time(), _uptime(), buttons, address)
-            hat.show(frame.image)
-            hat.set_led(frame.led)
-            last_draw = now
+            if frame.request:  # Y (done) or A with uploads to go: ask the bridge to finish the session
+                try:
+                    status_file.write(status_file.request_path(path), frame.request)
+                except OSError as exc:
+                    log.warning("Could not pass the request to the bridge: %s", exc)
+            hat.show(screens.film_badge(frame.image) if film.is_set() else frame.image)
+            if frame.screen_on != lit:
+                hat.backlight(frame.screen_on)
+                lit = frame.screen_on
+                log.info("Screen %s", "woken" if lit else "dark (nothing happening); any button wakes it")
+            if not film.is_set():
+                hat.set_led(frame.led)
+            last_draw, fast = now, frame.fast
             if frame.switch_off:
                 log.info("A held: switching off")
                 _record("Button A held: switching the Pi off")
@@ -121,6 +152,7 @@ def run() -> None:
         # Shutting down (from here, SSH or the iPhone shortcut): say so; the shutdown
         # hook draws the final "Safe to unplug" screen at the very end.
         hat.show(screens.switching_off_screen())
+        hat.backlight(True)  # it may have been dark
     else:
         hat.show(screens.blank())
         hat.backlight(False)
@@ -157,9 +189,65 @@ def preview(directory: str) -> None:
                 "fitness_app": fitness, "clone_name": "SmartRow", "fitness_name": "PiRower",
                 "rowing": rowing, "metrics": m}
 
-    addr = "raspberrypi  192.168.1.23"
+    addr = address_lines("raspberrypi", "192.168.1.23", "8080")
     rowing = dict(distance_m=1834, power_w=168, stroke_rate_spm=24.5, stroke_count=212,
                   pace_s_per_500m=118, elapsed_s=455)
+    # Interval coach, with average curves from a real 45-minute session.
+    steady = [131, 210, 286, 344, 389, 422, 445, 465, 467, 455, 430, 401, 375, 340, 295, 246, 196, 148, 104, 68, 32,
+              7, 0, 0]
+    short = [176, 295, 414, 512, 593, 656, 696, 714, 701, 666, 613, 550, 492, 416, 339, 269, 203, 146, 95, 51, 14, 2,
+             0, 0]
+    full = [143, 232, 325, 401, 467, 520, 566, 593, 612, 604, 575, 537, 502, 461, 402, 337, 272, 211, 153, 100, 63,
+            28, 0, 0]
+
+    faded = [round(v * (0.7 if 11 <= i <= 19 else 1)) for i, v in enumerate(full)]  # the finish fading
+    # A real stroke with a stall just after the peak (Oct 29, I5): falls, holds at 480 N, falls again.
+    stalled = [128, 208, 272, 336, 384, 432, 480, 496, 512, 512, 512, 480, 480, 448, 416, 368, 320, 272, 208, 144,
+               96, 64, 48, 0]
+    late = [40, 80, 131, 210, 286, 344, 389, 422, 445, 465, 467, 455, 430, 401, 375, 340, 295, 246, 196, 148, 104,
+            68, 32, 7]  # steady shape, pushed 3 samples later: a slow push off the catch
+
+    # A steady stroke a little different from the average steady shape, as real strokes are.
+    steady_stroke = [round(v * (1.06 if i < 9 else 0.95)) for i, v in enumerate(steady)]
+
+    def coached(live=None, last=None, show_summary=False):
+        status = st("connected", "SmartRow-34", True, True, True, **rowing)
+        status["coach"] = {"mode": "interval" if live else "steady", "steady_power_w": 111, "intervals": 2,
+                           "live": live, "last": last, "show_summary": show_summary,
+                           "stroke_curve": steady_stroke, "steady_curve": steady, "intensity": "Easy", "cue": "good"}
+        return status
+
+    def live(cue, curve, finish_pct=None, length_delta=None, balance=None, length_balance=None):
+        return {"index": 3, "elapsed_s": 72, "strokes": 25, "power_w": 154, "length_cm": 112, "cue": cue,
+                "finish_pct": finish_pct, "length_delta_cm": length_delta, "curve": curve, "steady_curve": steady,
+                "balance": balance, "length_balance": length_balance, "intensity": "Moderate"}
+
+    good_last = {"index": 2, "duration_s": 62, "strokes": 22, "power_w": 150, "stroke_rate_spm": 21.5,
+                 "length_cm": 118.7, "length_delta_cm": 4.6, "peak_n": 623, "finish_pct": 0, "rating": "good",
+                 "fade_pct": -3, "curve": full, "steady_curve": steady, "balance": 0.2, "length_balance": 1.5,
+                 "intensity": "Moderate"}
+    short_last = {**good_last, "index": 7, "duration_s": 182, "strokes": 64, "power_w": 156, "length_cm": 112.5,
+                  "length_delta_cm": -3.6, "peak_n": 719, "finish_pct": -15, "rating": "short", "curve": short,
+                  "balance": -1.4, "length_balance": -1.2}
+    legs_last = {**good_last, "index": 4, "finish_pct": 14, "curve": late, "length_delta_cm": 0.0,
+                 "drive_late": 4.3, "legs_late": True, "peak_at_pct": 52, "steady_peak_at_pct": 41,
+                 "balance": 1.4, "length_balance": 0.0}
+    def with_hr(status, workout, bpm):
+        """A status with heart rate and intervals.icu zones (tops in bpm), and the workout when given."""
+        coach = {**(status.get("coach") or {}), "hr_zones": {"tops": [121, 140, 158, 178, 185]}}
+        if workout:
+            coach["workout"] = workout
+        return {**status, "metrics": {**status["metrics"], "heart_rate_bpm": bpm}, "coach": coach}
+
+    wk_base = {"name": "Adrestia", "steps": 11, "total_s": 1800, "state": "running", "kind": "time",
+               "elapsed_s": 500, "intensity": "interval", "step_name": ""}
+    wk_ready = {"name": "Adrestia", "steps": 11, "total_s": 1800, "state": "ready", "step": 0, "target_w": 120}
+    wk_easy = {**wk_base, "step": 1, "length": 480, "left": 154, "target_w": 120, "low_w": 120, "high_w": 120,
+               "power_w": 118, "on_target": "on", "next": {"target_w": 160, "kind": "time", "length": 60}}
+    wk_hard = {**wk_base, "step": 9, "length": 120, "left": 47, "target_w": 200, "low_w": 200, "high_w": 200,
+               "power_w": 186, "on_target": "under", "next": {"target_w": 80, "kind": "time", "length": 120}}
+    wk_rest = {**wk_base, "step": 10, "length": 120, "left": 95, "target_w": 80, "low_w": 80, "high_w": 80,
+               "power_w": 84, "on_target": "on", "next": {"target_w": 120, "kind": "time", "length": 480}}
     shots = {
         "01-starting-up": screens.status_screen(None, now, 12.0, addr),
         "02-preparing": screens.status_screen(st("starting"), now, up, addr),
@@ -167,28 +255,206 @@ def preview(directory: str) -> None:
         "04-pulley-connected": screens.status_screen(st("connected", "SmartRow-34"), now, up, addr),
         "05-both-apps": screens.status_screen(st("connected", "SmartRow-34", True, True), now, up, addr),
         "06-pulley-lost": screens.status_screen(st("reconnecting", "SmartRow-34", True, True), now, up, addr),
+        "06b-pulley-resting": screens.status_screen(st("resting", "SmartRow-34", False, True), now, up, addr),
         "07-rowing": screens.rowing_screen(st("connected", "SmartRow-34", True, True, True, **rowing), now, up),
         "08-paused": screens.rowing_screen(
             st("connected", "SmartRow-34", True, True, False, **{**rowing, "power_w": 0, "stroke_rate_spm": 0,
                                                                 "pace_s_per_500m": 0}), now, up),
+        "07a-interval-starting": screens.interval_screen(coached(live(None, full)), now, up),
+        "07b-interval-good": screens.interval_screen(coached(live("good", full, 2, 4, 0.2, 1.5)), now, up),
+        "07c-interval-finish-cue": screens.interval_screen(coached(live("finish", faded, -15, 0, -1.5, 0.0)), now, up),
+        "07h-interval-legs-cue": screens.interval_screen(coached(live("legs", late, 14, 0, 1.4, 0.0)), now, up),
+        "07i-summary-legs-late": screens.summary_screen(coached(last=legs_last, show_summary=True), now, up),
+        "07d-interval-length-cue": screens.interval_screen(coached(live("length", short, -1, -5, -0.3, -1.7)), now, up),
+        "07n-interval-transition-cue": screens.interval_screen(coached(
+            {**live("transition", stalled, -2, 1, -0.2, 0.3), "stall": {"sample": 11, "until": 12, "now": True}}), now, up),
+        "07e-summary-good": screens.summary_screen(coached(last=good_last, show_summary=True), now, up),
+        "07f-summary-short": screens.summary_screen(coached(last=short_last, show_summary=True), now, up),
+        "07g-rowing-with-last": screens.rowing_screen(coached(last=short_last), now, up),
+        "07j-rowing-coach-steady": screens.rowing_screen(coached(), now, up),
+        "07k-rowing-coach-warmup": screens.rowing_screen({**coached(), "coach": {**coached()["coach"], "mode": "warmup",
+                                                                              "steady_curve": [], "cue": None}}, now, up),
+        "07l-rowing-easy-finish-cue": screens.rowing_screen({**coached(), "coach": {**coached()["coach"], "cue": "finish",
+                                                                                 "stroke_curve": short}}, now, up),
+        "07o-rowing-easy-drift": screens.rowing_screen({**coached(), "coach": {**coached()["coach"], "cue": "good",
+                                                                             "drift": "Easy: strokes 4 cm shorter than at the start"}}, now, up),
+        "07p-rowing-easy-rhythm": screens.rowing_screen({**coached(), "coach": {**coached()["coach"],
+                                                                             "rhythm": {"drive_s": 1.3, "recovery_s": 1.7,
+                                                                                        "ratio": 1.31, "aim": 2.0}}}, now, up),
+        "07q-rowing-easy-stroke-parts": screens.rowing_screen({**coached(), "coach": {**coached()["coach"], "rhythm": {
+            "drive_s": 1.14, "recovery_s": 2.37, "ratio": 2.08, "aim": 2.0, "source": "seat",
+            "phases": {"load": 0.39, "legs": 0.94, "body": 0.21, "drive": 1.14, "parked": 1.3, "slide": 1.04,
+                       "recovery": 2.37}}}}, now, up),
+        "07r-rowing-easy-arms-first": screens.rowing_screen({**coached(), "coach": {**coached()["coach"], "rhythm": {
+            "drive_s": 1.25, "recovery_s": 1.95, "ratio": 1.56, "aim": 2.0, "source": "seat",
+            "phases": {"load": -0.12, "legs": 0.95, "body": 0.3, "drive": 1.25, "parked": 0.7, "slide": 1.25,
+                       "recovery": 1.95}}}}, now, up),
+        "07m-rowing-recovery": screens.rowing_screen({**coached(), "coach": {**coached()["coach"],
+                                                                          "intensity": "Recovery"}}, now, up),
+        # Following a planned workout (workout.py).
+        "18a-workout-ready": screens.rowing_screen({**st("connected", "SmartRow-34", True, True, False),
+                                                    "coach": {"workout": wk_ready}}, now, up),
+        "18b-workout-easy-step": screens.rowing_screen({**coached(), "coach": {**coached()["coach"],
+                                                                            "workout": wk_easy}}, now, up),
+        "18c-workout-effort-under": screens.interval_screen({**coached(live("good", full, 2, 4, 0.2, 1.5)),
+                                                             "coach": {**coached(live("good", full, 2, 4, 0.2, 1.5))["coach"],
+                                                                       "workout": wk_hard}}, now, up),
+        "18d-workout-recovery-step": screens.rowing_screen({**coached(), "coach": {**coached()["coach"],
+                                                                                "intensity": "Recovery",
+                                                                                "workout": wk_rest}}, now, up),
+        "18e-workout-done": screens.rowing_screen({**coached(), "coach": {**coached()["coach"], "intensity": "Recovery",
+                                                                       "workout": {"state": "done", "name": "Adrestia",
+                                                                                   "steps": 11, "step": 11}}}, now, up),
+        # With heart rate (zone from intervals.icu) and a step with a stroke-rate target.
+        "18f-workout-rate-hr": screens.rowing_screen(with_hr(coached(), {**wk_easy, "step": 7, "steps": 10,
+                                                                          "target_w": 180, "low_w": 180, "high_w": 180,
+                                                                          "power_w": 182, "left": 131, "spm_low": 22,
+                                                                          "spm_high": 24, "spm": 21, "spm_on": "under"}, 146),
+                                                     now, up),
+        "18g-workout-effort-rate-hr": screens.interval_screen(with_hr(coached(live("good", full, 2, 4, 0.2, 1.5)), {
+            **wk_hard, "step": 8, "steps": 10, "kind": "distance", "left": 612, "target_w": 232, "low_w": 230,
+            "high_w": 235, "power_w": 233, "on_target": "on", "spm_low": 25, "spm_high": 28, "spm": 26, "spm_on": "on"},
+            163), now, up),
+        "18h-workout-recovery-hr": screens.rowing_screen(with_hr({**coached(), "coach": {**coached()["coach"],
+                                                                                    "intensity": "Recovery"}}, wk_rest, 121),
+                                                         now, up),
+        "07s-rowing-hr": screens.rowing_screen(with_hr(st("connected", "SmartRow-34", True, True, True, **rowing), None, 152),
+                                               now, up),
         "09-hold-to-switch-off": screens.hold_screen(0.6),
         "10-switching-off": screens.switching_off_screen(),
         "11-safe-to-unplug": screens.final_screen("poweroff"),
         "12-bridge-not-running": screens.status_screen(None, now, up, addr),
+        "13-both-apps-no-web-page": screens.status_screen(st("connected", "SmartRow-34", True, True), now, up,
+                                                          address_lines("raspberrypi", "192.168.1.23", None)),
+        "14-strap-waiting": screens.status_screen({**st("searching"), "heart_rate": {"name": None,
+                                                                                     "connected": False}}, now, up, addr),
+        "15-strap-looking": screens.status_screen({**st("connected", "SmartRow-34", True, True),
+                                                   "heart_rate": {"name": None, "connected": False}}, now, up, addr),
+        "16-strap-connected": screens.status_screen({**st("connected", "SmartRow-34", True, True, heart_rate_bpm=96),
+                                                     "heart_rate": {"name": "COROS HRM 8A2F", "connected": True}},
+                                                    now, up, addr),
+        "17-strap-no-web-page": screens.status_screen({**st("connected", "SmartRow-34", True, False, heart_rate_bpm=96),
+                                                       "heart_rate": {"name": "COROS HRM 8A2F", "connected": True}},
+                                                      now, up, address_lines("raspberrypi", "192.168.1.23", None)),
     }
+    # Y (done) and A with uploads to go.
+    from .app import Controller
+
+    def with_session(st, strokes=420):
+        st["coach"] = {**(st.get("coach") or {}), "session_strokes": strokes}
+        return st
+
+    def uploads(states, sending=None):
+        return {"configured": list(states), "sending": sending, "waiting": 1, "retrying": 0, "error": None,
+                "latest": {"id": "2026-10-28T0702", "dests": states}, "ack": "t"}
+
+    c = Controller()
+    rowing_y = c.step(with_session(st("connected", "SmartRow-34", True, True, True, **rowing)), now, up,
+                      {"A": False, "B": False, "X": False, "Y": False}).image
+    interval_y = screens.add_tab(screens.interval_screen(coached(live("good", full, 2, 4, 0.2, 1.5)), now, up),
+                                 "Y", "check", "Hold: end/submit")
+    fin = {"token": "t", "session": "2026-10-28T0702"}
+    going = {**st("connected"), "finish": fin,
+             "uploads": uploads({"intervals.icu activity": "sent", "Strava": "waiting"}, sending="Strava")}
+    done = {**st("connected"), "finish": fin,
+            "uploads": uploads({"intervals.icu activity": "sent", "Strava": "sent"})}
+    offline = {**st("connected"), "finish": fin,
+               "uploads": {**uploads({"intervals.icu activity": "sent", "Strava": "retrying"}), "retrying": 1}}
+    shots.update({
+        "18-rowing-y-done": rowing_y,
+        "19-interval-y-done": interval_y,
+        "20-hold-y": screens.hold_screen(0.6, "Keep holding: done rowing"),
+        "21-finished-uploading": screens.finish_screen(going, fin["session"], True),
+        "22-finished-sent": screens.finish_screen(done, fin["session"], True),
+        "23-off-uploading-first": screens.upload_off_screen(going, False),
+        "24-off-closing-offline": screens.upload_off_screen(offline, True),
+        "25-hold-b-drills": screens.hold_screen(0.6, "Keep holding: drills on"),
+        "26-drills-on": screens.drill_screen(True),
+        "27-rowing-drills-on": c.step({**with_session(st("connected", "SmartRow-34", True, True, True, **rowing)),
+                                       "drill": True}, now, up, {"A": False, "B": False, "X": False, "Y": False}).image,
+    })
     for name, image in shots.items():
         image.save(out / f"{name}.png")
     print(f"{len(shots)} screens saved in {out}")
+
+
+FILM_POLL_S = 0.004  # film mode: how often the flag file is read (the LED follows within this)
+FILM_REAPPLY_S = 0.25  # ... and the LED set again anyway this often
+
+
+def film_loop(hat, path: str, film: threading.Event, stopping) -> None:
+    """Film mode, while status.film_path exists: the LED (full green) follows the drive flag the
+    bridge writes at each change (status.flag_path), checked every FILM_POLL_S, so on video each
+    LED change is the moment the Pi received the pulley record with the change (a few ms later at
+    most). Turned on and off with the film file; the LED goes back to normal when it is removed."""
+    film_file, flag_file = status_file.film_path(path), status_file.flag_path(path)
+    shown, applied_at = None, 0.0
+    while not stopping():
+        try:
+            if os.path.exists(film_file):
+                if not film.is_set():
+                    film.set()
+                    log.info("Film mode on: the LED shows the pulley's drive flag")
+                try:
+                    with open(flag_file, encoding="ascii") as f:
+                        on = f.read(1) == "1"
+                except OSError:
+                    on = False
+                now = time.monotonic()
+                # on each change, and again every FILM_REAPPLY_S: the main loop may have set the LED
+                # once just as film mode came on
+                if on != shown or now - applied_at >= FILM_REAPPLY_S:
+                    hat.film_led(on)
+                    shown, applied_at = on, now
+                time.sleep(FILM_POLL_S)
+            else:
+                if film.is_set():
+                    film.clear()
+                    hat.film_led(False)
+                    shown = None
+                    log.info("Film mode off")
+                time.sleep(0.5)
+        except Exception:  # noqa: BLE001 - keep trying; never leave FILM showing with a dead LED
+            log.exception("Film mode: the LED could not be set")
+            film.clear()
+            shown = None
+            time.sleep(0.5)
+
+
+def led_test() -> None:
+    """Each LED colour in turn, named on the screen: which zone colours read clearly at GO (screens.ZONE_LEDS)."""
+    from PIL import Image, ImageDraw
+    from .hat import LED_COLOURS, DisplayHat
+    hat = DisplayHat(buttons=False)
+    zones = {v: k for k, v in screens.ZONE_LEDS.items()}
+    try:
+        for colour in [*LED_COLOURS, None]:
+            image = Image.new("RGB", (screens.WIDTH, screens.HEIGHT), screens.BG)
+            draw = ImageDraw.Draw(image)
+            draw.text((screens.WIDTH // 2, 100), colour or "off", font=screens.font(40, True), fill=screens.FG, anchor="mm")
+            draw.text((screens.WIDTH // 2, 150), f"GO into {zones[colour]}" if colour in zones else
+                      ("countdown blink" if colour == "yellow" else ""), font=screens.font(20), fill=screens.DIM,
+                      anchor="mm")
+            hat.show(image)
+            hat.set_led(colour)
+            print(colour or "off", flush=True)
+            time.sleep(3)
+    finally:
+        hat.set_led(None)
 
 
 def main() -> None:
     p = argparse.ArgumentParser(prog="smartrow-display", description=__doc__.splitlines()[0])
     p.add_argument("--preview", metavar="DIR", help="save every screen as PNG files (no hardware needed)")
     p.add_argument("--final", metavar="KIND", help="draw the last screen (poweroff, halt or reboot) and exit")
+    p.add_argument("--led-test", action="store_true",
+                   help="show each LED colour for 3 s with its name on the screen (stop smartrow-display first)")
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
     if args.preview:
         preview(args.preview)
+    elif args.led_test:
+        led_test()
     elif args.final:
         final(args.final)
     else:

@@ -1,3 +1,4 @@
 # Everything here runs on the Pi: always check out with Unix (LF) line endings,
 # even on Windows, so shell scripts and systemd files keep working after scp.
 * text=auto eol=lf
+*.png binary

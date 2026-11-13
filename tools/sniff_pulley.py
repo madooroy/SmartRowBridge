@@ -16,9 +16,13 @@ The pulley only streams after an init command, periodic polls and (V3) a KEYLOCK
 answer - normally sent by the SmartRow app. --drive (default on) sends them so
 this script sees live data on its own.
 
+--flash lights the Display HAT Mini's screen while the pulley's drive flag is on (dark
+otherwise), so a filmed row shows the flag next to the body, frame by frame. Stop the screen's
+own service first: sudo systemctl stop smartrow-display.
+
 Usage:
     sudo ~/venv/bin/python sniff_pulley.py [--adapter hci0] [--address MAC] [--duration 120]
-                                            [--log sniff.log] [--map gatt_map.json] [--no-drive]
+                                            [--log sniff.log] [--map gatt_map.json] [--no-drive] [--flash]
 """
 
 from __future__ import annotations
@@ -54,6 +58,32 @@ def keylock_response(notification: bytes) -> bytes:
     except ValueError:
         return b"#"
     return b"\r" + f"{(seed * 17923) // 256 & 0xFFFF:04x}".encode() + b"\r"
+
+
+class Flash:
+    """The Display HAT's screen as a light: white and lit while the drive flag is on, dark otherwise."""
+
+    def __init__(self) -> None:
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from PIL import Image
+
+        from smartrow_bridge.display.hat import DisplayHat
+
+        self.hat = DisplayHat(buttons=False, led=False)
+        self.hat.show(Image.new("RGB", (320, 240), (255, 255, 255)))
+        self.on = None
+        self.set(False)
+
+    def set(self, on: bool) -> None:
+        if on != self.on:
+            self.hat.backlight(on)
+            self.on = on
+
+    def feed(self, raw: bytes) -> None:
+        # bit 0x10 of byte 3 on a V3 record (high nibble 4 or 5); see smartrow_bridge.protocol.drive_flag
+        if len(raw) == 17 and raw[3] & 0xE0 == 0x40:
+            self.set(bool(raw[3] & 0x10))
 
 
 def ascii_view(data: bytes) -> str:
@@ -132,11 +162,20 @@ async def main() -> int:
     ap.add_argument("--duration", type=float, default=0, help="stop after N seconds of sniffing (0 = until Ctrl+C)")
     ap.add_argument("--log", help="also append all output to this file")
     ap.add_argument("--map", help="write the GATT map + advertisement as JSON to this file")
+    ap.add_argument("--flash", action="store_true",
+                    help="light the Display HAT screen while the drive flag is on (stop smartrow-display first)")
     ap.add_argument("--no-drive", dest="drive", action="store_false",
                     help="do not send init/poll/KEYLOCK; only listen")
     args = ap.parse_args()
 
     out = Output(args.log)
+    flash = None
+    if args.flash:
+        try:
+            flash = Flash()
+        except Exception as exc:  # noqa: BLE001
+            print(f"--flash: the screen isn't available ({exc}); is smartrow-display stopped?", file=sys.stderr)
+            return 1
     out(f"# SmartRow sniff started {datetime.now().isoformat(timespec='seconds')} on {args.adapter}")
 
     try:
@@ -151,92 +190,130 @@ async def main() -> int:
     out(f"  service data  : { {k: v.hex(' ') for k, v in adv.service_data.items()} }")
     out(f"  tx power      : {adv.tx_power}")
 
-    stop = asyncio.Event()
+
+    user_stop = asyncio.Event()  # Ctrl+C, or --duration reached
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop.set)
+        loop.add_signal_handler(sig, user_stop.set)
 
     start = time.monotonic()
+    deadline = start + args.duration if args.duration > 0 else None
     count = 0
+    first = True
 
-    async with BleakClient(device, adapter=args.adapter, timeout=20.0,
-                           disconnected_callback=lambda _: stop.set()) as client:
-        out(f"Connected (MTU {client.mtu_size})")
-        gatt_map = await dump_gatt(client, out)
-        if args.map:
-            with open(args.map, "w", encoding="utf-8") as f:
-                json.dump({"address": device.address, "name": adv.local_name or device.name,
-                           "manufacturer_data": {str(k): v.hex() for k, v in adv.manufacturer_data.items()},
-                           "service_uuids": adv.service_uuids, "services": gatt_map}, f, indent=2)
-            out(f"GATT map written to {args.map}")
+    async def session(target) -> None:
+        """One connection: map, subscribe, drive the pulley, log; returns when it drops or the user stops."""
+        nonlocal count, flash, first
+        dropped = asyncio.Event()
+        async with BleakClient(target, adapter=args.adapter, timeout=20.0,
+                               disconnected_callback=lambda _: dropped.set()) as client:
+            out(f"Connected (MTU {client.mtu_size})")
+            if first:
+                gatt_map = await dump_gatt(client, out)
+                if args.map:
+                    with open(args.map, "w", encoding="utf-8") as f:
+                        json.dump({"address": device.address, "name": adv.local_name or device.name,
+                                   "manufacturer_data": {str(k): v.hex() for k, v in adv.manufacturer_data.items()},
+                                   "service_uuids": adv.service_uuids, "services": gatt_map}, f, indent=2)
+                    out(f"GATT map written to {args.map}")
 
-        write_char = next((c for s in client.services for c in s.characteristics if c.uuid == SMARTROW_WRITE), None)
-        has_write = write_char is not None
-        with_response = has_write and "write-without-response" not in write_char.properties
+            write_char = next((c for s in client.services for c in s.characteristics if c.uuid == SMARTROW_WRITE), None)
+            has_write = write_char is not None
+            with_response = has_write and "write-without-response" not in write_char.properties
 
-        # Commands go out one byte per write, in order, like the pulley's own clients do.
-        commands: asyncio.Queue[tuple[str, bytes]] = asyncio.Queue()
-        challenge_requested = False
+            # Commands go out one byte per write, in order, like the pulley's own clients do.
+            commands: asyncio.Queue[tuple[str, bytes]] = asyncio.Queue()
+            challenge_requested = False
 
-        def send(label: str, data: bytes) -> None:
-            if args.drive and has_write:
-                commands.put_nowait((label, data))
+            def send(label: str, data: bytes) -> None:
+                if args.drive and has_write:
+                    commands.put_nowait((label, data))
 
-        def notified(char: BleakGATTCharacteristic, data: bytearray) -> None:
-            nonlocal count, challenge_requested
-            count += 1
-            raw = bytes(data)
-            out(f"{time.monotonic() - start:9.3f}  0x{char.handle:04X} {char.uuid[4:8]}  len={len(raw):2d}  "
-                f"{raw.hex(' ')}  |{ascii_view(raw)}|")
-            if b"V3." in raw and not challenge_requested:
-                challenge_requested = True
-                send("V3 firmware -> request KEYLOCK challenge", b"#")
-            if b"KEYLOCK" in raw:
-                send("answer KEYLOCK challenge", keylock_response(raw))
-
-        out("\n=== Notifications (seconds  handle uuid  length  hex  |ascii|) ===")
-        subscribed = []
-        for service in client.services:
-            for char in service.characteristics:
-                if {"notify", "indicate"} & set(char.properties):
-                    await client.start_notify(char, notified)
-                    subscribed.append(char)
-                    out(f"Subscribed to {char.uuid} (handle 0x{char.handle:04X})")
-
-        async def writer() -> None:
-            while True:
-                label, data = await commands.get()
-                if label:
-                    out(f"{time.monotonic() - start:9.3f}  -> {label}: {data.hex(' ')}  |{ascii_view(data)}|")
-                for i in range(len(data)):
-                    await client.write_gatt_char(SMARTROW_WRITE, data[i:i + 1], response=with_response)
-                    await asyncio.sleep(0.03)
-
-        async def poller() -> None:
-            send("init", INIT_COMMAND)
-            while True:
-                await asyncio.sleep(2)
-                if commands.empty():
-                    send("", POLL_COMMAND)  # keep-alive; not logged
-
-        tasks = [asyncio.create_task(writer()), asyncio.create_task(poller())]
-        try:
-            if args.duration > 0:
-                await asyncio.wait_for(stop.wait(), args.duration)
-            else:
-                await stop.wait()
-        except asyncio.TimeoutError:
-            pass
-        finally:
-            for task in tasks:
-                task.cancel()
-            if client.is_connected:
-                for char in subscribed:
+            def notified(char: BleakGATTCharacteristic, data: bytearray) -> None:
+                nonlocal count, challenge_requested, flash
+                count += 1
+                raw = bytes(data)
+                out(f"{time.monotonic() - start:9.3f}  0x{char.handle:04X} {char.uuid[4:8]}  len={len(raw):2d}  "
+                    f"{raw.hex(' ')}  |{ascii_view(raw)}|")
+                if flash:
                     try:
-                        await client.stop_notify(char)
-                    except Exception:  # noqa: BLE001
-                        pass
-        out(f"\nDisconnecting cleanly after {time.monotonic() - start:.1f} s, {count} notifications")
+                        flash.feed(raw)
+                    except Exception as exc:  # noqa: BLE001 - the log matters more than the light
+                        out(f"# --flash stopped: {exc!r}")
+                        flash = None
+                if b"V3." in raw and not challenge_requested:
+                    challenge_requested = True
+                    send("V3 firmware -> request KEYLOCK challenge", b"#")
+                if b"KEYLOCK" in raw:
+                    send("answer KEYLOCK challenge", keylock_response(raw))
+
+            if first:
+                out("\n=== Notifications (seconds  handle uuid  length  hex  |ascii|) ===")
+                first = False
+            subscribed = []
+            for service in client.services:
+                for char in service.characteristics:
+                    if {"notify", "indicate"} & set(char.properties):
+                        await client.start_notify(char, notified)
+                        subscribed.append(char)
+                        out(f"Subscribed to {char.uuid} (handle 0x{char.handle:04X})")
+
+            async def writer() -> None:
+                while True:
+                    label, data = await commands.get()
+                    if label:
+                        out(f"{time.monotonic() - start:9.3f}  -> {label}: {data.hex(' ')}  |{ascii_view(data)}|")
+                    for i in range(len(data)):
+                        await client.write_gatt_char(SMARTROW_WRITE, data[i:i + 1], response=with_response)
+                        await asyncio.sleep(0.03)
+
+            async def poller() -> None:
+                send("init", INIT_COMMAND)
+                while True:
+                    await asyncio.sleep(2)
+                    if commands.empty():
+                        send("", POLL_COMMAND)  # keep-alive; not logged
+
+            tasks = [asyncio.create_task(writer()), asyncio.create_task(poller())]
+            waits = [asyncio.create_task(dropped.wait()), asyncio.create_task(user_stop.wait())]
+            try:
+                await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for task in tasks + waits:
+                    task.cancel()
+                if client.is_connected:
+                    for char in subscribed:
+                        try:
+                            await client.stop_notify(char)
+                        except Exception:  # noqa: BLE001
+                            pass
+
+    async def until_deadline() -> None:
+        if deadline is not None:
+            await asyncio.sleep(max(0.0, deadline - time.monotonic()))
+            user_stop.set()
+
+    timer = asyncio.create_task(until_deadline())
+    target = device
+    while not user_stop.is_set():
+        try:
+            await session(target)
+        except Exception as exc:  # noqa: BLE001 - a failed connect: try again
+            out(f"# {time.monotonic() - start:.1f} s: connection failed ({exc!r})")
+        if user_stop.is_set():
+            break
+        # The pulley dropped the link (it happened once 2 s in, before any data): reconnect and carry on.
+        out(f"# {time.monotonic() - start:.1f} s: disconnected; reconnecting (pull the handle if it's asleep)")
+        await asyncio.sleep(1.0)
+        try:
+            target, _ = await find_pulley(args, out)
+        except asyncio.TimeoutError:
+            out("# pulley not found again; stopping")
+            break
+    timer.cancel()
+    out(f"\nDisconnecting cleanly after {time.monotonic() - start:.1f} s, {count} notifications")
+    if flash:
+        flash.set(True)  # leave the screen lit for its own service
     return 0
 
 

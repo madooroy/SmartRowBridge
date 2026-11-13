@@ -14,6 +14,8 @@ from gpiod.line import Bias, Direction, Value
 from PIL import Image
 from st7789 import ST7789
 
+from . import button_pin_name, flipped
+
 BUTTONS = {"A": 5, "B": 6, "X": 16, "Y": 24}
 LED_PINS = {"r": 17, "g": 27, "b": 22}
 SPI_PORT, SPI_CS, DC_PIN, BACKLIGHT_PIN = 0, 1, 9, 13
@@ -26,7 +28,11 @@ _INPUT = gpiod.LineSettings(direction=Direction.INPUT, bias=Bias.PULL_UP)
 # the pull-up also set so it stays off after the program exits.
 _LED_OFF = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Value.ACTIVE, bias=Bias.PULL_UP)
 _LED_DIM = gpiod.LineSettings(direction=Direction.INPUT, bias=Bias.PULL_DOWN)
-LED_COLOURS = {"red": ("r",), "green": ("g",)}
+# Film mode only: full on, to be seen on video (output low).
+_LED_FULL = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Value.INACTIVE, bias=Bias.PULL_UP)
+# Mixes for a planned workout's countdown (screens.ZONE_LEDS): yellow doubles as its amber blink.
+LED_COLOURS = {"red": ("r",), "green": ("g",), "blue": ("b",), "yellow": ("r", "g"), "magenta": ("r", "b"),
+               "white": ("r", "g", "b")}
 # Backlight on, with the pin's pull-up also set. When a program lets go of a pin, the
 # Pi turns it back into an input, which would switch the backlight off the moment the
 # screen service stops, long before the Pi has finished shutting down. With the
@@ -36,13 +42,18 @@ _BACKLIGHT_OFF = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Val
 
 
 class DisplayHat:
-    def __init__(self, buttons: bool = True, led: bool = True) -> None:
+    def __init__(self, buttons: bool = True, led: bool = True, flip: bool | None = None) -> None:
+        # rotation=180 is the HAT the right way up (as Pimoroni's library has it); flipped: 0.
+        self.flip = flipped() if flip is None else flip
         self.lcd = ST7789(
             port=SPI_PORT, cs=SPI_CS, dc=DC_PIN, backlight=None,  # backlight: see _BACKLIGHT_ON
-            width=WIDTH, height=HEIGHT, rotation=180, spi_speed_hz=60_000_000,
+            width=WIDTH, height=HEIGHT, rotation=0 if self.flip else 180, spi_speed_hz=60_000_000,
         )
-        self._buttons = {name: gpiodevice.get_pin(pin, f"button-{name}", _INPUT)
-                         for name, pin in BUTTONS.items()} if buttons else {}
+        # Keyed by corner (A top left ... Y bottom right as you look at it), read from the
+        # button that is in that corner now.
+        self._buttons = {corner: gpiodevice.get_pin(BUTTONS[button_pin_name(corner, self.flip)],
+                                                    f"button-{corner}", _INPUT)
+                         for corner in BUTTONS} if buttons else {}
         self._led = {colour: gpiodevice.get_pin(pin, f"led-{colour}", _LED_OFF)
                      for colour, pin in LED_PINS.items()} if led else {}
         self._backlight = gpiodevice.get_pin(BACKLIGHT_PIN, "backlight", _BACKLIGHT_ON)
@@ -64,7 +75,7 @@ class DisplayHat:
         return lines.get_value(offset) == Value.INACTIVE
 
     def set_led(self, colour: str | None) -> None:
-        """Dim "red" or "green", or None for off. Only changes pins whose state changes."""
+        """Dim "red", "green" (or another LED_COLOURS mix), or None for off. Only changes pins whose state changes."""
         lit = LED_COLOURS.get(colour, ()) if colour else ()
         for name, pin in self._led.items():
             on = name in lit
@@ -72,6 +83,13 @@ class DisplayHat:
                 lines, offset = pin
                 lines.reconfigure_lines({offset: _LED_DIM if on else _LED_OFF})
                 self._led_state[name] = on
+
+    def film_led(self, on: bool) -> None:
+        """Film mode: green at full brightness (or off), for a video to see the pulley's drive flag.
+        The other colours are switched off; set_led takes over again afterwards."""
+        for name, (lines, offset) in self._led.items():
+            lines.reconfigure_lines({offset: _LED_FULL if (on and name == "g") else _LED_OFF})
+            self._led_state[name] = None  # unknown to set_led: it sets every pin next time
 
     def backlight(self, on: bool) -> None:
         """Off also sets the pull-down, so the screen stays dark after the program exits."""
