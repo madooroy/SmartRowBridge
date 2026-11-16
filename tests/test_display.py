@@ -103,9 +103,9 @@ class ScreensTest(unittest.TestCase):
         self.assertEqual(with_bar.size, (320, 240))
         self.assertNotEqual(plain.tobytes(), with_bar.tobytes())
         # the drive's blue runs from the left edge to 1.3 / 3.0 of the bar, past the 1:2 tick at 1/3
-        px = with_bar.getpixel((4 + int(312 * 0.40), 172))
+        px = with_bar.getpixel((4 + int(312 * 0.40), 181))  # the bar: just above the slim cue banner
         self.assertEqual(px, screens.BLUE)
-        self.assertNotEqual(with_bar.getpixel((4 + int(312 * 0.50), 172)), screens.BLUE)
+        self.assertNotEqual(with_bar.getpixel((4 + int(312 * 0.50), 181)), screens.BLUE)
 
 
 @unittest.skipIf(app is None, "Pillow not installed")

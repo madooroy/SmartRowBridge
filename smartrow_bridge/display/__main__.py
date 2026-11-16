@@ -234,7 +234,9 @@ def preview(directory: str) -> None:
                  "balance": 1.4, "length_balance": 0.0}
     def with_hr(status, workout, bpm):
         """A status with heart rate and intervals.icu zones (tops in bpm), and the workout when given."""
-        coach = {**(status.get("coach") or {}), "hr_zones": {"tops": [121, 140, 158, 178, 185]}}
+        coach = {**(status.get("coach") or {}), "hr_zones": {"tops": [121, 140, 158, 178, 185]},
+                 "power_bands": [["Recovery", None, 92], ["Easy", 92, 141], ["Moderate", 141, 187],
+                                 ["Challenging", 187, 237], ["Max", 237, None]]}
         if workout:
             coach["workout"] = workout
         return {**status, "metrics": {**status["metrics"], "heart_rate_bpm": bpm}, "coach": coach}
@@ -318,6 +320,9 @@ def preview(directory: str) -> None:
         "18h-workout-recovery-hr": screens.rowing_screen(with_hr({**coached(), "coach": {**coached()["coach"],
                                                                                     "intensity": "Recovery"}}, wk_rest, 121),
                                                          now, up),
+        "07t-easy-hr": screens.rowing_screen(with_hr(coached(), None, 128), now, up),
+        "07u-interval-hr": screens.interval_screen(with_hr(coached(live("good", full, 2, 4, 0.2, 1.5)), None, 150),
+                                                   now, up),
         "07s-rowing-hr": screens.rowing_screen(with_hr(st("connected", "SmartRow-34", True, True, True, **rowing), None, 152),
                                                now, up),
         "09-hold-to-switch-off": screens.hold_screen(0.6),
