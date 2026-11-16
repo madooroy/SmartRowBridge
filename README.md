@@ -737,16 +737,16 @@ stroke`, and the screen shows `READY: Adrestia`. The workout starts with your fi
   beside the power or on its own). Your rate (average of the last 3 strokes, whole strokes/min) then shows
   green inside the range and amber outside it, with the aim beside it; after the row each step gets its
   average rate against the range and the share of its strokes inside it (the Workout card's SPM column).
-- **Heart rate** (with a strap): the number and a bar of your intervals.icu heart-rate zones, each as wide
-  as its range, the current zone lit and a marker where you are (on the screen, in its top line).
-- **Floating window and web page** (as the SmartRow app): watts, strokes/min and pace (a workout step's
-  time left; in an effort, its time) evenly spaced, each number over its label. Watts take the colour of
-  the intensity band they're in; under the numbers a bar of the bands (Recovery to Max) with the current
-  one lit and a bubble naming it; at the bottom the same-size heart-rate zone bar with your heart rate in
-  its bubble. A rate target shows in the rate's label, amber when you're outside it. Watts are always on
-  the left, time on the right. The **Screen** (Display HAT) uses the same layout in its rowing and effort
-  views, the heart-rate bar just above the button tabs. The floating window's **Shape** button cycles
-  wide, tall and half (almost square, to fill half of a landscape tablet beside the SmartRow app).
+- **Heart rate** (with a strap): your zone (from intervals.icu), heart rate and % of max over a zone bar.
+- **Floating window, web page and Screen** (as the SmartRow app): watts, strokes/min and pace (a workout
+  step's time left; in an effort, its time) evenly spaced, each number over its label; watts in the colour
+  of the intensity band they're in. Under them a power zone bar as on Peloton's screens: one equal segment
+  per band (Recovery to Max), filled up to where you are, with each band's bottom in watts at its border.
+  At the bottom, the heart-rate box over the same bar for your heart-rate zones (on the Screen, just above
+  the button tabs). The live force curves carry a scale: faint lines every 200 N, up to the next 200 above
+  the stroke's peak (at least 600). A rate target shows in the rate's label, amber when you're outside it.
+  Watts are always on the left, time on the right. The floating window's **Shape** button cycles wide,
+  tall and half (almost square, to fill half of a landscape tablet beside the SmartRow app).
 - **After the row:** each step's average power against its target (its first 8 s left out) and the share of
   its strokes within 5%, in the session's findings and on a **Workout card**; the session card draws the plan
   as a dashed line over your power.
