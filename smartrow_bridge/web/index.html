@@ -62,8 +62,18 @@
   #rowing.coached .grid4 { flex: none; grid-template-columns: repeat(3, 1fr); }
   #rowing.coached .grid4 .value { font-size: clamp(28px, 9vmin, 100px); }
   #rowing.coached #rDistTile { display: none; }
-  #rowing.coached .grid4.with-hr { grid-template-columns: repeat(4, 1fr); }
-  #rowing:not(.coached) #rHrTile { display: none; }
+  /* As the SmartRow app: each number over its label, in lighter type. */
+  #rowing.coached .grid4 .tile { flex-direction: column-reverse; align-items: center; }
+  #rowing.coached .grid4 .value { font-weight: 400; }
+  .metrics3 { display: grid; grid-template-columns: repeat(3, 1fr); text-align: center; }
+  .metrics3 .value { font-weight: 400; font-size: clamp(36px, 11vmin, 124px); }
+  /* The power (intensity bands) and heart-rate (zones) bars: the same size; the current band lit,
+     a bubble at your watts or heart rate. */
+  .bandbar { position: relative; display: flex; gap: 2px; height: 10px; margin: 16px 6px; flex: none; }
+  .bandbar > div:not(.bub) { border-radius: 2px; }
+  .bandbar .bub { position: absolute; top: 50%; transform: translate(-50%, -50%); background: var(--bg);
+    border: 2px solid; border-radius: 999px; padding: 1px 10px; font-weight: 700; white-space: nowrap;
+    font-size: clamp(13px, 2.6vmin, 22px); }
   #rCurveTile { flex: 1; min-height: 120px; }
   #rRhythm { flex: none; width: 100%; height: clamp(20px, 4.5vmin, 40px); display: block; }
   .footer.idle { color: var(--dim); }
@@ -71,26 +81,19 @@
   /* Interval */
   .clockrow { display: flex; justify-content: space-between; align-items: baseline; gap: var(--pad); }
   .clockrow .value, .clockrow .watts { font-size: clamp(36px, 11vmin, 124px); }  /* time and power alike */
-  .clockrow .hrmid { align-self: center; text-align: center; font-weight: 700; font-size: clamp(22px, 6vmin, 64px); line-height: 1; }
-  .clockrow .hrmid { flex: 1; max-width: 40%; }
-  .hrzone { font-size: 0.6em; }
-  #rHr > div { width: 85%; }
-  .hrbar { position: relative; display: flex; gap: 2px; height: 12px; margin-top: 8px; border-radius: 3px; }
-  .hrmark { position: absolute; top: -5px; width: 6px; height: 18px; margin-left: -5px; background: #f0f0f0;
-    border: 2px solid; border-radius: 3px; }
   /* The summary's small force-against-steady blocks (as on the Pi's screen). */
   .trio { position: relative; }
   .trio .row { position: absolute; left: 0; right: 0; }
   .trio .blk { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
-  .cue { border-radius: 12px; padding: var(--pad); text-align: center; font-weight: 700;
-    font-size: clamp(24px, 7vmin, 72px); color: var(--bg); }
+  .cue { border-radius: 12px; padding: calc(var(--pad) * 0.6); text-align: center; font-weight: 700;  /* slim: more room for the curve */
+    font-size: clamp(20px, 5vmin, 52px); color: var(--bg); }
   .cue.none { background: var(--tile); color: var(--dim); }
   .curve { flex: 1; min-height: 90px; position: relative; padding: 0; }
   .curve canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   /* The live force curve is the main picture: on short panes the clock shrinks instead. */
   #interval .curve.live { min-height: 120px; }
   .clen { position: absolute; left: 14px; top: 8px; font-size: var(--label); color: var(--dim); }
-  @media (max-height: 420px) { #interval .clockrow .value { font-size: clamp(28px, 9vmin, 60px); } }
+  @media (max-height: 420px) { #interval .clockrow .value, #interval .metrics3 .value { font-size: clamp(28px, 9vmin, 60px); } }
   /* Short panes (a split screen's lower half): the coach keeps all the height, no session list. */
   @media (max-height: 520px) { #layout.with-history aside { display: none !important; } }
 
@@ -103,6 +106,7 @@
   .cue.drift { color: var(--amber); font-size: clamp(18px, 4.5vmin, 44px); font-weight: 600; }
   .note { text-align: right; font-size: var(--label); color: var(--dim); }
   /* A planned workout being followed: the step, its target, your watts against it, time left, what's next. */
+  [hidden] { display: none !important; }  /* a display rule (flex, grid) must not override hidden */
   .wk { display: flex; align-items: center; gap: var(--pad); background: var(--tile); border-radius: 12px;
         padding: 8px 14px; font-size: calc(var(--label) * 1.25); flex-wrap: wrap; position: relative; overflow: hidden; }
   .wk .big { font-size: clamp(22px, 6vmin, 56px); font-weight: 700; }
@@ -251,21 +255,28 @@
       <div class="grid4">
         <div class="tile"><div class="label">WATTS</div><div class="value" id="rWatts">–</div></div>
         <div class="tile"><div class="label" id="rSpmLabel">STROKES / MIN</div><div class="value" id="rSpm">–</div></div>
-        <div class="tile"><div class="label">PACE / 500 M</div><div class="value" id="rPace">–</div></div>
+        <div class="tile"><div class="label" id="rPaceLabel">PACE / 500 M</div><div class="value" id="rPace">–</div></div>
         <div class="tile" id="rDistTile"><div class="label">METRES</div><div class="value" id="rDist">0</div></div>
-        <div class="tile" id="rHrTile" hidden><div class="label" id="rHrLabel">HEART RATE</div><div class="value" id="rHr">–</div></div>
       </div>
+      <div class="bandbar" id="rPowBar" hidden></div>
       <div class="tile curve" id="rCurveTile" hidden><canvas id="rCurve"></canvas><div class="clen" id="rNote"></div></div>
       <canvas id="rRhythm" hidden></canvas>
       <div class="cue none" id="rCue" hidden>…</div>
+      <div class="bandbar" id="rHrBar" hidden></div>
       <div class="footer" id="rFooter"></div>
     </section>
 
     <section id="interval">
       <div class="label" id="iTitle">INTERVAL</div>
-      <div class="clockrow"><div class="value watts" id="iWatts">0 W</div><div class="hrmid" id="iHr"></div><div class="value" id="iClock">0:00</div></div>
+      <div class="metrics3">
+        <div><div class="value" id="iWatts">0</div><div class="label">WATTS</div></div>
+        <div><div class="value" id="iSpm">–</div><div class="label" id="iSpmLabel">STR / MIN</div></div>
+        <div><div class="value" id="iClock">0:00</div><div class="label" id="iClockLabel">TIME</div></div>
+      </div>
+      <div class="bandbar" id="iPowBar" hidden></div>
       <div class="tile curve live"><canvas id="iCurve"></canvas><div class="clen" id="iLen"></div></div>
       <div class="cue none" id="iCue">…</div>
+      <div class="bandbar" id="iHrBar" hidden></div>
     </section>
 
     <section id="summary">
@@ -614,12 +625,22 @@ function renderInterval(live) {
   const hr = state && state.metrics && state.metrics.heart_rate_bpm;
   $("iTitle").textContent = (live.intensity ? `${live.intensity.toUpperCase()} · ${live.index}` : `INTERVAL ${live.index}`)
     ;
-  // Heart rate and zone between the clock and the watts, in the zone's colour.
+  // As the floating window: watts (in their intensity band's colour), rate and time; the power bar under
+  // them and the heart-rate bar under the cue.
+  const wk = state.coach && state.coach.workout && state.coach.workout.state === "running" ? state.coach.workout : null;
+  const watts = wk && wk.power_w != null ? wk.power_w : live.power_w;
+  const pw = powerNow(state, watts);
+  $("iWatts").textContent = String(watts);
+  $("iWatts").style.color = pw ? pw.colour : "";
+  const m = state.metrics || {};
+  $("iSpm").textContent = String(wk && wk.spm != null ? wk.spm : Math.round(m.stroke_rate_spm ?? 0));
+  $("iSpmLabel").textContent = wk && wkRate(wk) ? `STR / MIN · aim ${wkRate(wk)}` : "STR / MIN";
+  $("iSpmLabel").style.color = wk && wk.spm_on && wk.spm_on !== "on" ? C.amber : "";
+  $("iClock").textContent = wk ? wkLeft(wk) : fmtTime(live.elapsed_s);
+  $("iClockLabel").textContent = wk ? "LEFT IN STEP" : "TIME";
+  setBar("iPowBar", pw, pw ? pw.name.toUpperCase() : "");
   const hz = hr ? hrNow(state) : null;
-  $("iHr").innerHTML = hz ? `♥ ${hz.bpm}` + (hz.zone ? ` <span class="hrzone">Z${hz.zone}</span>` + hrBarHtml(hz) : "") : "";
-  $("iHr").style.color = hz ? hz.colour : "";
-  $("iClock").textContent = fmtTime(live.elapsed_s);
-  $("iWatts").textContent = `${live.power_w} W`;
+  setBar("iHrBar", hz, hz ? `♥ ${hz.bpm}` : "");
   const judged = live.balance !== null && live.balance !== undefined;
   $("iLen").textContent = judged ? `length ${signed(live.length_delta_cm, " cm")}` : "";
   const cue = $("iCue"), [text, cueColour] = CUES[live.cue] || ["…", null];
@@ -661,22 +682,22 @@ function renderRowing(st) {
   show("rowing");
   const m = st.metrics || {}, rowing = !!st.rowing, live = (v) => rowing ? v : "–";
   const set = (id, v) => { $(id).textContent = v; $(id).classList.toggle("idle", v === "–"); };
-  set("rWatts", live(String(m.power_w ?? 0)));
-  set("rSpm", live(String(Math.round(m.stroke_rate_spm ?? 0))));
-  // A workout step with a rate target: the aim in the label, your rate green within it, amber outside.
+  // As the floating window: watts in their intensity band's colour (the power bar under the numbers),
+  // rate white with a rate target's aim in its label (amber when off it), pace or a step's time left.
   const wkr = st.coach && st.coach.workout && st.coach.workout.state === "running" ? st.coach.workout : null;
+  const watts = wkr && wkr.power_w != null ? wkr.power_w : m.power_w ?? 0;
+  const pw = rowing ? powerNow(st, watts) : null;
+  set("rWatts", live(String(watts)));
+  $("rWatts").style.color = pw ? pw.colour : "";
+  set("rSpm", live(String(wkr && wkr.spm != null ? wkr.spm : Math.round(m.stroke_rate_spm ?? 0))));
   $("rSpmLabel").textContent = wkr && wkRate(wkr) ? `STROKES / MIN · aim ${wkRate(wkr)}` : "STROKES / MIN";
-  $("rSpm").style.color = wkr && wkRate(wkr) && rowing ? wkRateColour(wkr) : "";
-  // Heart rate and its zone, in the zone's colour (with the coach: a fourth tile; without: the footer has it).
+  $("rSpmLabel").style.color = rowing && wkr && wkr.spm_on && wkr.spm_on !== "on" ? C.amber : "";
+  $("rSpm").style.color = "";
+  setBar("rPowBar", pw, pw ? pw.name.toUpperCase() : "");
   const hrz = hrNow(st);
-  $("rHrTile").hidden = !hrz;
-  $("rHrTile").closest(".grid4").classList.toggle("with-hr", !!hrz);
-  if (hrz) {
-    $("rHrLabel").textContent = hrz.zone ? `HEART RATE · ZONE ${hrz.zone}` : "HEART RATE";
-    $("rHr").innerHTML = `<div>${hrz.bpm}${hrBarHtml(hrz)}</div>`;
-    $("rHr").style.color = hrz.colour;
-  }
-  set("rPace", live(fmtPace(m.pace_s_per_500m ?? 0)));
+  setBar("rHrBar", hrz, hrz ? `♥ ${hrz.bpm}` : "");
+  $("rPaceLabel").textContent = wkr ? "LEFT IN STEP" : "PACE / 500 M";
+  set("rPace", wkr ? wkLeft(wkr) : live(fmtPace(m.pace_s_per_500m ?? 0)));
   set("rDist", String(m.distance_m ?? 0));
   const coach = st.coach;
   const curve = coach && coach.stroke_curve && coach.stroke_curve.length;
@@ -700,7 +721,7 @@ function renderRowing(st) {
     $("rCue").style.background = cueColour || "";
   }
   let footer = `${fmtTime(m.elapsed_s)} · ` + (curve ? `${m.distance_m ?? 0} m` : `${m.stroke_count ?? 0} strokes`);
-  if (m.heart_rate_bpm) footer += ` · ♥ ${m.heart_rate_bpm}`;
+  if (m.heart_rate_bpm && !hrz) footer += ` · ♥ ${m.heart_rate_bpm}`;  // else the heart-rate bar shows it
   if (!rowing) footer += " · paused";
   if (recovery) footer = "RECOVERY · " + footer;
   else if (coach) footer += coach.mode === "warmup" ? " · coach learning your Easy rowing"
@@ -739,11 +760,9 @@ function wkNext(w) {
   const len = n.kind === "time" ? fmtTime(n.length) : `${Math.round(n.length)} m`;
   return `next ${n.target_w !== null && n.target_w !== undefined ? n.target_w + " W" : "free"} · ${len}`;
 }
-const wkColour = (w) => w.on_target === "on" ? C.green : w.on_target ? C.amber : C.fg;
 // A step's stroke-rate range (a FIT workout's second target) and your rate against it.
 const wkRate = (w) => w && w.spm_low !== null && w.spm_low !== undefined
   ? (w.spm_low === w.spm_high ? `${w.spm_low}` : `${w.spm_low}–${w.spm_high}`) : null;
-const wkRateColour = (w) => w.spm_on === "on" ? C.green : w.spm_on ? C.amber : C.fg;
 // Heart rate and its zone (your intervals.icu zones: the top of each, in bpm), coloured as on the cards.
 const HR_COLOURS = ["#878787", "#58a6ff", "#3fb950", "#e3b341", "#f85149", "#d860a8", "#d860a8"];
 function hrNow(st) {
@@ -799,12 +818,19 @@ function powerNow(st, watts) {
   if (i < 0) i = out.length - 1;
   return { bpm: watts, zone: i + 1, colour: out[i].colour, bands: out, name: out[i].name };
 }
-// The same bar as HTML (web page tiles).
-function hrBarHtml(hr) {
-  if (!hr || !hr.bands.length) return "";
-  const lo = hr.bands[0].lo, span = hr.bands[hr.bands.length - 1].hi - lo;
-  const segs = hr.bands.map((b, k) => `<div style="flex:${(b.hi - b.lo) / span};background:${b.colour};opacity:${k + 1 === hr.zone ? 1 : 0.35}"></div>`).join("");
-  return `<div class="hrbar">${segs}<div class="hrmark" style="left:${(hrAt(hr) * 100).toFixed(1)}%;border-color:${hr.colour}"></div></div>`;
+// A band bar as HTML (the page's power and heart-rate bars): segments as wide as their range, the
+// current one lit, and a bubble carrying `label` where you are (kept inside the bar's ends).
+function bandBarHtml(o, label) {
+  if (!o || !o.bands.length) return "";
+  const lo = o.bands[0].lo, span = o.bands[o.bands.length - 1].hi - lo;
+  const segs = o.bands.map((b, k) => `<div style="flex:${(b.hi - b.lo) / span};background:${b.colour};opacity:${k + 1 === o.zone ? 1 : 0.35}"></div>`).join("");
+  const at = Math.max(7, Math.min(93, hrAt(o) * 100));
+  return segs + `<div class="bub" style="left:${at.toFixed(1)}%;border-color:${o.colour};color:${o.colour}">${esc(label)}</div>`;
+}
+function setBar(id, o, label) {
+  const el = $(id), html = bandBarHtml(o, label);
+  el.hidden = !html;
+  if (html) el.innerHTML = html;
 }
 function wkNote(w) {  // a workout waiting for its first stroke, or just done
   if (!w) return null;
@@ -820,13 +846,12 @@ function renderWorkout(st) {
   const note = wkNote(w);
   el.className = note ? "wk note-only" : "wk";
   if (note) { el.textContent = note; return; }
-  const cls = w.on_target === "on" ? "on" : w.on_target ? "off" : "";
+  // The step and its targets; your watts, rate and the time left are in the numbers below (as the
+  // floating window), so they aren't repeated here.
   const done = w.length ? Math.min(100, Math.max(0, (1 - w.left / w.length) * 100)) : 0;
   el.innerHTML = `<span class="dimmed">STEP ${w.step}/${w.steps}</span>` +
     `<span>TARGET <span class="big">${esc(wkTarget(w))}</span>${w.target_w !== null && w.target_w !== undefined ? " W" : ""}</span>` +
-    `<span>NOW <span class="big ${cls}">${w.power_w ?? "–"}</span> W</span>` +
-    (wkRate(w) ? `<span>RATE <span class="big" style="color:${wkRateColour(w)}">${w.spm ?? "–"}</span> spm <span class="dimmed">aim ${wkRate(w)}</span></span>` : "") +
-    `<span><span class="big">${esc(wkLeft(w))}</span> left</span>` +
+    (wkRate(w) ? `<span>RATE <span class="big">${wkRate(w)}</span> spm</span>` : "") +
 
     `<span class="dimmed">${esc(wkNext(w))}</span><div class="bar" style="width:${done}%"></div>`;
 }
@@ -2715,7 +2740,8 @@ function drawPipView() {
     text(label, W / 2, cueY + CUE_H / 2, size, cueColour ? C.bg : C.dim, "center", !!cueColour);
     footer();
   } else {
-    text(rowing ? wkWatts(`${m.power_w} W`) : "–", W / 2, H * 0.28, 92, !rowing ? C.faint : wk ? wkColour(wk) : C.fg, "center");
+    const pwr = rowing ? powerNow(st, wk && wk.power_w != null ? wk.power_w : m.power_w) : null;
+    text(rowing ? wkWatts(`${m.power_w} W`) : "–", W / 2, H * 0.28, 92, !rowing ? C.faint : pwr ? pwr.colour : C.fg, "center");
     if (wk) text(`${wkLeft(wk)} left in step`, W / 2, H * 0.52, 34, C.fg, "center");
     else text(rowing ? `${fmtPace(m.pace_s_per_500m)} /500m · ${Math.round(m.stroke_rate_spm)} spm` : "paused",
               W / 2, H * 0.52, 30, rowing ? C.fg : C.dim, "center", false);

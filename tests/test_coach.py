@@ -90,6 +90,8 @@ class CoachTest(unittest.TestCase):
         r.coach.hr_zones = {"tops": [121, 140, 158, 178, 185]}  # from intervals.icu at start-up
         r.row(5, 110)
         self.assertEqual(r.state()["hr_zones"]["tops"], [121, 140, 158, 178, 185])  # the live zone bar needs them
+        self.assertEqual([b[0] for b in r.state()["power_bands"]],  # the live power bar
+                         ["Recovery", "Easy", "Moderate", "Challenging", "Max"])
 
     def test_summary_goes_away(self):
         r = Rower()
