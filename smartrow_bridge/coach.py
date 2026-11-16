@@ -1390,6 +1390,8 @@ class IntervalCoach:
             "rhythm": _live_rhythm(self.stroke_log, now) if self.effort is None else None,
             "workout": self._workout_state(now),
             "hr_zones": self.hr_zones,  # for the live heart-rate zone bar (screen, page, floating window)
+            # the intensity bands in watts, for the live power bar (floating window)
+            "power_bands": [list(b) for b in intensity_bands(self.ftp, self.steady_power())],
         }
         if out["intensity"] not in (None, "Recovery", "Easy"):
             out["intensity"] = "Easy"  # above Easy but not (yet) an effort

@@ -765,7 +765,7 @@ const hrAt = (h) => {
 };
 // The zone bar on a canvas: the zones side by side, each as wide as its bpm range, in its colour (dimmed),
 // the current zone at full colour, and a marker at your heart rate carrying the number.
-function drawHrBar(g, x, y, w, h, hr, size) {
+function drawHrBar(g, x, y, w, h, hr, size, label = String(hr.bpm)) {
   if (!hr.bands.length) return;
   const lo = hr.bands[0].lo, span = hr.bands[hr.bands.length - 1].hi - lo;
   hr.bands.forEach((b, k) => {
@@ -774,13 +774,30 @@ function drawHrBar(g, x, y, w, h, hr, size) {
     g.fillStyle = b.colour; g.fillRect(x0 + (k ? 1 : 0), y, x1 - x0 - (k ? 1 : 0), h);
   });
   g.globalAlpha = 1;
-  const mx = x + hrAt(hr) * w, label = String(hr.bpm);
+  const mx = x + hrAt(hr) * w;
+  if (!label) {  // a plain marker
+    g.fillStyle = C.fg; g.strokeStyle = C.bg; g.lineWidth = 2;
+    g.beginPath(); g.roundRect(mx - 3, y - 5, 6, h + 10, 3); g.fill(); g.stroke();
+    return;
+  }
   g.font = `700 ${size}px system-ui, sans-serif`;
   const bw = g.measureText(label).width + 12, bh = size + 6;
   const bx = Math.max(x, Math.min(x + w - bw, mx - bw / 2)), by = y + h / 2 - bh / 2;
   g.fillStyle = C.bg; g.strokeStyle = hr.colour; g.lineWidth = 2;
   g.beginPath(); g.roundRect(bx, by, bw, bh, bh / 2); g.fill(); g.stroke();
   g.fillStyle = hr.colour; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(label, bx + bw / 2, by + bh / 2 + 1);
+}
+// Your power within the intensity bands (Recovery to Max, coloured as the countdown), in the same
+// shape as the heart-rate zones so drawHrBar draws it: Recovery and Max get a width to show.
+function powerNow(st, watts) {
+  const bands = (st && st.coach && st.coach.power_bands) || [];
+  if (bands.length < 3 || watts === null || watts === undefined) return null;
+  const cut = bands.slice(1).map((b) => b[1]);  // the boundaries, low to high
+  const lo = Math.max(0, cut[0] - (cut[1] - cut[0]) * 0.6), hi = cut[cut.length - 1] + (cut[cut.length - 1] - cut[cut.length - 2]) * 0.6;
+  const out = bands.map(([name, a, b]) => ({ lo: a ?? lo, hi: b ?? hi, colour: ZONE_COLOURS[name] || C.dim, name }));
+  let i = out.findIndex((b) => watts < b.hi);
+  if (i < 0) i = out.length - 1;
+  return { bpm: watts, zone: i + 1, colour: out[i].colour, bands: out, name: out[i].name };
 }
 // The same bar as HTML (web page tiles).
 function hrBarHtml(hr) {
@@ -2579,7 +2596,9 @@ function drawPipView() {
   const coach = st.coach, live = coach && coach.live, last = coach && coach.last;
   const m = st.metrics || {}, rowing = !!st.rowing;
   // The bottom line: time since the first stroke and heart rate, on every view.
-  const session = (m.elapsed_s ? `⏱ ${fmtTime(m.elapsed_s)}` : "") + (m.heart_rate_bpm ? `   ♥ ${m.heart_rate_bpm}` : "");
+  // (heart rate only when it has no zone bar above)
+  const session = (m.elapsed_s ? `⏱ ${fmtTime(m.elapsed_s)}` : "")
+    + (m.heart_rate_bpm && !hrNow(st) ? `   ♥ ${m.heart_rate_bpm}` : "");
   const CUE_H = 78, FOOT = 34;  // cue banner and the bottom line
   // Following a planned workout: the bottom line is the step and what's next; the numbers at the top are
   // the step's time left and your watts, coloured against its target.
@@ -2597,25 +2616,42 @@ function drawPipView() {
   // within it, amber outside) on the left, heart rate and zone in the centre (in the zone's colour), the
   // rate aim on the right. Left out when there is neither.
   const hr = hrNow(st), rateAim = wk ? wkRate(wk) : null;
-  const RATE_H = hr || rateAim ? 30 : 0;
   const narrow = W < 450;  // the tall floating window
-  const rateRow = (y) => {
-    if (rateAim) {
-      text(`${wk.spm ?? "–"} spm`, 16, y, narrow ? 24 : 26, wkRateColour(wk), "left");
-      text(`aim ${rateAim}`, W - 16, y, narrow ? 17 : 20, C.dim, "right", false);
-    }
-    if (hr && hr.bands.length) {  // the zone bar between them (the whole width without a rate target)
-      const x0 = rateAim ? (narrow ? 112 : 132) : 16, x1 = rateAim ? W - (narrow ? 108 : 128) : W - 16;
-      drawHrBar(g, x0, y - 5, x1 - x0, 10, hr, narrow ? 17 : 19);
-    } else if (hr) text(`♥ ${hr.bpm}`, W / 2, y, narrow ? 23 : 26, hr.colour, "center");
+  // The top, as the SmartRow app lays it out: power, stroke rate and a time (or pace) evenly spaced, each
+  // number large over its label; power (and rate) coloured against a workout's targets. Under them, your
+  // power within the intensity bands (current band lit, a marker where you are).
+  const TOP_H = 92;
+  const metricsTop = (cols, watts) => {
+    const cw = (W - 16) / 3;
+    cols.forEach(([value, label, colour], k) => {
+      const cx = 8 + cw * (k + 0.5);
+      text(value, cx, 34, fit(value, narrow ? 40 : 46, cw - 10, false), colour, "center", false);
+      text(label, cx, 64, fit(label, 14, cw - 8, false), C.dim, "center", false);
+    });
+    const pw = powerNow(st, watts);
+    if (pw) drawHrBar(g, 16, 80, W - 32, 6, pw, 0, null);
+  };
+  const rate = () => {
+    const spm = wk && wk.spm != null ? wk.spm : Math.round(m.stroke_rate_spm ?? 0);
+    return [rowing ? String(spm) : "–", rateAim ? `STR/MIN · ${rateAim}` : "STR/MIN",
+            !rowing ? C.faint : rateAim ? wkRateColour(wk) : C.fg];
+  };
+  // The bottom: heart rate within your zones (the number on the marker), above the bottom line.
+  const HR_H = hr ? 30 : 0;
+  const hrBottom = () => {
+    if (!hr) return;
+    const y = H - FOOT - HR_H / 2 - 2;
+    if (hr.bands.length) drawHrBar(g, 16, y - 4, W - 32, 8, hr, narrow ? 17 : 19, `♥ ${hr.bpm}`);
+    else text(`♥ ${hr.bpm}`, W / 2, y, 22, hr.colour, "center");
   };
   if (live) {
-    // Power on the left, the effort's (or step's) time on the right, as in every view; the same size.
-    text(wkWatts(`${live.power_w} W`), 16, 42, 54, wk ? wkColour(wk) : C.fg, "left");
-    text(wk ? wkLeft(wk) : fmtTime(live.elapsed_s), W - 16, 42, 54, C.fg, "right");
-    rateRow(88);
+    // Power, rate and the effort's (or step's) time, as in every view.
+    const watts = wk && wk.power_w != null ? wk.power_w : live.power_w;
+    metricsTop([[String(watts), "WATTS", wk ? wkColour(wk) : C.fg], rate(),
+                [wk ? wkLeft(wk) : fmtTime(live.elapsed_s), wk ? "LEFT IN STEP" : `${(live.intensity || "EFFORT").toUpperCase()} ${live.index}`, C.fg]], watts);
+    hrBottom();
     const [, curveColour] = CUES[live.cue] || ["", C.fg];
-    const top = 80 + RATE_H + (RATE_H ? 6 : 0), cueY = H - FOOT - CUE_H - 6;
+    const top = TOP_H + 4, cueY = H - FOOT - HR_H - CUE_H - 6;
     box(top, cueY - top - 8, C.tile);
     plotCurve(g, 10, top, W - 20, cueY - top - 8, live.stroke_curve || live.curve, live.steady_curve, curveColour, "both", false, 1, live.stall);
     if (live.balance !== null && live.balance !== undefined && live.length_delta_cm !== null && live.length_delta_cm !== undefined)
@@ -2653,12 +2689,13 @@ function drawPipView() {
   } else if (coach && coach.stroke_curve && coach.stroke_curve.length && coach.intensity !== "Recovery") {
     // Easy: power, then pace and rate, each stroke over your fresh Easy stroke, and the cue.
     const [label, cueColour] = CUES[coach.cue] || [coach.waiting || (coach.warming_up ? "warming up" : "learning your Easy stroke"), null];
-    text(rowing ? wkWatts(`${m.power_w} W`) : "–", 16, 36, 44, !rowing ? C.faint : wk ? wkColour(wk) : C.fg, "left");
-    if (wk) text(`${wkLeft(wk)} left`, W - 16, 36, 30, C.fg, "right");
-    else text(rowing ? `${fmtPace(m.pace_s_per_500m)} · ${Math.round(m.stroke_rate_spm)} spm` : "paused",
-              W - 16, 36, 24, rowing ? C.fg : C.dim, "right", false);
-    rateRow(80);
-    const top = 70 + RATE_H + (RATE_H ? 8 : 0), cueY = H - FOOT - CUE_H - 6;
+    const watts = wk && wk.power_w != null ? wk.power_w : m.power_w;
+    metricsTop([[rowing ? String(watts) : "–", "WATTS", !rowing ? C.faint : wk ? wkColour(wk) : C.fg], rate(),
+                wk ? [wkLeft(wk), "LEFT IN STEP", C.fg]
+                   : [rowing ? fmtPace(m.pace_s_per_500m) : "paused", rowing ? "PACE /500m" : "", rowing ? C.fg : C.dim]],
+               rowing ? watts : null);
+    hrBottom();
+    const top = TOP_H + 4, cueY = H - FOOT - HR_H - CUE_H - 6;
     const rhythm = rowing ? coach.rhythm : null, RH = 24;  // the drive:recovery bar, as on the screen
     const curveH = cueY - top - 8 - (rhythm ? RH + 6 : 0);
     box(top, curveH, C.tile);
