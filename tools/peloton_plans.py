@@ -191,27 +191,38 @@ def fetch(args, client: Client | None = None) -> Client:
     return client
 
 
-def fetch_history(client: Client, cache: Path) -> int:
+def fetch_history(client: Client, cache: Path, full: bool = False) -> int:
     """Your own workouts (which class, when), for "taken before" on the Classes page: saved as
     history.json, [{"ride": class id, "start": epoch s}], newest first."""
     me = client.get("/api/me")
     user = me.get("id")
     if not user:
         raise SystemExit("Peloton didn't say who you are (no id in /api/me).")
-    out, page = [], 0
+    # Newest first: once a page reaches workouts already saved, the rest are saved too (a few requests
+    # after a row instead of the whole history). full=True reads it all again.
+    try:
+        known = [] if full else json.loads(Path(cache, "history.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        known = []
+    seen = {(k["ride"], k["start"]) for k in known}
+    out, page, overlap = [], 0, False
     while True:
         reply = client.get(f"/api/user/{user}/workouts", joins="ride", limit=100, page=page, sort_by="-created")
         for w in reply.get("data") or []:
             ride = (w.get("ride") or {}).get("id") or w.get("ride_id")
             start = w.get("start_time") or w.get("created_at")
             if ride and start:
-                out.append({"ride": ride, "start": int(start)})
+                if (ride, int(start)) in seen:
+                    overlap = True
+                else:
+                    out.append({"ride": ride, "start": int(start)})
         page += 1
-        if page >= (reply.get("page_count") or 0) or not reply.get("data"):
+        if overlap or page >= (reply.get("page_count") or 0) or not reply.get("data"):
             break
-    Path(cache, "history.json").write_text(json.dumps(out), encoding="utf-8")
-    print(f"Your workout history: {len(out)} workouts")
-    return len(out)
+    merged = sorted(out + (known if overlap else []), key=lambda k: -k["start"])
+    Path(cache, "history.json").write_text(json.dumps(merged), encoding="utf-8")
+    print(f"Your workout history: {len(merged)} workouts ({len(out)} new, {page} page{'s' * (page != 1)} read)")
+    return len(merged)
 
 
 def history(args) -> None:
@@ -979,7 +990,7 @@ def auto(args) -> None:
             args.refresh, args.max, args.drills, args.title = True, None, False, None
             args.minutes = [m for m in (60, 45, 30, 20) if m >= args.min_minutes]
             fetch(args, client)
-        fetch_history(client, cache)
+        fetch_history(client, cache, full=args.weekly)  # weekly: all of it, in case a workout was removed
     except (peloton_auth.SignInNeeded, SystemExit) as exc:
         write_sync(out, ok=False, at=int(now), message=str(exc), auth_mtime=auth.stat().st_mtime)
         raise SystemExit(f"Peloton: {exc}") from None

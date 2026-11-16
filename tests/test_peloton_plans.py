@@ -221,6 +221,26 @@ class TakenAndBookmarksTest(unittest.TestCase):
             self.assertEqual(json.loads(Path(tmp, "history.json").read_text()),
                              [{"ride": "a", "start": 5}, {"ride": "b", "start": 4}, {"ride": "c", "start": 3}])
 
+    def test_fetch_history_stops_at_what_is_saved(self):
+        calls = []
+
+        class FakeClient:
+            def get(self, path, **params):
+                if path == "/api/me":
+                    return {"id": "u1"}
+                calls.append(params["page"])
+                pages = [{"data": [{"ride": {"id": "new"}, "start_time": 9}, {"ride": {"id": "a"}, "start_time": 5}],
+                          "page_count": 3}, {"data": [], "page_count": 3}, {"data": [], "page_count": 3}]
+                return pages[params["page"]]
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "history.json").write_text(json.dumps([{"ride": "a", "start": 5}, {"ride": "b", "start": 4}]))
+            self.assertEqual(pp.fetch_history(FakeClient(), Path(tmp)), 3)
+            self.assertEqual(calls, [0])  # one page: it reached a saved workout
+            self.assertEqual([k["ride"] for k in json.loads(Path(tmp, "history.json").read_text())], ["new", "a", "b"])
+            calls.clear()
+            pp.fetch_history(FakeClient(), Path(tmp), full=True)  # the weekly run reads it all again
+            self.assertEqual(calls, [0, 1])
+
 
 class DrillsTest(unittest.TestCase):
     CATALOGUE = [
