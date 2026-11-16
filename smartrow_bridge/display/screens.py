@@ -570,7 +570,8 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
         text, colour = CUES.get(cue, ("", BLUE)) if cue else ("", BLUE)
         rhythm = coach.get("rhythm") if rowing else None
         bottom = 162 if hr_shown else 188  # the curve (and rhythm bar) down to the slim cue banner
-        _plot_curves(draw, (4, 92, WIDTH - 4, bottom - 17 if rhythm else bottom), coach["stroke_curve"], steady, colour, "both")
+        _plot_curves(draw, (4, 92, WIDTH - 4, bottom - 17 if rhythm else bottom), coach["stroke_curve"], steady, colour, "both",
+                     grid=True)
         if rhythm:
             _rhythm_bar(draw, (4, bottom - 13, WIDTH - 4, bottom), rhythm)
         head = f"EASY  \u00b7  {format_time(m.get('elapsed_s', 0))}"
@@ -720,8 +721,17 @@ def _shade(colour: tuple, amount: float = 0.35) -> tuple:
     return tuple(int(c * amount) for c in colour)
 
 
+GRID_STEP_N, GRID_MIN_N = 200, 600
+
+
+def grid_top(peak: float) -> int:
+    """The force scale for the live curves (as the SmartRow app's chart): the next 200 N above the peak
+    with a little headroom, never under 600, so the lines only move when a stroke crosses one."""
+    return max(GRID_MIN_N, math.ceil(peak * 1.08 / GRID_STEP_N) * GRID_STEP_N)
+
+
 def _plot_curves(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], curve: list, steady: list,
-                 colour: tuple, gap_half: str = "back", stall: dict | None = None) -> None:
+                 colour: tuple, gap_half: str = "back", stall: dict | None = None, grid: bool = False) -> None:
     """The effort's force curve, filled, over the steady curve as a thin grey line.
 
     The steady curve is scaled to the same total force, so the picture compares shape
@@ -735,6 +745,13 @@ def _plot_curves(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], curv
     draw.rounded_rectangle(box, radius=8, fill=TILE)
     x0, y0, x1, y1 = x0 + 8, y0 + 8, x1 - 8, y1 - 4
     top = max([*curve, *steady, 1])
+    if grid:  # faint lines every 200 N with their values at the left
+        top = grid_top(top)
+        for v in range(GRID_STEP_N, top, GRID_STEP_N):
+            y = round(y1 - (y1 - y0) * v / top)
+            draw.line((x0, y, x1, y), fill=(52, 52, 52))
+            if y - y0 > 16:  # not under the curve's heading
+                draw.text((x0 + 1, y - 1), str(v), font=font(9), fill=(100, 100, 100), anchor="lb")
 
     def points(values: list) -> list[tuple[float, float]]:
         values = [0, *values]  # the curve starts at the catch with no force
@@ -838,7 +855,7 @@ def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
     stroke = live.get("stroke_curve") or live.get("curve") or []
     curve_colour = CUES.get(live.get("cue"), ("", FG))[1] if live.get("cue") else FG
     _plot_curves(draw, (4, 92, WIDTH - 4, bottom), stroke, live.get("steady_curve") or [], curve_colour, "both",
-                 live.get("stall"))
+                 live.get("stall"), grid=True)
     note = []
     if live.get("balance") is not None and live.get("length_delta_cm") is not None:
         note.append(f"length {live['length_delta_cm']:+d} cm".replace("-", "\u2212"))

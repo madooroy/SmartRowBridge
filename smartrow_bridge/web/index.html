@@ -529,25 +529,40 @@ function drawRhythm(canvas, rhythm) {
   plotRhythm(g, 0, 2, w, h - 4, rhythm);
 }
 
-function drawCurve(canvas, curve, steady, colour, gapHalf = "back", labels = true, stall = null) {
+function drawCurve(canvas, curve, steady, colour, gapHalf = "back", labels = true, stall = null, grid = false) {
   const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
   if (!w || !h) return;
   canvas.width = w * dpr; canvas.height = h * dpr;
   const g = canvas.getContext("2d");
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, w, h);
-  plotCurve(g, 0, 0, w, h, curve, steady, colour, gapHalf, labels, 1, stall);
+  plotCurve(g, 0, 0, w, h, curve, steady, colour, gapHalf, labels, 1, stall, grid);
 }
+// The force scale for the live curves (as the SmartRow app's chart): in newtons, to the next 200 above the
+// stroke's peak with a little headroom, never under 600, so the lines only move when a stroke crosses one.
+const GRID_STEP_N = 200, GRID_MIN_N = 600;
+const gridTop = (peak) => Math.max(GRID_MIN_N, Math.ceil(peak * 1.08 / GRID_STEP_N) * GRID_STEP_N);
 
 // The effort's curve (filled) over the steady shape (grey line, scaled to the same total
 // force), with the force missing against steady filled in the half that matters.
-function plotCurve(g, bx, by, w, h, curve, steady, colour, gapHalf = "back", labels = true, scale = 1, stall = null) {
+function plotCurve(g, bx, by, w, h, curve, steady, colour, gapHalf = "back", labels = true, scale = 1, stall = null, grid = false) {
   curve = curve || []; steady = steady || [];
   const sumC = curve.reduce((a, b) => a + b, 0), sumS = steady.reduce((a, b) => a + b, 0);
   if (sumC && sumS) steady = steady.map((v) => v * sumC / sumS);  // compare shape, not size
   const x0 = bx + 14 * scale, x1 = bx + w - 14 * scale;
   const y0 = by + (labels ? 26 : 8) * scale, y1 = by + h - (labels ? 22 : 6) * scale;
-  const top = Math.max(1, ...curve, ...steady);
+  const top = grid ? gridTop(Math.max(1, ...curve, ...steady)) : Math.max(1, ...curve, ...steady);
+  if (grid) {  // faint lines every 200 N with their values at the left, as the SmartRow app's chart
+    g.save();
+    g.font = `${Math.round(Math.max(13, Math.min(18, h * 0.045)) * scale)}px system-ui, sans-serif`; g.textAlign = "left"; g.textBaseline = "bottom";
+    for (let v = GRID_STEP_N; v < top; v += GRID_STEP_N) {
+      const y = Math.round(y1 - (y1 - y0) * v / top) + 0.5;
+      g.strokeStyle = "rgba(255,255,255,0.10)"; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke();
+      if (y - y0 > 18) { g.fillStyle = "rgba(255,255,255,0.35)"; g.fillText(String(v), x0 + 2, y - 2); }
+    }
+    g.restore();
+  }
   const pts = (vals) => [0, ...vals].map((v, i, a) => [x0 + i * (x1 - x0) / (a.length - 1), y1 - (y1 - y0) * v / top]);
   // Half-way along the steady drive (samples are spaced by distance; as coach.drive_end), +1 for the leading 0.
   const ref = steady.length ? steady : curve, topRef = Math.max(1, ...ref);
@@ -654,7 +669,7 @@ function renderInterval(live) {
   cue.className = cueColour ? "cue" : "cue none";
   cue.style.background = cueColour || "";
   // As in the SmartRow app: each stroke over your steady shape, the force missing against it in light grey.
-  drawCurve($("iCurve"), live.stroke_curve || live.curve, live.steady_curve, cueColour || C.fg, "both", true, live.stall);
+  drawCurve($("iCurve"), live.stroke_curve || live.curve, live.steady_curve, cueColour || C.fg, "both", true, live.stall, true);
 }
 
 function renderSummary(last) {
@@ -719,7 +734,7 @@ function renderRowing(st) {
     const drift = coach.cue === "good" && coach.drift;
     const [text, cueColour] = drift ? [coach.drift, null]
       : CUES[coach.cue] || [coach.waiting || (coach.warming_up ? "warming up" : "learning your Easy stroke"), null];
-    drawCurve($("rCurve"), coach.stroke_curve, coach.steady_curve, cueColour || C.blue, "both");
+    drawCurve($("rCurve"), coach.stroke_curve, coach.steady_curve, cueColour || C.blue, "both", true, null, true);
     $("rNote").textContent = "EASY" + (coach.length_delta_cm !== null && coach.length_delta_cm !== undefined
       ? ` · length ${signed(coach.length_delta_cm, " cm")}` : "");
     $("rCue").textContent = text;
@@ -2701,7 +2716,7 @@ function drawPipView() {
     const [, curveColour] = CUES[live.cue] || ["", C.fg];
     const top = TOP_H + 4, cueY = H - FOOT - HR_H - CUE_H - 6;
     box(top, cueY - top - 8, C.tile);
-    plotCurve(g, 10, top, W - 20, cueY - top - 8, live.stroke_curve || live.curve, live.steady_curve, curveColour, "both", false, 1, live.stall);
+    plotCurve(g, 10, top, W - 20, cueY - top - 8, live.stroke_curve || live.curve, live.steady_curve, curveColour, "both", false, 1, live.stall, true);
     if (live.balance !== null && live.balance !== undefined && live.length_delta_cm !== null && live.length_delta_cm !== undefined)
       text(`length ${signed(live.length_delta_cm, " cm")}`, 22, top + 16, 16, C.dim, "left", false);
     const [label, cueColour] = CUES[live.cue] || ["…", C.tile];
@@ -2747,7 +2762,7 @@ function drawPipView() {
     const rhythm = rowing ? coach.rhythm : null, RH = 24;  // the drive:recovery bar, as on the screen
     const curveH = cueY - top - 8 - (rhythm ? RH + 6 : 0);
     box(top, curveH, C.tile);
-    plotCurve(g, 10, top, W - 20, curveH, coach.stroke_curve, coach.steady_curve, cueColour || C.blue, "both", false);
+    plotCurve(g, 10, top, W - 20, curveH, coach.stroke_curve, coach.steady_curve, cueColour || C.blue, "both", false, 1, null, true);
     if (rhythm) plotRhythm(g, 10, top + curveH + 6, W - 20, RH, rhythm);
     text("EASY", 22, top + 16, 16, C.dim, "left");
     box(cueY, CUE_H, cueColour || C.tile, 12);
