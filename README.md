@@ -738,8 +738,13 @@ stroke`, and the screen shows `READY: Adrestia`. The workout starts with your fi
   green inside the range and amber outside it, with the aim beside it; after the row each step gets its
   average rate against the range and the share of its strokes inside it (the Workout card's SPM column).
 - **Heart rate** (with a strap): the number and a bar of your intervals.icu heart-rate zones, each as wide
-  as its range, the current zone lit and a marker where you are; in the top line of the screen, under the
-  big numbers in the floating window, a tile on the web page. Watts are always on the left, time on the right.
+  as its range, the current zone lit and a marker where you are (on the screen, in its top line).
+- **Floating window and web page** (as the SmartRow app): watts, strokes/min and pace (a workout step's
+  time left; in an effort, its time) evenly spaced, each number over its label. Watts take the colour of
+  the intensity band they're in; under the numbers a bar of the bands (Recovery to Max) with the current
+  one lit and a bubble naming it; at the bottom the same-size heart-rate zone bar with your heart rate in
+  its bubble. A rate target shows in the rate's label, amber when you're outside it. Watts are always on
+  the left, time on the right.
 - **After the row:** each step's average power against its target (its first 8 s left out) and the share of
   its strokes within 5%, in the session's findings and on a **Workout card**; the session card draws the plan
   as a dashed line over your power.
