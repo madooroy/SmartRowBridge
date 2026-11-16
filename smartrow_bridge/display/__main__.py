@@ -234,7 +234,7 @@ def preview(directory: str) -> None:
                  "balance": 1.4, "length_balance": 0.0}
     def with_hr(status, workout, bpm):
         """A status with heart rate and intervals.icu zones (tops in bpm), and the workout when given."""
-        coach = {**(status.get("coach") or {}), "hr_zones": {"tops": [121, 140, 158, 178, 185]},
+        coach = {**(status.get("coach") or {}), "hr_zones": {"tops": [121, 140, 158, 178, 185], "max_hr": 185},
                  "power_bands": [["Recovery", None, 92], ["Easy", 92, 141], ["Moderate", 141, 187],
                                  ["Challenging", 187, 237], ["Max", 237, None]]}
         if workout:

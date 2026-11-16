@@ -67,16 +67,19 @@
   #rowing.coached .grid4 .value { font-weight: 400; }
   .metrics3 { display: grid; grid-template-columns: repeat(3, 1fr); text-align: center; }
   .metrics3 .value { font-weight: 400; font-size: clamp(36px, 11vmin, 124px); }
-  /* The power (intensity bands) and heart-rate (zones) bars: the same size; the current band lit,
-     a bubble at your watts or heart rate. */
-  .bandbar { position: relative; display: flex; gap: 2px; height: 10px; margin: 16px 6px; flex: none; }
-  .bandbar > div:not(.bub) { border-radius: 2px; }
-  .bandbar:has(.num) { margin-bottom: calc(16px + 1.6em); }
-  .bandbar .num { position: absolute; top: 22px; transform: translateX(-50%); color: var(--dim);
+  /* The power and heart-rate zone bars, as on Peloton's screens: equal segments, filled up to where you
+     are; under the power bar, the bottom of each zone at its border. */
+  .bandbar { flex: none; margin: 10px 6px; }
+  .zsegs { display: flex; gap: 4px; height: 12px; }
+  .zseg { flex: 1; background: #2e2e2e; border-radius: 6px; overflow: hidden; }
+  .zseg > div { height: 100%; border-radius: 6px; }
+  .znums { position: relative; height: 1.5em; margin-top: 4px; color: var(--dim);
     font-size: clamp(13px, 2.4vmin, 20px); font-variant-numeric: tabular-nums; }
-  .bandbar .bub { position: absolute; top: 50%; transform: translate(-50%, -50%); background: var(--bg);
-    border: 2px solid; border-radius: 999px; padding: 1px 10px; font-weight: 700; white-space: nowrap;
-    font-size: clamp(13px, 2.6vmin, 22px); }
+  .znums span { position: absolute; transform: translateX(-50%); }
+  .zhead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px;
+    font-size: clamp(13px, 2.4vmin, 20px); }
+  .zhead b { font-size: 1.6em; }
+  .zhead .dimmed { color: var(--dim); }
   #rCurveTile { flex: 1; min-height: 120px; }
   #rRhythm { flex: none; width: 100%; height: clamp(20px, 4.5vmin, 40px); display: block; }
   .footer.idle { color: var(--dim); }
@@ -641,9 +644,9 @@ function renderInterval(live) {
   $("iSpmLabel").style.color = wk && wk.spm_on && wk.spm_on !== "on" ? C.amber : "";
   $("iClock").textContent = wk ? wkLeft(wk) : fmtTime(live.elapsed_s);
   $("iClockLabel").textContent = wk ? "LEFT IN STEP" : "TIME";
-  setBar("iPowBar", pw, pw ? pw.name.toUpperCase() : "");
+  setBar("iPowBar", zoneBarHtml(pw));
   const hz = hr ? hrNow(state) : null;
-  setBar("iHrBar", hz, hz ? `♥ ${hz.bpm}` : "");
+  setBar("iHrBar", hz && hz.zone ? zoneBarHtml(hz, hrHead(hz)) : "");
   const judged = live.balance !== null && live.balance !== undefined;
   $("iLen").textContent = judged ? `length ${signed(live.length_delta_cm, " cm")}` : "";
   const cue = $("iCue"), [text, cueColour] = CUES[live.cue] || ["…", null];
@@ -696,9 +699,9 @@ function renderRowing(st) {
   $("rSpmLabel").textContent = wkr && wkRate(wkr) ? `STROKES / MIN · aim ${wkRate(wkr)}` : "STROKES / MIN";
   $("rSpmLabel").style.color = rowing && wkr && wkr.spm_on && wkr.spm_on !== "on" ? C.amber : "";
   $("rSpm").style.color = "";
-  setBar("rPowBar", pw, pw ? pw.name.toUpperCase() : "");
+  setBar("rPowBar", zoneBarHtml(pw));
   const hrz = hrNow(st);
-  setBar("rHrBar", hrz, hrz ? `♥ ${hrz.bpm}` : "");
+  setBar("rHrBar", hrz && hrz.zone ? zoneBarHtml(hrz, hrHead(hrz)) : "");
   $("rPaceLabel").textContent = wkr ? "LEFT IN STEP" : "PACE / 500 M";
   set("rPace", wkr ? wkLeft(wkr) : live(fmtPace(m.pace_s_per_500m ?? 0)));
   set("rDist", String(m.distance_m ?? 0));
@@ -771,73 +774,73 @@ const HR_COLOURS = ["#878787", "#58a6ff", "#3fb950", "#e3b341", "#f85149", "#d86
 function hrNow(st) {
   const bpm = st && st.metrics && st.metrics.heart_rate_bpm;
   if (!bpm) return null;
-  const tops = (st.coach && st.coach.hr_zones && st.coach.hr_zones.tops) || [];
+  const hz = (st.coach && st.coach.hr_zones) || {}, tops = hz.tops || [];
   if (!tops.length) return { bpm, zone: null, colour: C.fg, bands: [] };
   let i = tops.findIndex((t) => bpm <= t);
   if (i < 0) i = tops.length - 1;
-  // The zones as bpm ranges for the bar: zone 1 starts as far below its top as zone 2 is wide.
+  // The zones as bpm ranges: zone 1 starts as far below its top as zone 2 is wide.
   const floor = tops.length > 1 ? tops[0] - (tops[1] - tops[0]) : tops[0] - 20;
   const bands = tops.map((top, k) => ({ lo: k ? tops[k - 1] : floor, hi: top, colour: HR_COLOURS[Math.min(k, HR_COLOURS.length - 1)] }));
-  return { bpm, zone: i + 1, colour: HR_COLOURS[Math.min(i, HR_COLOURS.length - 1)], bands };
+  return { bpm, value: bpm, zone: i + 1, colour: HR_COLOURS[Math.min(i, HR_COLOURS.length - 1)], bands,
+           maxPct: hz.max_hr ? Math.round(bpm * 100 / hz.max_hr) : null };
 }
-// Where bpm sits along the zone bar, 0-1 (clamped to the bar's ends).
-const hrAt = (h) => {
-  const lo = h.bands[0].lo, hi = h.bands[h.bands.length - 1].hi;
-  return Math.max(0, Math.min(1, (h.bpm - lo) / (hi - lo)));
-};
-// The zone bar on a canvas: the zones side by side, each as wide as its bpm range, in its colour (dimmed),
-// the current zone at full colour, and a marker at your heart rate carrying the number.
-function drawHrBar(g, x, y, w, h, hr, size, label = String(hr.bpm)) {
-  if (!hr.bands.length) return;
-  const lo = hr.bands[0].lo, span = hr.bands[hr.bands.length - 1].hi - lo;
-  hr.bands.forEach((b, k) => {
-    const x0 = x + (b.lo - lo) / span * w, x1 = x + (b.hi - lo) / span * w;
-    g.globalAlpha = k + 1 === hr.zone ? 1 : 0.35;
-    g.fillStyle = b.colour; g.fillRect(x0 + (k ? 1 : 0), y, x1 - x0 - (k ? 1 : 0), h);
-  });
-  g.globalAlpha = 1;
-  const mx = x + hrAt(hr) * w;
-  if (!label) {  // a plain marker
-    g.fillStyle = C.fg; g.strokeStyle = C.bg; g.lineWidth = 2;
-    g.beginPath(); g.roundRect(mx - 3, y - 5, 6, h + 10, 3); g.fill(); g.stroke();
-    return;
-  }
-  g.font = `700 ${size}px system-ui, sans-serif`;
-  const bw = g.measureText(label).width + 12, bh = size + 6;
-  const bx = Math.max(x, Math.min(x + w - bw, mx - bw / 2)), by = y + h / 2 - bh / 2;
-  g.fillStyle = C.bg; g.strokeStyle = hr.colour; g.lineWidth = 2;
-  g.beginPath(); g.roundRect(bx, by, bw, bh, bh / 2); g.fill(); g.stroke();
-  g.fillStyle = hr.colour; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(label, bx + bw / 2, by + bh / 2 + 1);
-}
-// Your power within the intensity bands (Recovery to Max, coloured as the countdown), in the same
-// shape as the heart-rate zones so drawHrBar draws it: Recovery and Max get a width to show.
+// Your power within the intensity bands (Recovery to Max, coloured as the countdown); `edges` are the
+// bottom of each band in watts (0 for Recovery), shown at the borders as on Peloton's power zone bar.
 function powerNow(st, watts) {
   const bands = (st && st.coach && st.coach.power_bands) || [];
   if (bands.length < 3 || watts === null || watts === undefined) return null;
-  const cut = bands.slice(1).map((b) => b[1]);  // the boundaries, low to high
-  const lo = Math.max(0, cut[0] - (cut[1] - cut[0]) * 0.6), hi = cut[cut.length - 1] + (cut[cut.length - 1] - cut[cut.length - 2]) * 0.6;
-  // Each band's middle in watts, the number to aim for when a class calls it out (Recovery: under its
-  // top; Max: from its bottom).
-  const out = bands.map(([name, a, b]) => ({ lo: a ?? lo, hi: b ?? hi, colour: ZONE_COLOURS[name] || C.dim, name,
-    aim: a === null ? `<${b}` : b === null ? `${a}+` : String(Math.round((a + b) / 2)) }));
+  const cuts = bands.slice(1).map((b) => b[1]);  // the boundaries, low to high
+  const top = cuts[cuts.length - 1] + (cuts[cuts.length - 1] - cuts[cuts.length - 2]);  // Max: as wide as Challenging
+  const out = bands.map(([name, a, b]) => ({ lo: a ?? 0, hi: b ?? top, colour: ZONE_COLOURS[name] || C.dim, name }));
   let i = out.findIndex((b) => watts < b.hi);
   if (i < 0) i = out.length - 1;
-  return { bpm: watts, zone: i + 1, colour: out[i].colour, bands: out, name: out[i].name };
+  return { value: watts, zone: i + 1, colour: out[i].colour, bands: out, name: out[i].name, edges: [0, ...cuts] };
 }
-// A band bar as HTML (the page's power and heart-rate bars): segments as wide as their range, the
-// current one lit, and a bubble carrying `label` where you are (kept inside the bar's ends).
-function bandBarHtml(o, label) {
+// How far into the current zone you are, 0-1.
+const zoneFill = (o) => {
+  const b = o.bands[o.zone - 1];
+  return Math.max(0.06, Math.min(1, (o.value - b.lo) / (b.hi - b.lo)));
+};
+// A zone bar as on Peloton's screens: one equal segment per zone, those below yours filled in their
+// colours, yours filled as far as you are into it, those above dark. With `edges`, the bottom of each
+// zone at its border underneath (numberY: where).
+const ZONE_EMPTY = "#2e2e2e";
+function drawZoneBar(g, x, y, w, h, o, numberY = null, numberSize = 14) {
+  if (!o || !o.bands.length) return;
+  const n = o.bands.length, gap = 3, seg = (w - gap * (n - 1)) / n;
+  o.bands.forEach((b, k) => {
+    const x0 = x + k * (seg + gap);
+    g.fillStyle = ZONE_EMPTY; g.beginPath(); g.roundRect(x0, y, seg, h, h / 2); g.fill();
+    const f = k < o.zone - 1 ? 1 : k === o.zone - 1 ? zoneFill(o) : 0;
+    if (f > 0) { g.fillStyle = b.colour; g.beginPath(); g.roundRect(x0, y, Math.max(h, seg * f), h, h / 2); g.fill(); }
+  });
+  if (o.edges && numberY !== null) {
+    g.font = `${numberSize}px system-ui, sans-serif`; g.textAlign = "center"; g.textBaseline = "middle";
+    o.edges.forEach((v, k) => {
+      const bx = k ? x + k * (seg + gap) - gap / 2 : x + 4;
+      g.fillStyle = k === o.zone - 1 ? o.colour : C.dim;
+      g.fillRect(bx - 1, y + h + 2, 2, 5);
+      g.fillText(String(v), bx, numberY);
+    });
+  }
+}
+// The same bar as HTML (web page), with an optional heading row above it.
+function zoneBarHtml(o, head = "") {
   if (!o || !o.bands.length) return "";
-  const lo = o.bands[0].lo, span = o.bands[o.bands.length - 1].hi - lo;
-  const segs = o.bands.map((b, k) => `<div style="flex:${(b.hi - b.lo) / span};background:${b.colour};opacity:${k + 1 === o.zone ? 1 : 0.35}"></div>`).join("");
-  const at = Math.max(7, Math.min(93, hrAt(o) * 100));
-  // The power bar: each band's middle in watts under it (the band you're in lit).
-  const nums = o.bands.map((b, k) => b.aim === undefined ? "" :
-    `<span class="num" style="left:${(((b.lo + b.hi) / 2 - lo) / span * 100).toFixed(1)}%;${k + 1 === o.zone ? `color:${b.colour};font-weight:700` : ""}">${esc(b.aim)}</span>`).join("");
-  return segs + nums + `<div class="bub" style="left:${at.toFixed(1)}%;border-color:${o.colour};color:${o.colour}">${esc(label)}</div>`;
+  const segs = o.bands.map((b, k) => {
+    const f = k < o.zone - 1 ? 1 : k === o.zone - 1 ? zoneFill(o) : 0;
+    return `<div class="zseg"><div style="width:${(f * 100).toFixed(1)}%;background:${b.colour}"></div></div>`;
+  }).join("");
+  const n = o.bands.length;
+  const nums = o.edges ? `<div class="znums">` + o.edges.map((v, k) =>
+    `<span style="left:${k ? (k / n * 100).toFixed(2) : 1.2}%;${k === o.zone - 1 ? `color:${o.colour};font-weight:700` : ""}">${v}</span>`).join("") + `</div>` : "";
+  return head + `<div class="zsegs">${segs}</div>` + nums;
 }
-function setBar(id, o, label) {
-  const el = $(id), html = bandBarHtml(o, label);
+// The heart-rate heading, as Peloton's: the zone on the left, the heart rate in the middle, % of max right.
+const hrHead = (hz) => `<div class="zhead" style="color:${hz.colour}"><span>ZONE ${hz.zone}</span>`
+  + `<b>♥ ${hz.bpm}</b><span class="dimmed">${hz.maxPct ? `${hz.maxPct}% MAX` : ""}</span></div>`;
+function setBar(id, html) {
+  const el = $(id);
   el.hidden = !html;
   if (html) el.innerHTML = html;
 }
@@ -2655,8 +2658,8 @@ function drawPipView() {
   // The top, as the SmartRow app lays it out: power, stroke rate and a time (or pace) evenly spaced, each
   // number large over its label; power (and rate) coloured against a workout's targets. Under them, your
   // power within the intensity bands (current band lit, a marker where you are).
-  const TOP_H = 124;  // numbers, the power bar and its band numbers
-  const BAR_H = 8, BUBBLE = narrow ? 17 : 19;  // the power and heart-rate bars: the same height, width and text
+  const TOP_H = 116;  // numbers, the power bar and the zones' bottoms
+  const BAR_H = 10;  // the power and heart-rate bars: the same height and width
   // Watts take the colour of the intensity band they're in (as the bar under them); rate and time stay
   // white. A rate target shows in the rate's label, amber when your rate is outside it.
   let pw = null;
@@ -2669,29 +2672,25 @@ function drawPipView() {
       text(value, cx, 34, fit(value, narrow ? 40 : 46, cw - 10, false), colour, "center", false);
       text(label, cx, 64, fit(label, 14, cw - 8, false), k === 1 && rateOff() ? C.amber : C.dim, "center", false);
     });
-    if (pw) {
-      // (a workout step's power target is in the bottom line: STEP 3/11 · TARGET 180 W · next ...)
-      drawHrBar(g, 16, 88 - BAR_H / 2, W - 32, BAR_H, pw, BUBBLE, pw.name.toUpperCase());
-      // Under each band, its middle in watts (the band you're in lit, the others dim).
-      const lo = pw.bands[0].lo, span = pw.bands[pw.bands.length - 1].hi - lo;
-      pw.bands.forEach((b, k) => {
-        const x = 16 + ((b.lo + b.hi) / 2 - lo) / span * (W - 32);
-        text(b.aim, x, 113, narrow ? 14 : 15, k + 1 === pw.zone ? b.colour : C.dim, "center", k + 1 === pw.zone);
-      });
-    }
+    // (a workout step's power target is in the bottom line: STEP 3/11 · TARGET 180 W · next ...)
+    if (pw) drawZoneBar(g, 16, 80, W - 32, BAR_H, pw, 104, narrow ? 14 : 15);
   };
   const rate = () => {
     const spm = wk && wk.spm != null ? wk.spm : Math.round(m.stroke_rate_spm ?? 0);
     return [rowing ? String(spm) : "–", rateAim ? `STR/MIN · aim ${rateAim}` : "STR/MIN", !rowing ? C.faint : C.fg];
   };
   const rateOff = () => !!(rowing && rateAim && wk.spm_on && wk.spm_on !== "on");
-  // The bottom: heart rate within your zones (the number on the marker), above the bottom line.
-  const HR_H = hr ? 30 : 0;
+  // The bottom, as Peloton's heart-rate box: zone, heart rate and % of max over the zone bar.
+  const HR_H = hr ? 50 : 0;
   const hrBottom = () => {
     if (!hr) return;
-    const y = H - FOOT - HR_H / 2 - 2;
-    if (hr.bands.length) drawHrBar(g, 16, y - BAR_H / 2, W - 32, BAR_H, hr, BUBBLE, `♥ ${hr.bpm}`);
-    else text(`♥ ${hr.bpm}`, W / 2, y, 22, hr.colour, "center");
+    const y = H - FOOT - HR_H;
+    if (hr.zone) {
+      text(`ZONE ${hr.zone}`, 16, y + 14, narrow ? 14 : 15, hr.colour, "left");
+      text(`♥ ${hr.bpm}`, W / 2, y + 14, narrow ? 22 : 24, hr.colour, "center");
+      if (hr.maxPct) text(`${hr.maxPct}% MAX`, W - 16, y + 14, narrow ? 14 : 15, C.dim, "right", false);
+      drawZoneBar(g, 16, y + 32, W - 32, BAR_H, hr);
+    } else text(`♥ ${hr.bpm}`, W / 2, y + 24, 22, hr.colour, "center");
   };
   if (live) {
     // Power, rate and the effort's (or step's) time, as in every view.

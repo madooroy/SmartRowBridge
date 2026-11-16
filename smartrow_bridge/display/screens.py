@@ -249,56 +249,61 @@ def _hr_top(draw: ImageDraw.ImageDraw, status: dict | None, right: int = WIDTH -
 
 def power_now(status: dict | None, watts) -> dict | None:
     """Your watts within the intensity bands (Recovery to Max, coloured as the countdown): the bands as
-    (low, high, colour) with Recovery and Max given a width to show, which one you're in, its name and
-    colour. None without bands (no FTP or Easy yet) or watts."""
+    (low, high, colour) (Recovery from 0, Max as wide as Challenging), which one you're in, its name and
+    colour, and `edges`, the bottom of each band in watts (shown at the borders as on Peloton's power
+    zone bar). None without bands (no FTP or Easy yet) or watts."""
     bands = (((status or {}).get("coach") or {}).get("power_bands")) or []
     if len(bands) < 3 or watts is None:
         return None
-    cut = [b[1] for b in bands[1:]]
-    lo = max(0.0, cut[0] - (cut[1] - cut[0]) * 0.6)
-    hi = cut[-1] + (cut[-1] - cut[-2]) * 0.6
-    out = [(a if a is not None else lo, b if b is not None else hi, ZONE_COLOURS.get(name, DIM)) for name, a, b in bands]
+    cuts = [b[1] for b in bands[1:]]
+    top = cuts[-1] + (cuts[-1] - cuts[-2])
+    out = [(a if a is not None else 0, b if b is not None else top, ZONE_COLOURS.get(name, DIM)) for name, a, b in bands]
     k = next((i for i, (_, b_hi, _) in enumerate(out) if watts < b_hi), len(out) - 1)
-    # each band's middle in watts, the number to aim for when a class calls it out
-    aims = [f"<{b}" if a is None else f"{a}+" if b is None else str(round((a + b) / 2)) for _, a, b in bands]
-    return {"bands": out, "zone": k, "name": bands[k][0], "colour": out[k][2], "value": watts, "aims": aims}
+    return {"bands": out, "zone": k, "name": bands[k][0], "colour": out[k][2], "value": watts, "edges": [0, *cuts]}
 
 
 def hr_bar_data(status: dict | None) -> dict | None:
-    """Heart rate within your zones, in the shape power_now gives (for _band_bar)."""
+    """Heart rate within your zones, in the shape power_now gives (for _zone_bar), with % of max."""
     bpm = ((status or {}).get("metrics") or {}).get("heart_rate_bpm")
-    tops = ((((status or {}).get("coach") or {}).get("hr_zones") or {}).get("tops")) or []
+    hz = (((status or {}).get("coach") or {}).get("hr_zones") or {})
+    tops = hz.get("tops") or []
     if not bpm or not tops:
         return None
     zone = next((i for i, top in enumerate(tops) if bpm <= top), len(tops) - 1)
     bands = hr_bands(tops)
-    return {"bands": bands, "zone": zone, "colour": bands[zone][2], "value": bpm}
+    return {"bands": bands, "zone": zone, "colour": bands[zone][2], "value": bpm,
+            "max_pct": round(bpm * 100 / hz["max_hr"]) if hz.get("max_hr") else None}
 
 
-BAR_H, BUBBLE_PT = 6, 11  # the power and heart-rate bars: the same height and bubble text
+BAR_H = 6  # the power and heart-rate bars: the same height and width
+ZONE_EMPTY = (46, 46, 46)
 
 
-def _band_bar(draw: ImageDraw.ImageDraw, y: int, data: dict, label: str) -> None:
-    """A bar across the screen at y: each band as wide as its range, the current one lit, the others
-    dimmed, and a bubble carrying `label` where you are (kept inside the ends)."""
-    x0, x1 = 8, WIDTH - 8
-    lo, hi = data["bands"][0][0], data["bands"][-1][1]
-    span, w = hi - lo, x1 - x0
+def _zone_bar(draw: ImageDraw.ImageDraw, y: int, data: dict, numbers_y: int | None = None) -> None:
+    """A zone bar across the screen from y, as on Peloton's screens: one equal segment per zone, those below
+    yours filled in their colours, yours as far as you are into it, those above dark. With numbers_y, the
+    bottom of each zone (data["edges"]) at its border underneath."""
+    x0, x1, gap = 8, WIDTH - 8, 3
+    n = len(data["bands"])
+    seg = (x1 - x0 - gap * (n - 1)) / n
     for k, (b_lo, b_hi, colour) in enumerate(data["bands"]):
-        c = colour if k == data["zone"] else _shade(colour, 0.35)
-        draw.rectangle((x0 + (b_lo - lo) / span * w + (1 if k else 0), y - BAR_H // 2,
-                        x0 + (b_hi - lo) / span * w, y + BAR_H // 2), fill=c)
-    f = font(BUBBLE_PT, True)
-    bw = int(draw.textlength(label, font=f)) + 12
-    mx = x0 + max(0.0, min(1.0, (data["value"] - lo) / span)) * w
-    bx = max(x0, min(x1 - bw, mx - bw / 2))
-    draw.rounded_rectangle((bx, y - 8, bx + bw, y + 8), radius=8, fill=BG, outline=data["colour"], width=2)
-    draw.text((bx + bw / 2, y), label, font=f, fill=data["colour"], anchor="mm")
+        sx = x0 + k * (seg + gap)
+        draw.rounded_rectangle((sx, y, sx + seg, y + BAR_H), radius=BAR_H // 2, fill=ZONE_EMPTY)
+        f = 1.0 if k < data["zone"] else 0.0
+        if k == data["zone"]:
+            f = max(0.06, min(1.0, (data["value"] - b_lo) / (b_hi - b_lo)))
+        if f > 0:
+            draw.rounded_rectangle((sx, y, sx + max(BAR_H, seg * f), y + BAR_H), radius=BAR_H // 2, fill=colour)
+    if numbers_y is not None and data.get("edges"):
+        for k, v in enumerate(data["edges"]):
+            bx = x0 + k * (seg + gap) - gap / 2 if k else x0 + 3
+            here = k == data["zone"]
+            draw.text((bx, numbers_y), str(v), font=font(10, here), fill=data["colour"] if here else DIM, anchor="mm")
 
 
 def _metrics_top(draw: ImageDraw.ImageDraw, cols: list[tuple[str, str, tuple]], status: dict, watts) -> None:
     """As the SmartRow app (and the floating window): three numbers evenly spaced, each over its label;
-    watts in their intensity band's colour; the power bar under them."""
+    watts in their intensity band's colour; the power zone bar under them with each band's bottom in watts."""
     pw = power_now(status, watts)
     cw = (WIDTH - 8) / 3
     for k, (value, label, colour) in enumerate(cols):
@@ -310,18 +315,19 @@ def _metrics_top(draw: ImageDraw.ImageDraw, cols: list[tuple[str, str, tuple]], 
         label = label.rstrip("!")
         draw.text((cx, 57), label, font=_fit(draw, label, 11, int(cw) - 6), fill=AMBER if off else DIM, anchor="mm")
     if pw:
-        _band_bar(draw, 73, pw, pw["name"].upper())
-        lo, hi = pw["bands"][0][0], pw["bands"][-1][1]  # under each band, its middle in watts
-        for k, ((b_lo, b_hi, colour), aim) in enumerate(zip(pw["bands"], pw["aims"])):
-            x = 8 + ((b_lo + b_hi) / 2 - lo) / (hi - lo) * (WIDTH - 16)
-            draw.text((x, 89), aim, font=font(10, k == pw["zone"]), fill=colour if k == pw["zone"] else DIM, anchor="mm")
+        _zone_bar(draw, 66, pw, 82)
 
 
 def _hr_bottom(draw: ImageDraw.ImageDraw, status: dict) -> bool:
-    """Heart rate within your zones along the bottom (the same bar as the power's). True when drawn."""
+    """As Peloton's heart-rate box, along the bottom: zone, heart rate and % of max over the zone bar
+    (the same bar as the power's). True when drawn."""
     hr = hr_bar_data(status)
     if hr:
-        _band_bar(draw, 208, hr, f"\u2665 {hr['value']}")  # clear of the hint tabs along the bottom edge
+        draw.text((8, 197), f"ZONE {hr['zone'] + 1}", font=font(11, True), fill=hr["colour"], anchor="lm")
+        draw.text((WIDTH // 2, 196), f"\u2665 {hr['value']}", font=font(14, True), fill=hr["colour"], anchor="mm")
+        if hr.get("max_pct"):
+            draw.text((WIDTH - 8, 197), f"{hr['max_pct']}% MAX", font=font(11), fill=DIM, anchor="rm")
+        _zone_bar(draw, 205, hr)
     return bool(hr)
 
 
@@ -563,8 +569,8 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
             cue = None
         text, colour = CUES.get(cue, ("", BLUE)) if cue else ("", BLUE)
         rhythm = coach.get("rhythm") if rowing else None
-        bottom = 172 if hr_shown else 188  # the curve (and rhythm bar) down to the slim cue banner
-        _plot_curves(draw, (4, 96, WIDTH - 4, bottom - 17 if rhythm else bottom), coach["stroke_curve"], steady, colour, "both")
+        bottom = 162 if hr_shown else 188  # the curve (and rhythm bar) down to the slim cue banner
+        _plot_curves(draw, (4, 92, WIDTH - 4, bottom - 17 if rhythm else bottom), coach["stroke_curve"], steady, colour, "both")
         if rhythm:
             _rhythm_bar(draw, (4, bottom - 13, WIDTH - 4, bottom), rhythm)
         head = f"EASY  \u00b7  {format_time(m.get('elapsed_s', 0))}"
@@ -572,7 +578,7 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
             head = f"{wk['step']}/{wk['steps']} \u00b7 {workout_target(wk)} W \u00b7 {workout_next(wk)}"
         if m.get("heart_rate_bpm") and not hr_shown:
             head += f"  \u00b7  \u2665 {m['heart_rate_bpm']}"
-        draw.text((12, 100), head, font=_fit(draw, head, 12, WIDTH - 120, True), fill=DIM)  # clear of "Easy shape"
+        draw.text((12, 96), head, font=_fit(draw, head, 12, WIDTH - 120, True), fill=DIM)  # clear of "Easy shape"
         banner = (4, bottom + 3, WIDTH - 4, bottom + 25)
         mid = (banner[1] + banner[3]) // 2
         if cue:
@@ -826,12 +832,12 @@ def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
     _metrics_top(draw, [(str(watts), "WATTS", FG), (str(spm), rate_label, FG),
                         (clock, "LEFT IN STEP" if wk else label, FG)], status, watts)
     hr_shown = _hr_bottom(draw, status)
-    bottom = 172 if hr_shown else 188
+    bottom = 162 if hr_shown else 188
     # The force curve, as in the SmartRow app: each stroke over your steady shape (grey), the force
     # missing against steady filled in light grey. A shorter stroke ends before the steady curve does.
     stroke = live.get("stroke_curve") or live.get("curve") or []
     curve_colour = CUES.get(live.get("cue"), ("", FG))[1] if live.get("cue") else FG
-    _plot_curves(draw, (4, 96, WIDTH - 4, bottom), stroke, live.get("steady_curve") or [], curve_colour, "both",
+    _plot_curves(draw, (4, 92, WIDTH - 4, bottom), stroke, live.get("steady_curve") or [], curve_colour, "both",
                  live.get("stall"))
     note = []
     if live.get("balance") is not None and live.get("length_delta_cm") is not None:
@@ -840,7 +846,7 @@ def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
         note.append(f"{wk['step']}/{wk['steps']} \u00b7 " + (f"{workout_target(wk)} W" if wk.get("target_w") is not None else "free"))
     if note:
         head = "  \u00b7  ".join(note)
-        draw.text((12, 100), head, font=_fit(draw, head, 12, WIDTH - 120), fill=DIM)  # clear of "Easy shape"
+        draw.text((12, 96), head, font=_fit(draw, head, 12, WIDTH - 120), fill=DIM)  # clear of "Easy shape"
 
     text, colour = CUES.get(live.get("cue"), ("\u2026", DIM))
     banner = (4, bottom + 3, WIDTH - 4, bottom + 25)
