@@ -186,7 +186,7 @@ def bands_text(ftp: float | None, easy_w: float | None) -> str:
                      else f"{label} {lo}\u2013{hi} W")
     return ", ".join(parts)
 SHORTER_CM = -2.0  # an interval's strokes this much shorter than steady are called out
-SUMMARY_SHOW_STROKES = 3  # the summary is shown for this many strokes after an effort ends (Marc: 5 on 9 Nov, 3 on 11 Nov)
+SUMMARY_SHOW_STROKES = 2  # the summary is shown for this many strokes after an effort ends (Marc: 5 on 9 Nov, 3 on 11 Nov, 2 on 16 Nov)
 SUMMARY_SHOW_S = 15.0  # ... and never longer than this (e.g. stopped rowing); X brings it back
 
 
