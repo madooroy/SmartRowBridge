@@ -113,6 +113,13 @@ def make_handler(path: str, session_dir: str = sessions.DEFAULT_DIR, peloton_ind
                     self._send(HTTPStatus.NOT_FOUND, b"Not found\n", "text/plain; charset=utf-8")
                 else:
                     self._send(HTTPStatus.OK, json.dumps(record).encode(), "application/json")
+            elif route == "/peloton/sync.json":  # beside the index: when it was last updated (auto)
+                try:
+                    body = Path(peloton_index).with_name("sync.json").read_bytes()
+                except OSError:
+                    self._send(HTTPStatus.NOT_FOUND, b"No sync record\n", "text/plain; charset=utf-8")
+                else:
+                    self._send(HTTPStatus.OK, body, "application/json")
             elif route == "/peloton/classes.json":
                 try:
                     body = Path(peloton_index).read_bytes()

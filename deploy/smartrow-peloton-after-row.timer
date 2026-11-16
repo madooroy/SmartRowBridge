@@ -1,0 +1,12 @@
+# Every 15 minutes: has a row finished since your Peloton history was last downloaded? If so, download
+# it (a few requests) so the class shows as taken on the Classes page. Nothing to do: nothing is sent.
+[Unit]
+Description=Peloton history after each row
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Unit=smartrow-peloton@after-row.service
+
+[Install]
+WantedBy=timers.target

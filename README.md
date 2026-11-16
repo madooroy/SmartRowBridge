@@ -832,9 +832,26 @@ Stroke Rate Rows ("15 min Stroke Rate Row: 24 SPM", and Intro to Stroke Rate): `
 "stroke rate"` lists the catalogue again and downloads just those (any length; `--title` takes any text), then
 `index`. They are the "Stroke rate" class type, kept from 5 min, with a filter by the rate each one holds.
 
-`fetch`, `history` and `update` ask for a token (hidden; never printed or saved): sign in at
-members.onepeloton.com, press F12, Network, reload, filter on `api.onepeloton`, click a `me`
-request, and copy the value of its `authorization` header after `Bearer `. It lasts 48 hours.
+**Staying signed in (no token to copy):** once, run `python3 tools/peloton_auth.py setup` and paste
+your Peloton sign-in (how to get it is in the script's help: a private browser window, one line in
+the console, then close the window without signing out). It is a refresh token: the Pi swaps it for a
+new 48-hour token whenever it needs one and saves the replacement Peloton sends back. It is kept in
+`~/.config/smartrow-bridge/peloton-auth.json`, readable by you only, never printed and left out of
+backups. `python3 tools/peloton_auth.py test` checks it; `forget` deletes it.
+
+With it, two timers (installed by `install.sh`) keep the Classes page current:
+- **after each row** (checked every 15 minutes, once the row's file is 10 minutes old): your workout
+  history, so the class shows as taken, and the index;
+- **weekly** (Sunday early morning): new classes (one request a second), your history and the index.
+
+The Classes page shows when each was last updated. If Peloton stops accepting the sign-in (left unused
+too long, or signed out), the page says so and the timers stop trying until `setup` is run again.
+`systemctl list-timers 'smartrow-peloton*'` shows them; `journalctl -u 'smartrow-peloton@*'` their log.
+
+Without a saved sign-in (or with `--ask`), `fetch`, `history` and `update` ask for a token (hidden;
+never printed or saved): sign in at members.onepeloton.com, press F12, Network, reload, filter on
+`api.onepeloton`, click a `me` request, and copy the value of its `authorization` header after
+`Bearer `. It lasts 48 hours.
 The downloaded plans stay in `peloton-cache`, the index in `/var/lib/smartrow-bridge/peloton`
 (made by `install.sh`). `analyse` writes a report of how long each level is called (see the
 script's help). Keep the data for yourself: it is Peloton's.

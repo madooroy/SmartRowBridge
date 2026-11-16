@@ -170,6 +170,8 @@
   /* Peloton classes, ranked by their class plans (tools/peloton_plans.py index) */
   #classes { overflow-y: auto; -webkit-user-select: text; user-select: text; padding: 3px; }  /* room for focus rings */
   #classes .sessbar input, #classes .sessbar select { flex: 1 1 0; min-width: 12em; }  /* search and order share the row equally */
+  .csync { margin: 4px 0 2px; font-size: 13px; color: var(--dim, #878787); }
+  .csync.warn { color: #e3b341; font-weight: 600; }
   .cfilters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .cfilters select, .sessbar input, #cStack select { font: inherit; font-size: var(--label); color: var(--fg);
     background: var(--tile); border: 1px solid var(--faint); border-radius: 10px; padding: 6px 8px; }
@@ -337,6 +339,7 @@
           <option value="rl">Easiest first (members' rating)</option>
         </select>
       </div>
+      <div id="cSync" class="csync" hidden></div>
       <div class="cfilters">
         <span id="cLen"></span>
         <details class="dd" id="cWhoDD"><summary id="cWhoSum">All instructors</summary>
@@ -1289,7 +1292,31 @@ const clock = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStar
 const hardShare = (c) => ((c.s["2"] || 0) + (c.s["3"] || 0)) / c.len;
 const shares = (c) => [0, 1, 2, 3].map((k) => (c.s[k] || 0) / c.len);
 
+// When the class list and your Peloton history were last updated (tools/peloton_plans.py auto), or that
+// the saved Peloton sign-in needs setting up again.
+async function showClassSync() {
+  let sync = null;
+  try {
+    const r = await fetch("/peloton/sync.json", { cache: "no-store" });
+    if (r.ok) sync = await r.json();
+  } catch (e) { /* no timers: nothing to show */ }
+  const el = $("cSync");
+  el.hidden = !sync;
+  if (!sync) return;
+  const day = (t) => t ? new Date(t * 1000).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "never";
+  if (sync.ok === false) {
+    el.className = "csync warn";
+    el.textContent = "Peloton sign-in needed: on the Pi, run python3 tools/peloton_auth.py setup. "
+      + `Classes last updated ${day(sync.classes_at)}, your history ${day(sync.history_at)}.`;
+  } else {
+    el.className = "csync";
+    el.textContent = `Classes updated ${day(sync.classes_at)} · your history ${day(sync.history_at)}`
+      + (sync.last_error ? " · last try failed, will retry" : "");
+  }
+}
+
 async function openClassesView() {
+  showClassSync();
   if (!pel) {
     try {
       const r = await fetch("/peloton/classes.json", { cache: "no-store" });

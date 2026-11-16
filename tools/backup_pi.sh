@@ -67,7 +67,7 @@ if (( ${#logs[@]} )); then mkdir -p "$dest/home"; cp -a "${logs[@]}" "$dest/home
 if (( PELOTON )) && [[ -d "$REPO/peloton-cache" ]]; then mkdir -p "$dest/repo"; cp -a "$REPO/peloton-cache" "$dest/repo/"; fi
 
 # Belt and braces: nothing secret may be in the file, whatever was copied above.
-find "$dest" \( -path '*/smartrow-bridge/intervals.key' -o -name 'strava.json' -o -path '*/system-connections*' \
+find "$dest" \( -path '*/smartrow-bridge/intervals.key' -o -name 'strava.json' -o -name 'peloton-auth.json*' -o -path '*/system-connections*' \
      -o -name 'id_*' -o -name '*.nmconnection' \) -prune -exec rm -rf {} +
 
 {
@@ -91,7 +91,7 @@ find "$dest" \( -path '*/smartrow-bridge/intervals.key' -o -name 'strava.json' -
     for s in "${sessions[@]}"; do [[ "$s" == *.strokes.json ]] || rows=$((rows + 1)); done
     echo "Rows (session records): $rows"
     echo "Peloton class cache included: $([[ $PELOTON == 1 ]] && echo yes || echo 'no (--no-peloton)')"
-    echo "Left out on purpose: /etc/smartrow-bridge (intervals.icu key, Strava tokens), saved Wi-Fi passwords, SSH keys."
+    echo "Left out on purpose: /etc/smartrow-bridge (intervals.icu key, Strava tokens), the Peloton sign-in, saved Wi-Fi passwords, SSH keys."
     if (( ${#missing[@]} )); then
         echo "Not copied:"
         printf '  %s\n' "${missing[@]}"

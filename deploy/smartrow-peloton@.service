@@ -1,0 +1,14 @@
+# Peloton classes and your workout history for the Classes page, with the saved sign-in
+# (tools/peloton_auth.py setup). Started by smartrow-peloton.timer (after a row) and
+# smartrow-peloton-weekly.timer (new classes). install.sh fills in the user and the repo folder.
+[Unit]
+Description=Peloton class list: %I
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@USER@
+WorkingDirectory=@REPO@
+ExecStart=/usr/bin/python3 @REPO@/tools/peloton_plans.py auto --%I --cache @REPO@/peloton-cache
+Nice=10

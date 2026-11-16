@@ -1,0 +1,12 @@
+# Weekly: Peloton's new row classes (one request a second), your history and the index.
+[Unit]
+Description=Peloton new classes, weekly
+
+[Timer]
+OnCalendar=Sun *-*-* 04:20
+RandomizedDelaySec=30min
+Persistent=true
+Unit=smartrow-peloton@weekly.service
+
+[Install]
+WantedBy=timers.target

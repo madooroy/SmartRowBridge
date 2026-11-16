@@ -17,11 +17,15 @@ that cache. Use it gently (one request a second by default) and for your own ana
     python3 tools/peloton_plans.py segments                        # their own outlines: drill names (no token)
     python3 tools/peloton_plans.py fetch --refresh --title "stroke rate"   # the Stroke Rate Rows (any length)
 
-Your token: sign in at members.onepeloton.com in a browser, open the developer tools (F12),
-Network tab, reload, click any request to api.onepeloton.com and copy the value of its
-"authorization" header after "Bearer ". It is asked for with hidden input, used only for these
-requests, and never printed or saved. (An older-style peloton_session_id cookie also works:
---cookie.)
+Signing in: once, python3 tools/peloton_auth.py setup saves a Peloton sign-in that renews itself;
+then fetch, history and update use it, and auto runs them on a timer (see install.sh). Without a
+saved sign-in (or with --ask) a token is asked for instead: sign in at members.onepeloton.com, open
+the developer tools (F12), Network tab, reload, click any request to api.onepeloton.com and copy
+the value of its "authorization" header after "Bearer " (hidden input, never printed or saved).
+An older-style peloton_session_id cookie also works: --cookie.
+
+    python3 tools/peloton_plans.py auto --after-row   # your history and the index, after a new row
+    python3 tools/peloton_plans.py auto --weekly      # new classes, your history and the index
 
 fetch is resumable (classes already in the cache are skipped) and goes longest classes first, one
 class length at a time, so each length can be looked at before deciding to go on. analyse writes,
@@ -49,6 +53,11 @@ import urllib.parse
 import urllib.request
 from collections import Counter, defaultdict
 from pathlib import Path
+
+try:  # run as a script (tools/ on the path) or imported as tools.peloton_plans (tests)
+    import peloton_auth
+except ImportError:
+    from tools import peloton_auth
 
 API = "https://api.onepeloton.com"
 ROW_DISCIPLINES = ("caesar", "rowing")  # Peloton's internal name for the Row is "caesar"
@@ -105,6 +114,23 @@ class Client:
         raise SystemExit(f"Gave up on {path} after several tries.")
 
 
+def make_client(args, interactive: bool = True) -> Client:
+    """A signed-in client: the saved sign-in (tools/peloton_auth.py setup) when there is one, else a token
+    (or with --cookie, a cookie) asked for with hidden input. Not interactive: the saved sign-in or
+    peloton_auth.SignInNeeded."""
+    delay = getattr(args, "delay", 1.0)
+    if getattr(args, "cookie", False):
+        return Client(None, getpass.getpass("peloton_session_id cookie (hidden): ").strip(), delay)
+    if not getattr(args, "ask", False):
+        try:
+            return Client(peloton_auth.access_token(getattr(args, "auth", None) or peloton_auth.AUTH_FILE), None, delay)
+        except peloton_auth.SignInNeeded as exc:
+            if not interactive:
+                raise
+            print(f"{exc}\nAsking for a token instead.")
+    return Client(getpass.getpass("Peloton token (hidden): ").strip(), None, delay)
+
+
 def list_rows(client: Client, limit: int = 50) -> list[dict]:
     """Every rowing class in the library (newest first)."""
     for category in ROW_DISCIPLINES:
@@ -127,14 +153,12 @@ def class_minutes(ride: dict) -> int:
     return round((ride.get("duration") or 0) / 60)
 
 
-def fetch(args) -> None:
+def fetch(args, client: Client | None = None) -> Client:
     """Longest classes first, one class length at a time (60, then 45, then 30 ...). Each length can be
     analysed before going on: --minutes 60 fetches only the 60-minute classes."""
     cache = Path(args.cache)
     (cache / "classes").mkdir(parents=True, exist_ok=True)
-    token = None if args.cookie else getpass.getpass("Peloton token (hidden): ").strip()
-    cookie = getpass.getpass("peloton_session_id cookie (hidden): ").strip() if args.cookie else None
-    client = Client(token, cookie, args.delay)
+    client = client or make_client(args)
     listing = cache / "catalogue.json"
     if listing.exists() and not args.refresh:
         rides = json.loads(listing.read_text(encoding="utf-8"))
@@ -191,9 +215,7 @@ def fetch_history(client: Client, cache: Path) -> int:
 
 
 def history(args) -> None:
-    token = None if args.cookie else getpass.getpass("Peloton token (hidden): ").strip()
-    cookie = getpass.getpass("peloton_session_id cookie (hidden): ").strip() if args.cookie else None
-    fetch_history(Client(token, cookie, args.delay), Path(args.cache))
+    fetch_history(make_client(args), Path(args.cache))
 
 
 # ------------------------------------------------------------------ reading a class plan
@@ -896,6 +918,81 @@ def update(args) -> None:
     index(args)
 
 
+SYNC = "sync.json"  # beside the index: when the classes and your history were last updated, or why not
+AFTER_ROW_WAIT_S = 600  # a row counts as finished when its session file is this old (Peloton has it by then)
+
+
+def _newest_session(sessions_dir: str) -> float:
+    """When the newest saved row was last written (0 without one)."""
+    times = [p.stat().st_mtime for p in Path(sessions_dir).glob("*.json") if not p.name.endswith(".strokes.json")]
+    return max(times, default=0.0)
+
+
+def history_due(cache: Path, sessions_dir: str, now: float) -> bool:
+    """A row has finished since your history was last downloaded."""
+    newest = _newest_session(sessions_dir)
+    if not newest or now - newest < AFTER_ROW_WAIT_S:
+        return False
+    hist = cache / "history.json"
+    return not hist.exists() or hist.stat().st_mtime < newest
+
+
+def write_sync(out: Path, **fields) -> dict:
+    """Merge fields into sync.json beside the index (the Classes page shows it); returns the result."""
+    path = out.with_name(SYNC)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    data.update(fields)
+    try:
+        tmp = path.with_name(f".{SYNC}.tmp")
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except OSError as exc:
+        print(f"Couldn't write {path}: {exc}")
+    return data
+
+
+def auto(args) -> None:
+    """Unattended (the timers): after a new row, your history and the index; weekly, new classes too.
+    Uses the saved sign-in only; when Peloton refuses it, says so on the Classes page and stops trying
+    until the sign-in is set up again."""
+    cache, out, now = Path(args.cache), Path(args.out), time.time()
+    auth = Path(getattr(args, "auth", None) or peloton_auth.AUTH_FILE)
+    if not auth.exists():
+        print("No saved Peloton sign-in (tools/peloton_auth.py setup): nothing to do.")
+        return
+    try:
+        state = json.loads(out.with_name(SYNC).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    if state.get("ok") is False and state.get("auth_mtime") == auth.stat().st_mtime:
+        print("Waiting for a new Peloton sign-in (tools/peloton_auth.py setup).")
+        return
+    if args.after_row and not history_due(cache, args.sessions, now):
+        return
+    try:
+        client = make_client(args, interactive=False)
+        if args.weekly:
+            args.refresh, args.max, args.drills, args.title = True, None, False, None
+            args.minutes = [m for m in (60, 45, 30, 20) if m >= args.min_minutes]
+            fetch(args, client)
+        fetch_history(client, cache)
+    except (peloton_auth.SignInNeeded, SystemExit) as exc:
+        write_sync(out, ok=False, at=int(now), message=str(exc), auth_mtime=auth.stat().st_mtime)
+        raise SystemExit(f"Peloton: {exc}") from None
+    except (urllib.error.URLError, OSError, ValueError) as exc:  # offline or a hiccup: try again next time
+        write_sync(out, at=int(now), last_error=str(exc))
+        raise SystemExit(f"Peloton: couldn't update ({exc}); will try again.") from None
+    index(args)
+    fields = {"ok": True, "at": int(now), "message": "", "last_error": "", "history_at": int(now)}
+    if args.weekly:
+        fields["classes_at"] = int(now)
+    write_sync(out, **fields)
+
+
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -942,8 +1039,20 @@ def main(argv=None) -> None:
     u.add_argument("--delay", type=float, default=1.0)
     u.add_argument("--cookie", action="store_true")
     u.add_argument("--sessions", default=SESSIONS)
+    for parser in (f, h, u):
+        parser.add_argument("--ask", action="store_true", help="ask for a token even with a saved sign-in")
+    t = sub.add_parser("auto", help="unattended, with the saved sign-in: --after-row or --weekly (the timers)")
+    t.add_argument("--after-row", action="store_true", help="your history and the index, once a new row has finished")
+    t.add_argument("--weekly", action="store_true", help="new classes, your history and the index")
+    t.add_argument("--cache", default="peloton-cache")
+    t.add_argument("--out", default=PUBLISHED)
+    t.add_argument("--min-minutes", type=int, default=INDEX_MIN_MINUTES)
+    t.add_argument("--delay", type=float, default=1.0)
+    t.add_argument("--sessions", default=SESSIONS)
     args = p.parse_args(argv)
-    {"fetch": fetch, "inspect": inspect, "analyse": analyse, "index": index, "update": update,
+    if args.cmd == "auto" and args.after_row == args.weekly:
+        p.error("auto needs one of --after-row or --weekly")
+    {"auto": auto, "fetch": fetch, "inspect": inspect, "analyse": analyse, "index": index, "update": update,
      "history": history, "drills": drills,
      "segments": segments}[args.cmd](args)
 

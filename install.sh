@@ -63,6 +63,17 @@ systemctl daemon-reload
 systemctl enable smartrow-bridge.service
 systemctl restart smartrow-bridge.service
 
+# Peloton class list on a timer (tools/peloton_plans.py auto): after each row, your history; weekly, new
+# classes. Runs as the user who ran this, from this folder; does nothing until tools/peloton_auth.py setup.
+if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != root ]]; then
+    for unit in smartrow-peloton@.service smartrow-peloton-after-row.timer smartrow-peloton-weekly.timer; do
+        sed -e "s|@USER@|$SUDO_USER|g" -e "s|@REPO@|$PWD|g" "deploy/$unit" > "/etc/systemd/system/$unit"
+        chmod 644 "/etc/systemd/system/$unit"
+    done
+    systemctl daemon-reload
+    systemctl enable --now smartrow-peloton-after-row.timer smartrow-peloton-weekly.timer
+fi
+
 # Optional screen (tools/setup_display.sh): keep its libraries and files up to date.
 if [[ -f /etc/systemd/system/smartrow-display.service ]]; then
     cp requirements-display.txt "$PREFIX"/
