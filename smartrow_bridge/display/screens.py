@@ -259,7 +259,9 @@ def power_now(status: dict | None, watts) -> dict | None:
     hi = cut[-1] + (cut[-1] - cut[-2]) * 0.6
     out = [(a if a is not None else lo, b if b is not None else hi, ZONE_COLOURS.get(name, DIM)) for name, a, b in bands]
     k = next((i for i, (_, b_hi, _) in enumerate(out) if watts < b_hi), len(out) - 1)
-    return {"bands": out, "zone": k, "name": bands[k][0], "colour": out[k][2], "value": watts}
+    # each band's middle in watts, the number to aim for when a class calls it out
+    aims = [f"<{b}" if a is None else f"{a}+" if b is None else str(round((a + b) / 2)) for _, a, b in bands]
+    return {"bands": out, "zone": k, "name": bands[k][0], "colour": out[k][2], "value": watts, "aims": aims}
 
 
 def hr_bar_data(status: dict | None) -> dict | None:
@@ -303,12 +305,16 @@ def _metrics_top(draw: ImageDraw.ImageDraw, cols: list[tuple[str, str, tuple]], 
         cx = 4 + cw * (k + 0.5)
         if k == 0 and pw and value != "\u2013":
             colour = pw["colour"]
-        draw.text((cx, 40), value, font=_fit(draw, value, 32, int(cw) - 8), fill=colour, anchor="mm")
+        draw.text((cx, 37), value, font=_fit(draw, value, 30, int(cw) - 8), fill=colour, anchor="mm")
         off = label.endswith("!")  # a rate target you're outside of: the label in amber
         label = label.rstrip("!")
-        draw.text((cx, 62), label, font=_fit(draw, label, 11, int(cw) - 6), fill=AMBER if off else DIM, anchor="mm")
+        draw.text((cx, 57), label, font=_fit(draw, label, 11, int(cw) - 6), fill=AMBER if off else DIM, anchor="mm")
     if pw:
-        _band_bar(draw, 76, pw, pw["name"].upper())
+        _band_bar(draw, 73, pw, pw["name"].upper())
+        lo, hi = pw["bands"][0][0], pw["bands"][-1][1]  # under each band, its middle in watts
+        for k, ((b_lo, b_hi, colour), aim) in enumerate(zip(pw["bands"], pw["aims"])):
+            x = 8 + ((b_lo + b_hi) / 2 - lo) / (hi - lo) * (WIDTH - 16)
+            draw.text((x, 89), aim, font=font(10, k == pw["zone"]), fill=colour if k == pw["zone"] else DIM, anchor="mm")
 
 
 def _hr_bottom(draw: ImageDraw.ImageDraw, status: dict) -> bool:
@@ -558,7 +564,7 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
         text, colour = CUES.get(cue, ("", BLUE)) if cue else ("", BLUE)
         rhythm = coach.get("rhythm") if rowing else None
         bottom = 172 if hr_shown else 188  # the curve (and rhythm bar) down to the slim cue banner
-        _plot_curves(draw, (4, 88, WIDTH - 4, bottom - 17 if rhythm else bottom), coach["stroke_curve"], steady, colour, "both")
+        _plot_curves(draw, (4, 96, WIDTH - 4, bottom - 17 if rhythm else bottom), coach["stroke_curve"], steady, colour, "both")
         if rhythm:
             _rhythm_bar(draw, (4, bottom - 13, WIDTH - 4, bottom), rhythm)
         head = f"EASY  \u00b7  {format_time(m.get('elapsed_s', 0))}"
@@ -566,7 +572,7 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
             head = f"{wk['step']}/{wk['steps']} \u00b7 {workout_target(wk)} W \u00b7 {workout_next(wk)}"
         if m.get("heart_rate_bpm") and not hr_shown:
             head += f"  \u00b7  \u2665 {m['heart_rate_bpm']}"
-        draw.text((12, 92), head, font=_fit(draw, head, 12, WIDTH - 120, True), fill=DIM)  # clear of "Easy shape"
+        draw.text((12, 100), head, font=_fit(draw, head, 12, WIDTH - 120, True), fill=DIM)  # clear of "Easy shape"
         banner = (4, bottom + 3, WIDTH - 4, bottom + 25)
         mid = (banner[1] + banner[3]) // 2
         if cue:
@@ -825,7 +831,7 @@ def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
     # missing against steady filled in light grey. A shorter stroke ends before the steady curve does.
     stroke = live.get("stroke_curve") or live.get("curve") or []
     curve_colour = CUES.get(live.get("cue"), ("", FG))[1] if live.get("cue") else FG
-    _plot_curves(draw, (4, 88, WIDTH - 4, bottom), stroke, live.get("steady_curve") or [], curve_colour, "both",
+    _plot_curves(draw, (4, 96, WIDTH - 4, bottom), stroke, live.get("steady_curve") or [], curve_colour, "both",
                  live.get("stall"))
     note = []
     if live.get("balance") is not None and live.get("length_delta_cm") is not None:
@@ -834,7 +840,7 @@ def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
         note.append(f"{wk['step']}/{wk['steps']} \u00b7 " + (f"{workout_target(wk)} W" if wk.get("target_w") is not None else "free"))
     if note:
         head = "  \u00b7  ".join(note)
-        draw.text((12, 92), head, font=_fit(draw, head, 12, WIDTH - 120), fill=DIM)  # clear of "Easy shape"
+        draw.text((12, 100), head, font=_fit(draw, head, 12, WIDTH - 120), fill=DIM)  # clear of "Easy shape"
 
     text, colour = CUES.get(live.get("cue"), ("\u2026", DIM))
     banner = (4, bottom + 3, WIDTH - 4, bottom + 25)

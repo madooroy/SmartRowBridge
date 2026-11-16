@@ -71,6 +71,9 @@
      a bubble at your watts or heart rate. */
   .bandbar { position: relative; display: flex; gap: 2px; height: 10px; margin: 16px 6px; flex: none; }
   .bandbar > div:not(.bub) { border-radius: 2px; }
+  .bandbar:has(.num) { margin-bottom: calc(16px + 1.6em); }
+  .bandbar .num { position: absolute; top: 22px; transform: translateX(-50%); color: var(--dim);
+    font-size: clamp(13px, 2.4vmin, 20px); font-variant-numeric: tabular-nums; }
   .bandbar .bub { position: absolute; top: 50%; transform: translate(-50%, -50%); background: var(--bg);
     border: 2px solid; border-radius: 999px; padding: 1px 10px; font-weight: 700; white-space: nowrap;
     font-size: clamp(13px, 2.6vmin, 22px); }
@@ -813,7 +816,10 @@ function powerNow(st, watts) {
   if (bands.length < 3 || watts === null || watts === undefined) return null;
   const cut = bands.slice(1).map((b) => b[1]);  // the boundaries, low to high
   const lo = Math.max(0, cut[0] - (cut[1] - cut[0]) * 0.6), hi = cut[cut.length - 1] + (cut[cut.length - 1] - cut[cut.length - 2]) * 0.6;
-  const out = bands.map(([name, a, b]) => ({ lo: a ?? lo, hi: b ?? hi, colour: ZONE_COLOURS[name] || C.dim, name }));
+  // Each band's middle in watts, the number to aim for when a class calls it out (Recovery: under its
+  // top; Max: from its bottom).
+  const out = bands.map(([name, a, b]) => ({ lo: a ?? lo, hi: b ?? hi, colour: ZONE_COLOURS[name] || C.dim, name,
+    aim: a === null ? `<${b}` : b === null ? `${a}+` : String(Math.round((a + b) / 2)) }));
   let i = out.findIndex((b) => watts < b.hi);
   if (i < 0) i = out.length - 1;
   return { bpm: watts, zone: i + 1, colour: out[i].colour, bands: out, name: out[i].name };
@@ -825,7 +831,10 @@ function bandBarHtml(o, label) {
   const lo = o.bands[0].lo, span = o.bands[o.bands.length - 1].hi - lo;
   const segs = o.bands.map((b, k) => `<div style="flex:${(b.hi - b.lo) / span};background:${b.colour};opacity:${k + 1 === o.zone ? 1 : 0.35}"></div>`).join("");
   const at = Math.max(7, Math.min(93, hrAt(o) * 100));
-  return segs + `<div class="bub" style="left:${at.toFixed(1)}%;border-color:${o.colour};color:${o.colour}">${esc(label)}</div>`;
+  // The power bar: each band's middle in watts under it (the band you're in lit).
+  const nums = o.bands.map((b, k) => b.aim === undefined ? "" :
+    `<span class="num" style="left:${(((b.lo + b.hi) / 2 - lo) / span * 100).toFixed(1)}%;${k + 1 === o.zone ? `color:${b.colour};font-weight:700` : ""}">${esc(b.aim)}</span>`).join("");
+  return segs + nums + `<div class="bub" style="left:${at.toFixed(1)}%;border-color:${o.colour};color:${o.colour}">${esc(label)}</div>`;
 }
 function setBar(id, o, label) {
   const el = $(id), html = bandBarHtml(o, label);
@@ -2646,7 +2655,7 @@ function drawPipView() {
   // The top, as the SmartRow app lays it out: power, stroke rate and a time (or pace) evenly spaced, each
   // number large over its label; power (and rate) coloured against a workout's targets. Under them, your
   // power within the intensity bands (current band lit, a marker where you are).
-  const TOP_H = 104;
+  const TOP_H = 124;  // numbers, the power bar and its band numbers
   const BAR_H = 8, BUBBLE = narrow ? 17 : 19;  // the power and heart-rate bars: the same height, width and text
   // Watts take the colour of the intensity band they're in (as the bar under them); rate and time stay
   // white. A rate target shows in the rate's label, amber when your rate is outside it.
@@ -2663,6 +2672,12 @@ function drawPipView() {
     if (pw) {
       // (a workout step's power target is in the bottom line: STEP 3/11 · TARGET 180 W · next ...)
       drawHrBar(g, 16, 88 - BAR_H / 2, W - 32, BAR_H, pw, BUBBLE, pw.name.toUpperCase());
+      // Under each band, its middle in watts (the band you're in lit, the others dim).
+      const lo = pw.bands[0].lo, span = pw.bands[pw.bands.length - 1].hi - lo;
+      pw.bands.forEach((b, k) => {
+        const x = 16 + ((b.lo + b.hi) / 2 - lo) / span * (W - 32);
+        text(b.aim, x, 113, narrow ? 14 : 15, k + 1 === pw.zone ? b.colour : C.dim, "center", k + 1 === pw.zone);
+      });
     }
   };
   const rate = () => {
