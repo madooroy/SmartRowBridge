@@ -84,6 +84,13 @@ class CoachTest(unittest.TestCase):
         self.assertEqual(st["last"]["index"], 1)
         self.assertEqual(st["steady_power_w"], 110)  # the effort never taught the steady reference
 
+    def test_hr_zones_in_live_state(self):
+        r = Rower()
+        self.assertIsNone(r.state()["hr_zones"])
+        r.coach.hr_zones = {"tops": [121, 140, 158, 178, 185]}  # from intervals.icu at start-up
+        r.row(5, 110)
+        self.assertEqual(r.state()["hr_zones"]["tops"], [121, 140, 158, 178, 185])  # the live zone bar needs them
+
     def test_summary_goes_away(self):
         r = Rower()
         r.row(60, 110)

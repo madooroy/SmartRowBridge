@@ -1389,6 +1389,7 @@ class IntervalCoach:
             # The Easy screen's rhythm bar (drive against recovery, last few strokes, low rates only).
             "rhythm": _live_rhythm(self.stroke_log, now) if self.effort is None else None,
             "workout": self._workout_state(now),
+            "hr_zones": self.hr_zones,  # for the live heart-rate zone bar (screen, page, floating window)
         }
         if out["intensity"] not in (None, "Recovery", "Easy"):
             out["intensity"] = "Easy"  # above Easy but not (yet) an effort
