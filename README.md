@@ -744,7 +744,9 @@ stroke`, and the screen shows `READY: Adrestia`. The workout starts with your fi
   the intensity band they're in; under the numbers a bar of the bands (Recovery to Max) with the current
   one lit and a bubble naming it; at the bottom the same-size heart-rate zone bar with your heart rate in
   its bubble. A rate target shows in the rate's label, amber when you're outside it. Watts are always on
-  the left, time on the right.
+  the left, time on the right. The **Screen** (Display HAT) uses the same layout in its rowing and effort
+  views, the heart-rate bar just above the button tabs. The floating window's **Shape** button cycles
+  wide, tall and half (almost square, to fill half of a landscape tablet beside the SmartRow app).
 - **After the row:** each step's average power against its target (its first 8 s left out) and the share of
   its strokes within 5%, in the session's findings and on a **Workout card**; the session card draws the plan
   as a dashed line over your power.
