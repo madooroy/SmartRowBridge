@@ -2621,21 +2621,35 @@ function drawPipView() {
   // number large over its label; power (and rate) coloured against a workout's targets. Under them, your
   // power within the intensity bands (current band lit, a marker where you are).
   const TOP_H = 92;
+  // Watts take the colour of the intensity band they're in (as the bar under them); rate and time stay
+  // white. A rate target shows in the rate's label, amber when your rate is outside it.
+  let pw = null;
   const metricsTop = (cols, watts) => {
     const cw = (W - 16) / 3;
+    pw = watts === null || watts === undefined ? null : powerNow(st, watts);
+    if (pw && cols[0][2] !== C.faint) cols[0][2] = pw.colour;
     cols.forEach(([value, label, colour], k) => {
       const cx = 8 + cw * (k + 0.5);
       text(value, cx, 34, fit(value, narrow ? 40 : 46, cw - 10, false), colour, "center", false);
-      text(label, cx, 64, fit(label, 14, cw - 8, false), C.dim, "center", false);
+      text(label, cx, 64, fit(label, 14, cw - 8, false), k === 1 && rateOff() ? C.amber : C.dim, "center", false);
     });
-    const pw = powerNow(st, watts);
-    if (pw) drawHrBar(g, 16, 80, W - 32, 6, pw, 0, null);
+    if (pw) {
+      drawHrBar(g, 16, 80, W - 32, 6, pw, 0, null);
+      // A workout step's power target: a white bracket on the bar, so on target is the marker inside it.
+      if (wk && wk.low_w != null && wk.high_w != null) {
+        const lo = pw.bands[0].lo, span = pw.bands[pw.bands.length - 1].hi - lo, w = W - 32;
+        const at = (v) => 16 + Math.max(0, Math.min(1, (v - lo) / span)) * w;
+        const x0 = Math.min(at(wk.low_w), at(wk.high_w) - 10), x1 = Math.max(at(wk.high_w), x0 + 10);  // at least 10 px wide
+        g.strokeStyle = C.fg; g.lineWidth = 2;
+        g.beginPath(); g.roundRect(x0 - 2, 76, x1 - x0 + 4, 14, 3); g.stroke();
+      }
+    }
   };
   const rate = () => {
     const spm = wk && wk.spm != null ? wk.spm : Math.round(m.stroke_rate_spm ?? 0);
-    return [rowing ? String(spm) : "–", rateAim ? `STR/MIN · ${rateAim}` : "STR/MIN",
-            !rowing ? C.faint : rateAim ? wkRateColour(wk) : C.fg];
+    return [rowing ? String(spm) : "–", rateAim ? `STR/MIN · aim ${rateAim}` : "STR/MIN", !rowing ? C.faint : C.fg];
   };
+  const rateOff = () => !!(rowing && rateAim && wk.spm_on && wk.spm_on !== "on");
   // The bottom: heart rate within your zones (the number on the marker), above the bottom line.
   const HR_H = hr ? 30 : 0;
   const hrBottom = () => {
@@ -2647,7 +2661,7 @@ function drawPipView() {
   if (live) {
     // Power, rate and the effort's (or step's) time, as in every view.
     const watts = wk && wk.power_w != null ? wk.power_w : live.power_w;
-    metricsTop([[String(watts), "WATTS", wk ? wkColour(wk) : C.fg], rate(),
+    metricsTop([[String(watts), "WATTS", C.fg], rate(),
                 [wk ? wkLeft(wk) : fmtTime(live.elapsed_s), wk ? "LEFT IN STEP" : `${(live.intensity || "EFFORT").toUpperCase()} ${live.index}`, C.fg]], watts);
     hrBottom();
     const [, curveColour] = CUES[live.cue] || ["", C.fg];
@@ -2690,7 +2704,7 @@ function drawPipView() {
     // Easy: power, then pace and rate, each stroke over your fresh Easy stroke, and the cue.
     const [label, cueColour] = CUES[coach.cue] || [coach.waiting || (coach.warming_up ? "warming up" : "learning your Easy stroke"), null];
     const watts = wk && wk.power_w != null ? wk.power_w : m.power_w;
-    metricsTop([[rowing ? String(watts) : "–", "WATTS", !rowing ? C.faint : wk ? wkColour(wk) : C.fg], rate(),
+    metricsTop([[rowing ? String(watts) : "–", "WATTS", !rowing ? C.faint : C.fg], rate(),
                 wk ? [wkLeft(wk), "LEFT IN STEP", C.fg]
                    : [rowing ? fmtPace(m.pace_s_per_500m) : "paused", rowing ? "PACE /500m" : "", rowing ? C.fg : C.dim]],
                rowing ? watts : null);
