@@ -246,7 +246,7 @@ class UploadsTest(unittest.TestCase):
         account = strava.StravaAccount(str(self.strava_file))
         result = account.upload(b"FITDATA", "smartrowbridge-x", "Morning Row", "summary", poll_s=0.01,
                                 data_type="fit")
-        self.assertEqual(result, {"activity_id": 31337})
+        self.assertEqual(result, {"activity_id": "31337"})  # as text (64-bit ids from June 2027)
         token = self.fake.posts("/oauth/token")[0]
         self.assertIn(b"grant_type=refresh_token", token[3])
         self.assertIn(b"refresh_token=refresh-1", token[3])
@@ -316,7 +316,7 @@ class UploadsTest(unittest.TestCase):
         self.assertEqual(len(self.fake.posts("/api/v3/uploads")), 1)
         marks = sessions.read_session(str(self.dir), over["id"])["uploads"]
         self.assertEqual(marks["intervals_activity"]["activity_id"], "i777")
-        self.assertEqual(marks["strava"]["activity_id"], 31337)
+        self.assertEqual(marks["strava"]["activity_id"], "31337")
         self.assertNotIn("uploads", sessions.read_session(str(self.dir), recent["id"]))
         self.run_ticks(up, 3)  # nothing new: nothing sent again
         self.assertEqual(len(self.fake.posts("/api/v3/uploads")), 1)

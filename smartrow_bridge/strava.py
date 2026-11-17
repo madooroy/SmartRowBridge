@@ -178,7 +178,10 @@ class StravaAccount:
         status = webapi.request("POST", f"{API}/uploads", self._auth(), body=body, content_type=content_type)
         for _ in range(POLL_TRIES):
             if status.get("activity_id"):
-                activity_id = status["activity_id"]
+                # Strava ids grow past 2^53 after 1 June 2027 (its API email, Nov 2026): kept as text, from
+                # the *_str field when Strava sends one, so nothing that reads the record (the web page's
+                # JavaScript) can round it. Python itself handles the big numbers either way.
+                activity_id = str(status.get("activity_id_str") or status["activity_id"])
                 if sport_type and (data_type != "fit" or sport_type != "Rowing"):  # the upload can't set it
                     self._set_type(activity_id, sport_type, poll_s)
                 return {"activity_id": activity_id}
