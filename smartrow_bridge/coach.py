@@ -690,6 +690,7 @@ class IntervalCoach:
         # Heart-rate zones from intervals.icu ({"tops": [bpm...], "names": [...], "max_hr": bpm}), for the
         # photo cards' shading; None without them.
         self.hr_zones: dict | None = None
+        self.preview_curve: list[int] | None = None  # show_curve(): the next stroke's curve, before add()
         self.expect = dict(EXPECTED_FINISH)
         self.session = 0
         # A planned workout being followed (workout.Player): set by the bridge when one is loaded, it
@@ -858,8 +859,14 @@ class IntervalCoach:
 
     # ------------------------------------------------------------ input
 
+    def show_curve(self, curve: list[int]) -> None:
+        """A stroke's force curve, as soon as the pulley has sent it: shown on the screens until the stroke
+        itself arrives (add(), a fraction of a second later). Nothing is judged or recorded from it."""
+        self.preview_curve = list(curve)
+
     def add(self, s: StrokeCurve) -> IntervalSummary | None:
         """Take one stroke. Returns the summary if this stroke ended an effort."""
+        self.preview_curve = None
         finished = None
         if self.last_time is not None:
             gap = s.time - self.last_time
@@ -1381,7 +1388,8 @@ class IntervalCoach:
             "waiting": "warming up" if self.warming_up() else
             "learning your Easy stroke" if self.baseline is None else "back to Easy",
             "easy_reference": ("last session" if self.saved_ref else "today") if self.baseline else None,
-            "stroke_curve": list(self.stroke_log[-1][6]) if self.stroke_log else [],
+            "stroke_curve": list(self.preview_curve) if self.preview_curve else
+            list(self.stroke_log[-1][6]) if self.stroke_log else [],
             "steady_curve": [round(v) for v in (self.baseline["curve"] if self.baseline else mean_curve(self.steady))]
             if self.steady else [],
             "length_delta_cm": round(statistics.fmean(s.stroke_length_cm for s in self.easy_window)
@@ -1418,7 +1426,8 @@ class IntervalCoach:
                 "balance": round(balance(ratio, late, self.settings.cues), 2) if judged else None,
                 "length_balance": round(length_balance(-short_by_pct, self.settings.cues), 2) if judged else None,
                 "curve": [round(v) for v in mean_curve(window)],
-                "stroke_curve": list(strokes[-1].force_n),  # the latest stroke, drawn live over steady
+                # the latest stroke (its curve as soon as it's sent), drawn live over steady
+                "stroke_curve": list(self.preview_curve) if self.preview_curve else list(strokes[-1].force_n),
                 "stall": stall_marker(window, self.effort.cue),  # where to mark it (BETTER TRANSITION)
                 "steady_curve": [round(v) for v in self.effort_ref()["curve"]],
             }

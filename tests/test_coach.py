@@ -84,6 +84,16 @@ class CoachTest(unittest.TestCase):
         self.assertEqual(st["last"]["index"], 1)
         self.assertEqual(st["steady_power_w"], 110)  # the effort never taught the steady reference
 
+    def test_curve_shown_before_its_stroke(self):
+        r = Rower()
+        r.row(30, 110)
+        before = r.state()["stroke_curve"]
+        r.coach.show_curve([1, 2, 3])  # the pulley's 'z' record: on screen at once
+        self.assertEqual(r.state()["stroke_curve"], [1, 2, 3])
+        r.row(1, 110)  # the stroke itself replaces it
+        self.assertNotEqual(r.state()["stroke_curve"], [1, 2, 3])
+        self.assertEqual(len(r.state()["stroke_curve"]), len(before))
+
     def test_hr_zones_in_live_state(self):
         r = Rower()
         self.assertIsNone(r.state()["hr_zones"])

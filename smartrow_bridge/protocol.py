@@ -204,6 +204,10 @@ class SmartRowParser:
         self.v3 = False
         self.bad_checksums = 0
         self.on_stroke: Callable[[StrokeCurve], None] | None = None
+        # Called with (force curve, time) as soon as a stroke's curve is complete ('z'), before the stroke
+        # itself (which waits for the next 'b' record, a median 0.3 s later, for its work): the screens
+        # show the curve at once (bridge.py)
+        self.on_curve: Callable[[list[int], float], None] | None = None
         # Called with (on, time) when the drive flag changes (film mode: bridge.py)
         self.on_flag: Callable[[bool, float], None] | None = None
         self._curve_parts: list[list[int]] = []
@@ -277,6 +281,8 @@ class SmartRowParser:
             if kind == "z":
                 self._pending_curve = [f for part in self._curve_parts for f in part]
                 self._curve_parts = []
+                if self.on_curve is not None and any(self._pending_curve):
+                    self.on_curve(list(self._pending_curve), now)
         return True
 
     def _before(self, now: float) -> float:

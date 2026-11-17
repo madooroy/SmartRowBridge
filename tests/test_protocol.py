@@ -119,9 +119,13 @@ class ParserTest(unittest.TestCase):
         p = SmartRowParser()
         strokes = []
         p.on_stroke = strokes.append
+        early = []
+        p.on_curve = lambda curve, t: early.append((curve, t))
         for raw in (real("x@@AAI,18=BFIMB3"), real("y@@AAINNMLJIFB14"), real("z@@AAI>:50,'!!37")):
             p.feed(raw, now=32.7)
         self.assertEqual(strokes, [])  # waits for the stroke's 'b' record
+        self.assertEqual(len(early), 1)  # ... but the curve is out at once, for the screens
+        self.assertEqual((early[0][0][:3], early[0][1]), ([176, 256, 368], 32.7))
         p.feed(real("b@@ABA 54341232C"), now=32.9)
         self.assertEqual(len(strokes), 1)
         s = strokes[0]

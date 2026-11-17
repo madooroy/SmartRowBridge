@@ -71,6 +71,7 @@ class Bridge:
                 if saved else None)
             self.coach.w_prime = w_prime_joules(cfg.coach_w_prime)
             self.parser.on_stroke = self._stroke
+            self.parser.on_curve = self._curve
         self._status_now: asyncio.Event | None = None  # set after each stroke: write the status now
         self.hr_link = None  # heartrate.HeartRateLink, created once the pulley's adapter is known
         self.recorder: sessions.SessionRecorder | None = None
@@ -314,6 +315,12 @@ class Bridge:
         if self.uploader:
             self.uploader.check_now(request.get("token"))
         self._finish_result = {"token": request.get("token"), "session": session}
+
+    def _curve(self, curve: list[int], now: float) -> None:
+        """A stroke's force curve, before the stroke itself: on the screens at once."""
+        self.coach.show_curve(curve)
+        if self._status_now is not None:
+            self._status_now.set()
 
     def _stroke(self, stroke) -> None:
         """A finished stroke: to the coach, then the status file straight away (not at the next second),
