@@ -643,10 +643,15 @@ function trioGeometry(balance) {  // in % of the width
 }
 
 // The curve's heading, the same on every view and display: the session time first, then what the curve is.
-function curveHead(id, elapsed, rest) {
+// Session time and metres rowed, as the curve's heading starts on every view and display.
+const sessionText = (m) => [m.elapsed_s ? `⏱ ${fmtTime(m.elapsed_s)}` : "",
+                            m.distance_m ? `${Math.round(m.distance_m).toLocaleString("en-US")} m` : ""].filter(Boolean).join("  ·  ");
+
+function curveHead(id, m, rest) {
   const el = $(id);
   el.textContent = "";
-  if (elapsed) { const t = document.createElement("span"); t.className = "t"; t.textContent = `⏱ ${fmtTime(elapsed)}`; el.append(t); }
+  const lead = sessionText(m);
+  if (lead) { const t = document.createElement("span"); t.className = "t"; t.textContent = lead; el.append(t); }
   if (rest) el.append(rest);
 }
 
@@ -672,7 +677,7 @@ function renderInterval(live) {
   const hz = hr ? hrNow(state) : null;
   setBar("iHrBar", hz && hz.zone ? zoneBarHtml(hz, hrHead(hz)) : "");
   const judged = live.balance !== null && live.balance !== undefined;
-  curveHead("iLen", m.elapsed_s, judged ? `length ${signed(live.length_delta_cm, " cm")}` : "");
+  curveHead("iLen", m, judged ? `length ${signed(live.length_delta_cm, " cm")}` : "");
   const cue = $("iCue"), [text, cueColour] = CUES[live.cue] || ["…", null];
   cue.textContent = text;
   cue.className = cueColour ? "cue" : "cue none";
@@ -741,7 +746,7 @@ function renderRowing(st) {
   if (rhythm) drawRhythm($("rRhythm"), rhythm);
   if (curve && recovery) {
     drawCurve($("rCurve"), coach.stroke_curve, coach.steady_curve, C.blue, "both", true, null, true);
-    curveHead("rNote", m.elapsed_s, "RECOVERY");
+    curveHead("rNote", m, "RECOVERY");
     $("rCue").textContent = "RECOVERY";
     $("rCue").className = "cue none";
     $("rCue").style.background = "";
@@ -754,14 +759,14 @@ function renderRowing(st) {
     const [text, cueColour] = drift ? [coach.drift, null]
       : CUES[coach.cue] || [coach.waiting || (coach.warming_up ? "warming up" : "learning your Easy stroke"), null];
     drawCurve($("rCurve"), coach.stroke_curve, coach.steady_curve, cueColour || C.blue, "both", true, null, true);
-    curveHead("rNote", m.elapsed_s, "EASY" + (coach.length_delta_cm !== null && coach.length_delta_cm !== undefined
+    curveHead("rNote", m, "EASY" + (coach.length_delta_cm !== null && coach.length_delta_cm !== undefined
       ? ` · length ${signed(coach.length_delta_cm, " cm")}` : ""));
     $("rCue").textContent = text;
     $("rCue").className = cueColour ? "cue" : drift ? "cue none drift" : "cue none";
     $("rCue").style.background = cueColour || "";
   }
-  // With the curve, the session time is in its heading (as the floating window and the screen).
-  let footer = curve ? `${m.distance_m ?? 0} m` : `${fmtTime(m.elapsed_s)} · ${m.stroke_count ?? 0} strokes`;
+  // With the curve, the session time and metres are in its heading (as the floating window and the screen).
+  let footer = curve ? `${m.stroke_count ?? 0} strokes` : `${fmtTime(m.elapsed_s)} · ${m.distance_m ?? 0} m · ${m.stroke_count ?? 0} strokes`;
   if (m.heart_rate_bpm && !hrz) footer += ` · ♥ ${m.heart_rate_bpm}`;  // else the heart-rate bar shows it
   if (!rowing) footer += " · paused";
   if (recovery) footer = (curve ? "" : "RECOVERY · ") + footer;
@@ -2732,7 +2737,7 @@ function drawPipView() {
   // The curve's heading line, the same in every curve view: the session time first, then what the curve
   // is (or the length note); on the right, with a workout, its step, target and what's next.
   const curveHead = (left, leftColour, top, leftBold) => {
-    const time = m.elapsed_s ? `⏱ ${fmtTime(m.elapsed_s)}` : "";
+    const time = sessionText(m);
     const right = wk ? `${wk.step}/${wk.steps} · ${wkTarget(wk)}${wk.target_w != null ? " W" : ""} · ${wkNext(wk)}`
       : wkNoteText || "";
     const rightColour = wk ? C.fg : wkNoteText ? C.green : C.dim;
@@ -2754,7 +2759,8 @@ function drawPipView() {
     box(top, cueY - top - 6, C.tile);
     plotCurve(g, 10, top, W - 20, cueY - top - 6, live.stroke_curve || live.curve, live.steady_curve, curveColour, "both", false, 1, live.stall, true);
     const hasLen = live.balance !== null && live.balance !== undefined && live.length_delta_cm !== null && live.length_delta_cm !== undefined;
-    curveHead(hasLen ? `length ${signed(live.length_delta_cm, " cm")}` : "", C.dim, top, false);
+    // With a workout the step takes the right of the heading, so no length note (no room for both).
+    curveHead(hasLen && !wk ? `length ${signed(live.length_delta_cm, " cm")}` : "", C.dim, top, false);
     const [label, cueColour] = CUES[live.cue] || ["…", C.tile];
     box(cueY, CUE_H, cueColour, 10);
     const size = Math.min(26, Math.floor((W - 40) / (label.length * 0.62)));

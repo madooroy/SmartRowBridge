@@ -581,7 +581,7 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
             head = f"{wk['step']}/{wk['steps']} \u00b7 {workout_target(wk)} W \u00b7 {workout_next(wk)}"
         if m.get("heart_rate_bpm") and not hr_shown:
             head += f"  \u00b7  \u2665 {m['heart_rate_bpm']}"
-        _curve_head(draw, m.get("elapsed_s", 0), head, True)
+        _curve_head(draw, m, head, True)
         banner = (4, bottom + 3, WIDTH - 4, bottom + 23)
         mid = (banner[1] + banner[3]) // 2
         if cue:
@@ -836,18 +836,23 @@ def _mini_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct: 
     draw.line((at(0), y0 - 2, at(0), y1 + 2), fill=FG, width=2)
 
 
-def _curve_head(draw: ImageDraw.ImageDraw, elapsed_s: float, rest: str, bold: bool = False) -> None:
+def _curve_head(draw: ImageDraw.ImageDraw, m: dict, rest: str, bold: bool = False) -> None:
     """The curve's heading, the same on every view (and as the floating window and web page): the session
-    time first, in white, then what the curve is; kept clear of "Easy shape" at the right."""
+    time and metres rowed first, in white, then what the curve is; kept clear of "Easy shape" at the right."""
     x, room = 12, WIDTH - 120
-    if elapsed_s:
-        t = format_time(elapsed_s)
+    parts = ([format_time(m["elapsed_s"])] if m.get("elapsed_s") else []) + \
+            ([f"{round(m['distance_m']):,} m"] if m.get("distance_m") else [])
+    if parts:
+        t = "  ".join(parts)
         f = font(12, True)
         draw.text((x, 96), t, font=f, fill=FG)
         w = draw.textlength(t + "  ", font=f)
         x, room = x + w, room - w
     if rest:
-        draw.text((x, 96), rest, font=_fit(draw, rest, 12, room, bold), fill=DIM)
+        f = _fit(draw, rest, 12, room, bold)
+        while len(rest) > 1 and draw.textlength(rest, font=f) > room:  # still too long: shortened, never overlapping
+            rest = rest[:-2].rstrip(" \u00b7") + "\u2026"
+        draw.text((x, 96), rest, font=f, fill=DIM)
 
 
 def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
@@ -874,12 +879,12 @@ def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
     curve_colour = CUES.get(live.get("cue"), ("", FG))[1] if live.get("cue") else FG
     _plot_curves(draw, (4, 92, WIDTH - 4, bottom), stroke, live.get("steady_curve") or [], curve_colour, "both",
                  live.get("stall"), grid=True)
-    note = []
-    if live.get("balance") is not None and live.get("length_delta_cm") is not None:
+    note = []  # with a workout its step instead of the length note: the heading has room for one
+    if not wk and live.get("balance") is not None and live.get("length_delta_cm") is not None:
         note.append(f"length {live['length_delta_cm']:+d} cm".replace("-", "\u2212"))
     if wk:
         note.append(f"{wk['step']}/{wk['steps']} \u00b7 " + (f"{workout_target(wk)} W" if wk.get("target_w") is not None else "free"))
-    _curve_head(draw, m.get("elapsed_s", 0), "  \u00b7  ".join(note))
+    _curve_head(draw, m, "  \u00b7  ".join(note))
 
     text, colour = CUES.get(live.get("cue"), ("\u2026", DIM))
     banner = (4, bottom + 3, WIDTH - 4, bottom + 23)
