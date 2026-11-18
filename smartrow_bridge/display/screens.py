@@ -547,9 +547,11 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
     if not rowing:
         footer += "  \u00b7  paused"
 
-    if coach.get("stroke_curve") and coach.get("intensity") != "Recovery":
+    if coach.get("stroke_curve"):
         # Easy rowing with the coach: three numbers, each stroke's force curve over your early Easy
-        # strokes, and the cue (none while the coach is still learning them).
+        # strokes, and the cue (none while the coach is still learning them). In a Recovery stretch, the
+        # same view with nothing judged: RECOVERY in place of the cue (as the floating window).
+        recovering = coach.get("intensity") == "Recovery"
         wk = _workout(status)
         watts = wk["power_w"] if wk and wk.get("power_w") is not None else m.get("power_w", 0)
         spm = wk.get("spm") if wk and wk.get("spm") is not None else round(m.get("stroke_rate_spm", 0))
@@ -563,18 +565,18 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
                      status, watts if rowing else None)
         hr_shown = _hr_bottom(draw, status)
         steady = coach.get("steady_curve") or []
-        cue = coach.get("cue")
-        drift = coach.get("drift")  # a slow change over the Easy rowing: a note in place of LOOKS GOOD
+        cue = None if recovering else coach.get("cue")
+        drift = None if recovering else coach.get("drift")  # a slow change over the Easy rowing: a note in place of LOOKS GOOD
         if cue == "good" and drift:
             cue = None
         text, colour = CUES.get(cue, ("", BLUE)) if cue else ("", BLUE)
-        rhythm = coach.get("rhythm") if rowing else None
+        rhythm = coach.get("rhythm") if rowing and not recovering else None
         bottom = 162 if hr_shown else 188  # the curve (and rhythm bar) down to the slim cue banner
         _plot_curves(draw, (4, 92, WIDTH - 4, bottom - 17 if rhythm else bottom), coach["stroke_curve"], steady, colour, "both",
                      grid=True)
         if rhythm:
             _rhythm_bar(draw, (4, bottom - 13, WIDTH - 4, bottom), rhythm)
-        head = f"EASY  \u00b7  {format_time(m.get('elapsed_s', 0))}"
+        head = f"{'RECOVERY' if recovering else 'EASY'}  \u00b7  {format_time(m.get('elapsed_s', 0))}"
         if wk:
             head = f"{wk['step']}/{wk['steps']} \u00b7 {workout_target(wk)} W \u00b7 {workout_next(wk)}"
         if m.get("heart_rate_bpm") and not hr_shown:
@@ -588,7 +590,9 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
         else:
             draw.rounded_rectangle(banner, radius=7, fill=TILE)
             waiting = coach.get("waiting") or ("warming up" if coach.get("warming_up") else "learning your Easy stroke")
-            if drift and coach.get("cue"):  # judged (not learning), and nothing more pressing
+            if recovering:
+                draw.text((WIDTH // 2, mid), "RECOVERY", font=font(16, True), fill=BLUE, anchor="mm")
+            elif drift and coach.get("cue"):  # judged (not learning), and nothing more pressing
                 draw.text((WIDTH // 2, mid), drift, font=_fit(draw, drift, 13, WIDTH - 24, False), fill=AMBER, anchor="mm")
             else:
                 draw.text((WIDTH // 2, mid), waiting, font=font(13), fill=DIM, anchor="mm")

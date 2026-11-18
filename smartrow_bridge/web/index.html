@@ -722,14 +722,24 @@ function renderRowing(st) {
   set("rDist", String(m.distance_m ?? 0));
   const coach = st.coach;
   const curve = coach && coach.stroke_curve && coach.stroke_curve.length;
-  const recovery = coach && coach.intensity === "Recovery";  // no coaching while you recover: the numbers
-  $("rowing").classList.toggle("coached", !!curve && !recovery);
-  $("rCurveTile").hidden = !curve || recovery;
-  $("rCue").hidden = !curve || recovery;
+  // In a Recovery stretch: the same view, nothing judged (RECOVERY in place of the cue).
+  const recovery = coach && coach.intensity === "Recovery";
+  $("rowing").classList.toggle("coached", !!curve);
+  $("rCurveTile").hidden = !curve;
+  $("rCue").hidden = !curve;
   const rhythm = curve && !recovery && rowing ? coach.rhythm : null;  // as the screen: Easy, rowing, low rates
   $("rRhythm").hidden = !rhythm;
   if (rhythm) drawRhythm($("rRhythm"), rhythm);
+  if (curve && recovery) {
+    drawCurve($("rCurve"), coach.stroke_curve, coach.steady_curve, C.blue, "both", true, null, true);
+    $("rNote").textContent = "RECOVERY";
+    $("rCue").textContent = "RECOVERY";
+    $("rCue").className = "cue none";
+    $("rCue").style.background = "";
+    $("rCue").style.color = C.blue;
+  }
   if (curve && !recovery) {  // Easy: each stroke over your early Easy strokes, and the cue
+    $("rCue").style.color = "";
     // A slow change over the Easy rowing (coach.drift) is a note in place of LOOKS GOOD, never of a cue.
     const drift = coach.cue === "good" && coach.drift;
     const [text, cueColour] = drift ? [coach.drift, null]
@@ -2749,9 +2759,12 @@ function drawPipView() {
       : faded ? `FINISH ${signed(last.finish_pct, "%")} vs Easy` : null;
     if (note) text(note, W / 2, H - FOOT / 2 - 2, fit(note, 20, W - 24), C.amber, "center");
     else footer();
-  } else if (coach && coach.stroke_curve && coach.stroke_curve.length && coach.intensity !== "Recovery") {
-    // Easy: power, then pace and rate, each stroke over your fresh Easy stroke, and the cue.
-    const [label, cueColour] = CUES[coach.cue] || [coach.waiting || (coach.warming_up ? "warming up" : "learning your Easy stroke"), null];
+  } else if (coach && coach.stroke_curve && coach.stroke_curve.length) {
+    // Easy: power, then pace and rate, each stroke over your fresh Easy stroke, and the cue. In a Recovery
+    // stretch the same view, nothing judged: RECOVERY in place of the cue.
+    const recovering = coach.intensity === "Recovery";
+    const [label, cueColour] = recovering ? ["RECOVERY", null]
+      : CUES[coach.cue] || [coach.waiting || (coach.warming_up ? "warming up" : "learning your Easy stroke"), null];
     const watts = wk && wk.power_w != null ? wk.power_w : m.power_w;
     metricsTop([[rowing ? String(watts) : "–", "WATTS", !rowing ? C.faint : C.fg], rate(),
                 wk ? [wkLeft(wk), "LEFT IN STEP", C.fg]
@@ -2759,15 +2772,15 @@ function drawPipView() {
                rowing ? watts : null);
     hrBottom();
     const top = TOP_H + 4, cueY = H - FOOT - HR_H - CUE_H - 6;
-    const rhythm = rowing ? coach.rhythm : null, RH = 24;  // the drive:recovery bar, as on the screen
+    const rhythm = rowing && !recovering ? coach.rhythm : null, RH = 24;  // the drive:recovery bar, as on the screen
     const curveH = cueY - top - 8 - (rhythm ? RH + 6 : 0);
     box(top, curveH, C.tile);
     plotCurve(g, 10, top, W - 20, curveH, coach.stroke_curve, coach.steady_curve, cueColour || C.blue, "both", false, 1, null, true);
     if (rhythm) plotRhythm(g, 10, top + curveH + 6, W - 20, RH, rhythm);
-    text("EASY", 22, top + 16, 16, C.dim, "left");
+    text(recovering ? "RECOVERY" : "EASY", 22, top + 16, 16, C.dim, "left");
     box(cueY, CUE_H, cueColour || C.tile, 12);
-    const size = cueColour ? Math.min(32, Math.floor((W - 40) / (label.length * 0.62))) : 22;
-    text(label, W / 2, cueY + CUE_H / 2, size, cueColour ? C.bg : C.dim, "center", !!cueColour);
+    const size = cueColour ? Math.min(32, Math.floor((W - 40) / (label.length * 0.62))) : recovering ? 26 : 22;
+    text(label, W / 2, cueY + CUE_H / 2, size, cueColour ? C.bg : recovering ? C.blue : C.dim, "center", !!cueColour || recovering);
     footer();
   } else {
     const pwr = rowing ? powerNow(st, wk && wk.power_w != null ? wk.power_w : m.power_w) : null;
