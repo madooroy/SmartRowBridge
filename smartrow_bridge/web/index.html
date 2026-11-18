@@ -2662,7 +2662,9 @@ function drawPipView() {
   // (heart rate only when it has no zone bar above)
   const session = (m.elapsed_s ? `⏱ ${fmtTime(m.elapsed_s)}` : "")
     + (m.heart_rate_bpm && !hrNow(st) ? `   ♥ ${m.heart_rate_bpm}` : "");
-  const CUE_H = 56, FOOT = 34;  // cue banner (kept slim: more room for the curve) and the bottom line
+  // Cue banner kept slim, and no bottom line under the curve views (its time or step moves into the
+  // curve's heading): the room goes to the curve. The summary and plain views keep the bottom line.
+  const CUE_H = 40, FOOT = 34;
   // Following a planned workout: the bottom line is the step and what's next; the numbers at the top are
   // the step's time left and your watts, coloured against its target.
   const wk = coach && coach.workout && coach.workout.state === "running" ? coach.workout : null;
@@ -2683,7 +2685,7 @@ function drawPipView() {
   // The top, as the SmartRow app lays it out: power, stroke rate and a time (or pace) evenly spaced, each
   // number large over its label; power (and rate) coloured against a workout's targets. Under them, your
   // power within the intensity bands (current band lit, a marker where you are).
-  const TOP_H = 116;  // numbers, the power bar and the zones' bottoms
+  const TOP_H = 100;  // numbers, the power bar and the zones' bottoms
   const BAR_H = 10;  // the power and heart-rate bars: the same height and width
   // Watts take the colour of the intensity band they're in (as the bar under them); rate and time stay
   // white. A rate target shows in the rate's label, amber when your rate is outside it.
@@ -2694,11 +2696,11 @@ function drawPipView() {
     if (pw && cols[0][2] !== C.faint) cols[0][2] = pw.colour;
     cols.forEach(([value, label, colour], k) => {
       const cx = 8 + cw * (k + 0.5);
-      text(value, cx, 34, fit(value, narrow ? 40 : 46, cw - 10, false), colour, "center", false);
-      text(label, cx, 64, fit(label, 14, cw - 8, false), k === 1 && rateOff() ? C.amber : C.dim, "center", false);
+      text(value, cx, 28, fit(value, narrow ? 36 : 40, cw - 10, false), colour, "center", false);
+      text(label, cx, 54, fit(label, 13, cw - 8, false), k === 1 && rateOff() ? C.amber : C.dim, "center", false);
     });
     // (a workout step's power target is in the bottom line: STEP 3/11 · TARGET 180 W · next ...)
-    if (pw) drawZoneBar(g, 16, 80, W - 32, BAR_H, pw, 104, narrow ? 14 : 15);
+    if (pw) drawZoneBar(g, 16, 66, W - 32, BAR_H, pw, 89, narrow ? 13 : 14);
   };
   const rate = () => {
     const spm = wk && wk.spm != null ? wk.spm : Math.round(m.stroke_rate_spm ?? 0);
@@ -2706,16 +2708,27 @@ function drawPipView() {
   };
   const rateOff = () => !!(rowing && rateAim && wk.spm_on && wk.spm_on !== "on");
   // The bottom, as Peloton's heart-rate box: zone, heart rate and % of max over the zone bar.
-  const HR_H = hr ? 50 : 0;
-  const hrBottom = () => {
+  const HR_H = hr ? 44 : 0;
+  const hrBottom = (foot = 0) => {
     if (!hr) return;
-    const y = H - FOOT - HR_H;
+    const y = H - foot - HR_H;
     if (hr.zone) {
-      text(`ZONE ${hr.zone}`, 16, y + 14, narrow ? 14 : 15, hr.colour, "left");
-      text(`♥ ${hr.bpm}`, W / 2, y + 14, narrow ? 22 : 24, hr.colour, "center");
-      if (hr.maxPct) text(`${hr.maxPct}% MAX`, W - 16, y + 14, narrow ? 14 : 15, C.dim, "right", false);
-      drawZoneBar(g, 16, y + 32, W - 32, BAR_H, hr);
-    } else text(`♥ ${hr.bpm}`, W / 2, y + 24, 22, hr.colour, "center");
+      text(`ZONE ${hr.zone}`, 16, y + 12, narrow ? 14 : 15, hr.colour, "left");
+      text(`♥ ${hr.bpm}`, W / 2, y + 12, narrow ? 20 : 22, hr.colour, "center");
+      if (hr.maxPct) text(`${hr.maxPct}% MAX`, W - 16, y + 12, narrow ? 14 : 15, C.dim, "right", false);
+      drawZoneBar(g, 16, y + 26, W - 32, BAR_H, hr);
+    } else text(`♥ ${hr.bpm}`, W / 2, y + 20, 22, hr.colour, "center");
+  };
+  // The curve's heading line: what the curve is (or the length note) on the left; on the right the
+  // session time, or with a workout its step, target and what's next (what the bottom line showed).
+  const curveHead = (left, leftColour, top, leftBold) => {
+    const right = wk ? `${wk.step}/${wk.steps} · ${wkTarget(wk)}${wk.target_w != null ? " W" : ""} · ${wkNext(wk)}`
+      : wkNoteText || (m.elapsed_s ? `⏱ ${fmtTime(m.elapsed_s)}` : "");
+    const rightColour = wk ? C.fg : wkNoteText ? C.green : C.dim;
+    g.font = `${leftBold ? "700 " : ""}16px system-ui, sans-serif`;
+    const lw = left ? g.measureText(left).width + 16 : 0;
+    if (left) text(left, 22, top + 15, 16, leftColour, "left", leftBold);
+    if (right) text(right, W - 22, top + 15, fit(right, 16, W - 44 - lw, !!wk), rightColour, "right", !!wk);
   };
   if (live) {
     // Power, rate and the effort's (or step's) time, as in every view.
@@ -2724,16 +2737,15 @@ function drawPipView() {
                 [wk ? wkLeft(wk) : fmtTime(live.elapsed_s), wk ? "LEFT IN STEP" : `${(live.intensity || "EFFORT").toUpperCase()} ${live.index}`, C.fg]], watts);
     hrBottom();
     const [, curveColour] = CUES[live.cue] || ["", C.fg];
-    const top = TOP_H + 4, cueY = H - FOOT - HR_H - CUE_H - 6;
-    box(top, cueY - top - 8, C.tile);
-    plotCurve(g, 10, top, W - 20, cueY - top - 8, live.stroke_curve || live.curve, live.steady_curve, curveColour, "both", false, 1, live.stall, true);
-    if (live.balance !== null && live.balance !== undefined && live.length_delta_cm !== null && live.length_delta_cm !== undefined)
-      text(`length ${signed(live.length_delta_cm, " cm")}`, 22, top + 16, 16, C.dim, "left", false);
+    const top = TOP_H + 4, cueY = H - (hr ? HR_H : 8) - CUE_H - 4;
+    box(top, cueY - top - 6, C.tile);
+    plotCurve(g, 10, top, W - 20, cueY - top - 6, live.stroke_curve || live.curve, live.steady_curve, curveColour, "both", false, 1, live.stall, true);
+    const hasLen = live.balance !== null && live.balance !== undefined && live.length_delta_cm !== null && live.length_delta_cm !== undefined;
+    curveHead(hasLen ? `length ${signed(live.length_delta_cm, " cm")}` : "", C.dim, top, false);
     const [label, cueColour] = CUES[live.cue] || ["…", C.tile];
-    box(cueY, CUE_H, cueColour, 12);
-    const size = Math.min(32, Math.floor((W - 40) / (label.length * 0.62)));
+    box(cueY, CUE_H, cueColour, 10);
+    const size = Math.min(26, Math.floor((W - 40) / (label.length * 0.62)));
     text(label, W / 2, cueY + CUE_H / 2, size, live.cue ? C.bg : C.dim, "center");
-    footer();
   } else if (last && ((coach.show_summary && closedIndex !== last.index) || Date.now() / 1000 < recallUntil)) {
     // As the screen's summary (display/screens.py summary_screen): the effort's average curve over
     // Easy, then SHAPE (or FINISH), LENGTH and PEAK, and a note when something needs one.
@@ -2771,17 +2783,16 @@ function drawPipView() {
                    : [rowing ? fmtPace(m.pace_s_per_500m) : "paused", rowing ? "PACE /500m" : "", rowing ? C.fg : C.dim]],
                rowing ? watts : null);
     hrBottom();
-    const top = TOP_H + 4, cueY = H - FOOT - HR_H - CUE_H - 6;
+    const top = TOP_H + 4, cueY = H - (hr ? HR_H : 8) - CUE_H - 4;
     const rhythm = rowing && !recovering ? coach.rhythm : null, RH = 24;  // the drive:recovery bar, as on the screen
-    const curveH = cueY - top - 8 - (rhythm ? RH + 6 : 0);
+    const curveH = cueY - top - 6 - (rhythm ? RH + 6 : 0);
     box(top, curveH, C.tile);
     plotCurve(g, 10, top, W - 20, curveH, coach.stroke_curve, coach.steady_curve, cueColour || C.blue, "both", false, 1, null, true);
     if (rhythm) plotRhythm(g, 10, top + curveH + 6, W - 20, RH, rhythm);
-    text(recovering ? "RECOVERY" : "EASY", 22, top + 16, 16, C.dim, "left");
-    box(cueY, CUE_H, cueColour || C.tile, 12);
-    const size = cueColour ? Math.min(32, Math.floor((W - 40) / (label.length * 0.62))) : recovering ? 26 : 22;
+    curveHead(recovering ? "RECOVERY" : "EASY", C.dim, top, true);
+    box(cueY, CUE_H, cueColour || C.tile, 10);
+    const size = cueColour ? Math.min(26, Math.floor((W - 40) / (label.length * 0.62))) : recovering ? 24 : 20;
     text(label, W / 2, cueY + CUE_H / 2, size, cueColour ? C.bg : recovering ? C.blue : C.dim, "center", !!cueColour || recovering);
-    footer();
   } else {
     const pwr = rowing ? powerNow(st, wk && wk.power_w != null ? wk.power_w : m.power_w) : null;
     text(rowing ? wkWatts(`${m.power_w} W`) : "–", W / 2, H * 0.28, 92, !rowing ? C.faint : pwr ? pwr.colour : C.fg, "center");
