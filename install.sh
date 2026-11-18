@@ -63,6 +63,13 @@ systemctl daemon-reload
 systemctl enable smartrow-bridge.service
 systemctl restart smartrow-bridge.service
 
+# Wi-Fi watchdog (tools/wifi_watchdog.sh): once a minute, reconnect Wi-Fi if the router stops answering.
+sed -e "s|@REPO@|$PWD|g" deploy/smartrow-wifi-watchdog.service > /etc/systemd/system/smartrow-wifi-watchdog.service
+install -m 644 deploy/smartrow-wifi-watchdog.timer /etc/systemd/system/smartrow-wifi-watchdog.timer
+chmod 644 /etc/systemd/system/smartrow-wifi-watchdog.service
+systemctl daemon-reload
+systemctl enable --now smartrow-wifi-watchdog.timer
+
 # Peloton class list on a timer (tools/peloton_plans.py auto): after each row, your history; weekly, new
 # classes. Runs as the user who ran this, from this folder; does nothing until tools/peloton_auth.py setup.
 if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != root ]]; then

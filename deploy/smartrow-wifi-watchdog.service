@@ -1,0 +1,8 @@
+# Reconnects Wi-Fi when the router stops answering (tools/wifi_watchdog.sh). Run by the timer.
+[Unit]
+Description=Wi-Fi watchdog: reconnect when the router stops answering
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=@REPO@/tools/wifi_watchdog.sh

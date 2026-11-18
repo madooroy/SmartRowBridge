@@ -1,0 +1,11 @@
+# Once a minute, from three minutes after start-up.
+[Unit]
+Description=Wi-Fi watchdog, once a minute
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=1min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

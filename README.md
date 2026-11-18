@@ -176,6 +176,11 @@ Common problems:
 - **Apps cannot see `SmartRow` / `PiRower`** - they only appear after the pulley has connected. Pull the handle.
 - **The SmartRow app does not reconnect after you replaced the pulley** - it is a different pulley ID; pair
   the new `SmartRow-<number>` once.
+- **The Pi drops off Wi-Fi** (screen wakes, but nothing reaches it): a mesh router can stop serving the Pi
+  without telling it, so it never reconnects by itself. A watchdog installed by `install.sh`
+  (`smartrow-wifi-watchdog.timer`) pings the router once a minute and reconnects Wi-Fi after two failed
+  minutes; `journalctl -u smartrow-wifi-watchdog --since today` shows what it did. On a TP-Link Deco, also
+  consider turning off Mesh Technology for the Pi in the Deco app (it then stays on one Deco).
 
 ## Settings
 
