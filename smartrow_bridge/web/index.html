@@ -91,14 +91,15 @@
   .trio { position: relative; }
   .trio .row { position: absolute; left: 0; right: 0; }
   .trio .blk { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
-  .cue { border-radius: 12px; padding: calc(var(--pad) * 0.6); text-align: center; font-weight: 700;  /* slim: more room for the curve */
-    font-size: clamp(20px, 5vmin, 52px); color: var(--bg); }
+  .cue { border-radius: 10px; padding: calc(var(--pad) * 0.35); text-align: center; font-weight: 700;  /* slim: more room for the curve */
+    font-size: clamp(18px, 4.2vmin, 44px); color: var(--bg); }
   .cue.none { background: var(--tile); color: var(--dim); }
   .curve { flex: 1; min-height: 90px; position: relative; padding: 0; }
   .curve canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   /* The live force curve is the main picture: on short panes the clock shrinks instead. */
   #interval .curve.live { min-height: 120px; }
   .clen { position: absolute; left: 14px; top: 8px; font-size: var(--label); color: var(--dim); }
+  .clen .t { color: var(--fg); margin-right: 0.7em; }  /* the session time: first in every curve heading */
   @media (max-height: 420px) { #interval .clockrow .value, #interval .metrics3 .value { font-size: clamp(28px, 9vmin, 60px); } }
   /* Short panes (a split screen's lower half): the coach keeps all the height, no session list. */
   @media (max-height: 520px) { #layout.with-history aside { display: none !important; } }
@@ -641,6 +642,14 @@ function trioGeometry(balance) {  // in % of the width
   return { steady: [left, w], force: [left + Math.max(-BAR_RANGE, Math.min(BAR_RANGE, balance)) * SHIFT_PER_UNIT * w, w] };
 }
 
+// The curve's heading, the same on every view and display: the session time first, then what the curve is.
+function curveHead(id, elapsed, rest) {
+  const el = $(id);
+  el.textContent = "";
+  if (elapsed) { const t = document.createElement("span"); t.className = "t"; t.textContent = `⏱ ${fmtTime(elapsed)}`; el.append(t); }
+  if (rest) el.append(rest);
+}
+
 function renderInterval(live) {
   show("interval");
   const hr = state && state.metrics && state.metrics.heart_rate_bpm;
@@ -663,7 +672,7 @@ function renderInterval(live) {
   const hz = hr ? hrNow(state) : null;
   setBar("iHrBar", hz && hz.zone ? zoneBarHtml(hz, hrHead(hz)) : "");
   const judged = live.balance !== null && live.balance !== undefined;
-  $("iLen").textContent = judged ? `length ${signed(live.length_delta_cm, " cm")}` : "";
+  curveHead("iLen", m.elapsed_s, judged ? `length ${signed(live.length_delta_cm, " cm")}` : "");
   const cue = $("iCue"), [text, cueColour] = CUES[live.cue] || ["…", null];
   cue.textContent = text;
   cue.className = cueColour ? "cue" : "cue none";
@@ -732,7 +741,7 @@ function renderRowing(st) {
   if (rhythm) drawRhythm($("rRhythm"), rhythm);
   if (curve && recovery) {
     drawCurve($("rCurve"), coach.stroke_curve, coach.steady_curve, C.blue, "both", true, null, true);
-    $("rNote").textContent = "RECOVERY";
+    curveHead("rNote", m.elapsed_s, "RECOVERY");
     $("rCue").textContent = "RECOVERY";
     $("rCue").className = "cue none";
     $("rCue").style.background = "";
@@ -745,16 +754,17 @@ function renderRowing(st) {
     const [text, cueColour] = drift ? [coach.drift, null]
       : CUES[coach.cue] || [coach.waiting || (coach.warming_up ? "warming up" : "learning your Easy stroke"), null];
     drawCurve($("rCurve"), coach.stroke_curve, coach.steady_curve, cueColour || C.blue, "both", true, null, true);
-    $("rNote").textContent = "EASY" + (coach.length_delta_cm !== null && coach.length_delta_cm !== undefined
-      ? ` · length ${signed(coach.length_delta_cm, " cm")}` : "");
+    curveHead("rNote", m.elapsed_s, "EASY" + (coach.length_delta_cm !== null && coach.length_delta_cm !== undefined
+      ? ` · length ${signed(coach.length_delta_cm, " cm")}` : ""));
     $("rCue").textContent = text;
     $("rCue").className = cueColour ? "cue" : drift ? "cue none drift" : "cue none";
     $("rCue").style.background = cueColour || "";
   }
-  let footer = `${fmtTime(m.elapsed_s)} · ` + (curve ? `${m.distance_m ?? 0} m` : `${m.stroke_count ?? 0} strokes`);
+  // With the curve, the session time is in its heading (as the floating window and the screen).
+  let footer = curve ? `${m.distance_m ?? 0} m` : `${fmtTime(m.elapsed_s)} · ${m.stroke_count ?? 0} strokes`;
   if (m.heart_rate_bpm && !hrz) footer += ` · ♥ ${m.heart_rate_bpm}`;  // else the heart-rate bar shows it
   if (!rowing) footer += " · paused";
-  if (recovery) footer = "RECOVERY · " + footer;
+  if (recovery) footer = (curve ? "" : "RECOVERY · ") + footer;
   else if (coach) footer += coach.mode === "warmup" ? " · coach learning your Easy rowing"
                                                     : ` · Easy ${coach.steady_power_w} W`;
   $("rFooter").textContent = footer;

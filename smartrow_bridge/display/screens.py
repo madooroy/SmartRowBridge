@@ -571,18 +571,18 @@ def rowing_screen(status: dict | None, now: float, uptime: float) -> Image.Image
             cue = None
         text, colour = CUES.get(cue, ("", BLUE)) if cue else ("", BLUE)
         rhythm = coach.get("rhythm") if rowing and not recovering else None
-        bottom = 162 if hr_shown else 188  # the curve (and rhythm bar) down to the slim cue banner
+        bottom = 164 if hr_shown else 190  # the curve (and rhythm bar) down to the slim cue banner
         _plot_curves(draw, (4, 92, WIDTH - 4, bottom - 17 if rhythm else bottom), coach["stroke_curve"], steady, colour, "both",
                      grid=True)
         if rhythm:
             _rhythm_bar(draw, (4, bottom - 13, WIDTH - 4, bottom), rhythm)
-        head = f"{'RECOVERY' if recovering else 'EASY'}  \u00b7  {format_time(m.get('elapsed_s', 0))}"
+        head = "RECOVERY" if recovering else "EASY"
         if wk:
             head = f"{wk['step']}/{wk['steps']} \u00b7 {workout_target(wk)} W \u00b7 {workout_next(wk)}"
         if m.get("heart_rate_bpm") and not hr_shown:
             head += f"  \u00b7  \u2665 {m['heart_rate_bpm']}"
-        draw.text((12, 96), head, font=_fit(draw, head, 12, WIDTH - 120, True), fill=DIM)  # clear of "Easy shape"
-        banner = (4, bottom + 3, WIDTH - 4, bottom + 25)
+        _curve_head(draw, m.get("elapsed_s", 0), head, True)
+        banner = (4, bottom + 3, WIDTH - 4, bottom + 23)
         mid = (banner[1] + banner[3]) // 2
         if cue:
             draw.rounded_rectangle(banner, radius=7, fill=colour)
@@ -836,6 +836,20 @@ def _mini_meter(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], pct: 
     draw.line((at(0), y0 - 2, at(0), y1 + 2), fill=FG, width=2)
 
 
+def _curve_head(draw: ImageDraw.ImageDraw, elapsed_s: float, rest: str, bold: bool = False) -> None:
+    """The curve's heading, the same on every view (and as the floating window and web page): the session
+    time first, in white, then what the curve is; kept clear of "Easy shape" at the right."""
+    x, room = 12, WIDTH - 120
+    if elapsed_s:
+        t = format_time(elapsed_s)
+        f = font(12, True)
+        draw.text((x, 96), t, font=f, fill=FG)
+        w = draw.textlength(t + "  ", font=f)
+        x, room = x + w, room - w
+    if rest:
+        draw.text((x, 96), rest, font=_fit(draw, rest, 12, room, bold), fill=DIM)
+
+
 def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
     """During an effort: time and watts, a finish meter, and one cue."""
     image, draw = _canvas()
@@ -853,7 +867,7 @@ def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
     _metrics_top(draw, [(str(watts), "WATTS", FG), (str(spm), rate_label, FG),
                         (clock, "LEFT IN STEP" if wk else label, FG)], status, watts)
     hr_shown = _hr_bottom(draw, status)
-    bottom = 162 if hr_shown else 188
+    bottom = 164 if hr_shown else 190
     # The force curve, as in the SmartRow app: each stroke over your steady shape (grey), the force
     # missing against steady filled in light grey. A shorter stroke ends before the steady curve does.
     stroke = live.get("stroke_curve") or live.get("curve") or []
@@ -865,12 +879,10 @@ def interval_screen(status: dict, now: float, uptime: float) -> Image.Image:
         note.append(f"length {live['length_delta_cm']:+d} cm".replace("-", "\u2212"))
     if wk:
         note.append(f"{wk['step']}/{wk['steps']} \u00b7 " + (f"{workout_target(wk)} W" if wk.get("target_w") is not None else "free"))
-    if note:
-        head = "  \u00b7  ".join(note)
-        draw.text((12, 96), head, font=_fit(draw, head, 12, WIDTH - 120), fill=DIM)  # clear of "Easy shape"
+    _curve_head(draw, m.get("elapsed_s", 0), "  \u00b7  ".join(note))
 
     text, colour = CUES.get(live.get("cue"), ("\u2026", DIM))
-    banner = (4, bottom + 3, WIDTH - 4, bottom + 25)
+    banner = (4, bottom + 3, WIDTH - 4, bottom + 23)
     mid = (banner[1] + banner[3]) // 2
     if colour == DIM:
         draw.rounded_rectangle(banner, radius=7, fill=TILE)
