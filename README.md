@@ -34,6 +34,30 @@ USB Bluetooth dongle (peripheral, Bumble): two advertising sets, two connections
 > anyone else. It was worked out from a pulley's Bluetooth traffic and may stop working after a firmware
 > or app update. Use it at your own risk.
 
+## The coach, at a glance
+
+On top of the bridge, the Pi can coach your rowing (**PiRowingCoach**). It watches every stroke's force curve
+against your own Easy stroke and gives one short cue: **LOOKS GOOD**, **EARLIER PUSH**, **LONGER STROKES**,
+**STRONGER FINISH** or **BETTER TRANSITION**.
+
+<img src="docs/images/coach-floating-window.png" alt="Floating window during an effort: watts in their zone colour, stroke rate and time; Peloton-style power zone bar; the stroke's force curve over the Easy shape with a force scale; LOOKS GOOD; heart-rate zone box" width="300"> <img src="docs/images/coach-earlier-push.png" alt="The same view with an EARLIER PUSH cue: the stroke's peak comes later than the Easy shape's" width="300">
+
+<img src="docs/images/coach-pi-screen.png" alt="The Pi's own screen with the same layout" width="400">
+
+- **The same layout everywhere:** a floating window beside the SmartRow app on a tablet, a
+  [web page](#optional-a-web-page-for-phones-and-tablets) and the Pi's [own screen](#optional-a-status-screen-on-the-pi).
+  Watts, stroke rate and time on top; a Peloton-style power zone bar (each zone's bottom in watts at its
+  border); the force curve, shown as soon as the pulley sends it; the cue; your heart-rate zone.
+- **Finds your efforts by itself**, in a Peloton class or any row, and sums each one up afterwards.
+- **[Planned workouts](#optional-planned-workouts-fit-files)** from intervals.icu: step, power and
+  stroke-rate targets, time or metres left.
+- **[Seat sensor](#optional-seat-sensor-tf-luna-lidar)** (optional TF-Luna lidar): times the legs, body and
+  arms, and the recovery.
+- **[Uploads](#optional-uploads-to-intervalsicu-and-strava)** each row to intervals.icu and Strava, and keeps a
+  [list of Peloton row classes](#optional-peloton-row-classes-ranked-by-their-class-plans) up to date.
+
+Details: [interval coach](#optional-interval-coach-experimental). The pictures use test curves.
+
 ## Status
 
 Working on the author's setup: SmartRow pulley firmware **V3.10**, Raspberry Pi 4 and TP-Link UB500, with
@@ -49,7 +73,8 @@ untested - reports welcome.
 
 The [interval coach](#optional-interval-coach-experimental) and the
 [web page](#optional-a-web-page-for-phones-and-tablets) are new and experimental: the coach is calibrated on
-the author's rowing only and is off unless turned on; the web page has not yet been tried on a tablet.
+the author's rowing only and is off unless turned on. The web page and its floating window are used on an
+Android tablet (Lenovo) beside the SmartRow app.
 
 Peloton shows stroke rate, pace and heart rate live, and output (watts, kJ), distance and stroke count in the
 workout summary.
@@ -410,7 +435,7 @@ hardware: `python3 -m smartrow_bridge.display --preview /tmp/screens` (needs Pil
 The coach is called **PiRowingCoach**: the Pi (PiRower to your apps) with a rowing coach on it. Its name is
 on the Strava description's first line and on every picture it makes.
 
-<img src="docs/images/screen-interval.png" alt="Interval screen: time, watts, a stroke's force curve over the steady shape and a STRONGER FINISH cue" width="320"> <img src="docs/images/screen-interval-summary.png" alt="Interval summary: average force curve against steady, finish, length and peak" width="320">
+<img src="docs/images/screen-interval.png" alt="Interval screen: watts, stroke rate and time, power zone bar, a stroke's force curve over the steady shape, a STRONGER FINISH cue and the heart-rate zone" width="320"> <img src="docs/images/screen-interval-summary.png" alt="Interval summary: average force curve against steady, finish, length and peak" width="320">
 
 The pulley sends a force curve for every stroke (the SmartRow app draws it). The coach watches those curves
 for you while you row: it spots harder efforts by itself and tells you, in one word, when your stroke starts
