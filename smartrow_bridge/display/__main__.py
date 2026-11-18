@@ -321,6 +321,12 @@ def preview(directory: str) -> None:
                                                                                     "intensity": "Recovery"}}, wk_rest, 121),
                                                          now, up),
         "07t-easy-hr": screens.rowing_screen(with_hr(coached(), None, 128), now, up),
+        # Each cue with heart rate (as the floating window and web page show them).
+        "07v-legs-cue-hr": screens.interval_screen(with_hr(coached(live("legs", late, 14, 0, 1.4, 0.0)), None, 150), now, up),
+        "07w-finish-cue-hr": screens.interval_screen(with_hr(coached(live("finish", faded, -15, 0, -1.5, 0.0)), None, 150), now, up),
+        "07x-length-cue-hr": screens.interval_screen(with_hr(coached(live("length", short, -1, -5, -0.3, -1.7)), None, 150), now, up),
+        "07y-transition-cue-hr": screens.interval_screen(with_hr(coached(
+            {**live("transition", stalled, -2, 1, -0.2, 0.3), "stall": {"sample": 11, "until": 12, "now": True}}), None, 150), now, up),
         "07u-interval-hr": screens.interval_screen(with_hr(coached(live("good", full, 2, 4, 0.2, 1.5)), None, 150),
                                                    now, up),
         "07s-rowing-hr": screens.rowing_screen(with_hr(st("connected", "SmartRow-34", True, True, True, **rowing), None, 152),
