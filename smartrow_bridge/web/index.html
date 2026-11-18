@@ -2722,6 +2722,8 @@ function drawPipView() {
   // The curve's heading line: what the curve is (or the length note) on the left; on the right the
   // session time, or with a workout its step, target and what's next (what the bottom line showed).
   const curveHead = (left, leftColour, top, leftBold) => {
+    // With a workout the right side is the step, so the session time leads the left side.
+    if (wk && m.elapsed_s) left = `⏱ ${fmtTime(m.elapsed_s)}` + (left ? `  ·  ${left}` : "");
     const right = wk ? `${wk.step}/${wk.steps} · ${wkTarget(wk)}${wk.target_w != null ? " W" : ""} · ${wkNext(wk)}`
       : wkNoteText || (m.elapsed_s ? `⏱ ${fmtTime(m.elapsed_s)}` : "");
     const rightColour = wk ? C.fg : wkNoteText ? C.green : C.dim;
