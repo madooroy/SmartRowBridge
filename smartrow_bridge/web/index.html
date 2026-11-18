@@ -2719,17 +2719,18 @@ function drawPipView() {
       drawZoneBar(g, 16, y + 26, W - 32, BAR_H, hr);
     } else text(`♥ ${hr.bpm}`, W / 2, y + 20, 22, hr.colour, "center");
   };
-  // The curve's heading line: what the curve is (or the length note) on the left; on the right the
-  // session time, or with a workout its step, target and what's next (what the bottom line showed).
+  // The curve's heading line, the same in every curve view: the session time first, then what the curve
+  // is (or the length note); on the right, with a workout, its step, target and what's next.
   const curveHead = (left, leftColour, top, leftBold) => {
-    // With a workout the right side is the step, so the session time leads the left side.
-    if (wk && m.elapsed_s) left = `⏱ ${fmtTime(m.elapsed_s)}` + (left ? `  ·  ${left}` : "");
+    const time = m.elapsed_s ? `⏱ ${fmtTime(m.elapsed_s)}` : "";
     const right = wk ? `${wk.step}/${wk.steps} · ${wkTarget(wk)}${wk.target_w != null ? " W" : ""} · ${wkNext(wk)}`
-      : wkNoteText || (m.elapsed_s ? `⏱ ${fmtTime(m.elapsed_s)}` : "");
+      : wkNoteText || "";
     const rightColour = wk ? C.fg : wkNoteText ? C.green : C.dim;
-    g.font = `${leftBold ? "700 " : ""}16px system-ui, sans-serif`;
-    const lw = left ? g.measureText(left).width + 16 : 0;
-    if (left) text(left, 22, top + 15, 16, leftColour, "left", leftBold);
+    let x = 22;
+    if (time) { text(time, x, top + 15, 16, C.fg, "left", false); g.font = "16px system-ui, sans-serif"; x += g.measureText(time).width + 12; }
+    if (left) { text(left, x, top + 15, 16, leftColour, "left", leftBold);
+                g.font = `${leftBold ? "700 " : ""}16px system-ui, sans-serif`; x += g.measureText(left).width; }
+    const lw = x - 22 + 16;
     if (right) text(right, W - 22, top + 15, fit(right, 16, W - 44 - lw, !!wk), rightColour, "right", !!wk);
   };
   if (live) {
