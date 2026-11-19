@@ -1243,9 +1243,10 @@ class IntervalCoach:
             "ladders": ladders,
             "rhythm": rh,
             "workout": workout_result,
-            "findings": workout_mod.findings(workout_result) + findings(intervals) + steps.ladder_findings(ladders) + easy_findings(self.easy_drift())
+            "findings": workout_mod.findings(workout_result) + findings(intervals) + steps.ladder_findings(ladders)
+            + easy_findings(self.easy_drift(), self._length_note())
             + rhythm.rhythm_findings(rh)
-            + length_findings(self._length_note()) + heart_rate_findings(hr, intervals) + steps.wbal_findings(w_bal),
+            + length_findings(self._length_note(), self.easy_drift()) + heart_rate_findings(hr, intervals) + steps.wbal_findings(w_bal),
         }
 
     def _fresh_record(self) -> dict | None:
@@ -1571,7 +1572,7 @@ def findings(intervals: list[dict]) -> list[str]:
         else:
             lo, hi = min(i["finish_pct"] for i in ok), max(i["finish_pct"] for i in ok)
             pcts = _pct(lo) if lo == hi else f"{_pct(hi)} to {_pct(lo)}"
-        out.append(f"The finish eased a little in {_which(ok, n)} ({pcts}).")
+        out.append(f"The finish eased a little against Easy in {_which(ok, n)} ({pcts}).")
     if shorter:
         cm = sum(i["length_delta_cm"] for i in shorter) / len(shorter)
         out.append(f"Strokes were shorter than Easy in {_names(shorter)} (about {abs(cm):.0f} cm).")
@@ -1599,10 +1600,15 @@ def findings(intervals: list[dict]) -> list[str]:
         top = max(set(reasons), key=reasons.count)
         out.append(f"{len(told)} of {len(overs)} efforts faded from their first third to their last "
                    f"(most often: {top}).")
-    else:
-        for i in told:
-            out.append(f"I{i['index']} faded over the effort (first third to last): "
-                       f"{over_text(i['over'], only_slipped=True, skip=('stall grew',))}.")
+    elif told:
+        # One line, each figure said against what it compares: within the effort (its first third to its
+        # last) is not against Easy, so a finish above Easy that eased within the effort says both.
+        def within(i):
+            text = f"I{i['index']} {over_text(i['over'], only_slipped=True, skip=('stall grew',))}"
+            if i.get("finish_pct") is not None and i["finish_pct"] > 0 and any(r.startswith("finish") for r in i["over"]["slipped"]):
+                text += f" ({_pct(i['finish_pct'])} against Easy overall)"
+            return text
+        out.append("Within the effort, first third to last: " + "; ".join(within(i) for i in told) + ".")
     built = [i for i in overs if i["over"].get("built") and not i.get("no_reference")]
     if built:
         out.append(f"{_names(built)} built from {'its' if len(built) == 1 else 'their'} first third to "
@@ -1661,6 +1667,18 @@ def findings(intervals: list[dict]) -> list[str]:
                    f"something the efforts brought on. Let legs, back and arms flow into each other; a video "
                    f"shows where the handover hesitates.")
     small = [i for i in intervals if i.get("small_stall")]
+
+    def stall_thirds(i):
+        return i.get("stall_thirds") or [0, 0, 0]
+    # Up in the middle third and down again by the end: said plainly, effort by effort (the middle third can be
+    # over the flag while the whole effort is not).
+    bumped = [i for i in small if stall_thirds(i)[2] - stall_thirds(i)[0] < 8 and stall_thirds(i)[1] - stall_thirds(i)[0] >= 8]
+    for i in bumped[:4]:
+        first, mid, end = stall_thirds(i)
+        out.append(f"I{i['index']}: a stall just after the peak in the middle third ({mid}% of strokes), "
+                   + ("gone by the end" if end == 0 else f"down to {end}% by the end")
+                   + f" ({i['stall_pct']}% over the effort; flagged from {STALL_FLAG_PCT:.0f}%).")
+    small = [i for i in small if i not in bumped[:4]]
     if small:
         def thirds(i):
             return i.get("stall_thirds") or [0, 0, 0]
@@ -1722,9 +1740,15 @@ def fresh_stats(strokes: list[StrokeCurve]) -> dict:
             "length_cm": statistics.fmean(s.stroke_length_cm for s in strokes), "strokes": len(strokes)}
 
 
-def length_findings(note: dict | None) -> list[str]:
+def _merged_length(note: dict | None, drift: dict | None) -> bool:
+    """Today's Easy strokes longer than last row's AND changed within this row: easy_findings tells both."""
+    return bool(note and not note["kept"] and not note.get("adopted_rows") and note["change_cm"] > 0
+                and drift and drift.get("length_delta_cm") is not None and abs(drift["length_delta_cm"]) >= 2)
+
+
+def length_findings(note: dict | None, drift: dict | None = None) -> list[str]:
     """The stroke length calibration, when today's fresh strokes differed clearly from last time's."""
-    if not note:
+    if not note or _merged_length(note, drift):
         return []
     cm = abs(note["change_cm"])
     if note["kept"]:
@@ -1734,12 +1758,20 @@ def length_findings(note: dict | None) -> list[str]:
     return [f"Fresh Easy strokes were {cm} cm longer than last time: the new length reference."]
 
 
-def easy_findings(drift: dict | None) -> list[str]:
-    """One sentence on how Easy rowing changed from the first minutes to the last, if it did."""
+def easy_findings(drift: dict | None, note: dict | None = None) -> list[str]:
+    """One sentence on how Easy rowing changed from the first minutes to the last, if it did (with the
+    change since the last row's Easy strokes, when both moved: one length line, not two)."""
     if not drift:
         return []
     parts = []
     finish, length = drift.get("finish_pct"), drift.get("length_delta_cm")
+    if _merged_length(note, drift):
+        out = [f"Easy strokes: {note['change_cm']} cm longer than last row (the new length reference), and "
+               f"{abs(length)} cm {'longer' if length > 0 else 'shorter'} by the end of this row than at its start "
+               "(not counted against the efforts: each is judged against the Easy rowing just before it)."]
+        if finish is not None and abs(finish) >= 5:
+            out.append(f"Easy rowing, last minutes against the first: finish {_pct(finish)}.")
+        return out
     if finish is not None and abs(finish) >= 5:
         parts.append(f"finish {_pct(finish)}")
     if length is not None and abs(length) >= 2:

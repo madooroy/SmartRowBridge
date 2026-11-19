@@ -2215,7 +2215,7 @@ function partsCard(s) {
     const mid = (a + b) / 2, low = mid - 60 < lastRight;
     const y = by + bh + (low ? 118 : 40);
     if (low) { g.strokeStyle = C.dim; g.lineWidth = 2; g.beginPath(); g.moveTo(mid, by + bh + 4); g.lineTo(mid, y - 30); g.stroke(); }
-    text(`${(secs[part] ?? 0).toFixed(1)} s`, mid, y, 30, C.fg, true, "center");
+    text(`${(secs[part] ?? 0).toFixed(2)} s`, mid, y, 30, C.fg, true, "center");  // as the drive and recovery: they add up
     text(names[part], mid, y + 34, 22, C.dim, false, "center");
     if (!low) lastRight = mid + 60;
   });
@@ -2249,8 +2249,9 @@ function partsCard(s) {
     text(label, x + 48, y + 6, 22, C.dim);
   });
   // The coach's line: what moved, else how it stands.
-  const f = (s.findings || []).find((x) => x.startsWith("Since the last row"))
-    || (s.findings || []).find((x) => x.startsWith("Over the row"))
+  const said = [...(rh.card_lines || []), ...(s.findings || [])];  // older rows: in the findings
+  const f = said.find((x) => x.startsWith("Since the last row"))
+    || said.find((x) => x.startsWith("Over the row"))
     || (ph.load != null && ph.load <= 0 ? "Handle loaded before the seat moved: push with the legs first." : null);
   const verdict = ph.load != null && ph.load <= 0 ? ["Coach: arms or back first, push with the legs first", C.amber]
     : f ? [`Coach: ${f.replace(/\.$/, "").replace(" (Easy)", "").replace("parked after the finish", "parked")}`, C.fg] : [`Coach: parked ${ph.parked?.toFixed(1) ?? "–"} s after the finish, ` +

@@ -970,7 +970,7 @@ class SecondRowerTest(unittest.TestCase):
         base = {"rating": "ok", "finish_pct": -7, "duration_s": 60, "power_w": 150, "intensity": "Moderate",
                 "length_delta_cm": 0, "steady_power_w": 100}
         text = " ".join(coach.findings([{**base, "index": k + 1} for k in range(9)]))
-        self.assertIn("The finish eased a little in all 9 efforts (−7%)", text)
+        self.assertIn("The finish eased a little against Easy in all 9 efforts (−7%)", text)
         self.assertNotIn("I1, I2", text)
 
 
@@ -1047,7 +1047,7 @@ class OverEffortTest(unittest.TestCase):
         i = {"index": 2, "duration_s": 230, "rating": "good", "finish_pct": 0, "power_w": 140, "intensity": "Moderate",
              "over": coach.over_effort(self.strokes([(40, 150, STEADY, 115), (20, 150, FADED, 115)]))}
         text = " ".join(coach.findings([i]))
-        self.assertIn("I2 faded over the effort (first third to last): finish −", text)
+        self.assertIn("Within the effort, first third to last: I2 finish −", text)
         from smartrow_bridge import intervals
         self.assertRegex(intervals.effort_line(i), r"finish \u2212\d+% over it")
 
@@ -1124,4 +1124,20 @@ class StallBumpTest(unittest.TestCase):
         rise = {**base, "index": 1, "stall_pct": 17, "stall_thirds": [8, 19, 23]}
         text = " ".join(coach.findings([rise, bump]))
         self.assertIn("rising through I1 (from 8% in the first third to 23% in the last)", text)
-        self.assertIn("up mid-effort and down again by the end in I3 (23\u219232\u219214% by thirds)", text)
+        self.assertIn("I3: a stall just after the peak in the middle third (32% of strokes), down to 14% by the end "
+                      "(23% over the effort; flagged from 25%)", text)
+
+
+class SummaryWordingTest(unittest.TestCase):
+    def test_both_length_changes_in_one_line(self):
+        drift = {"finish_pct": 1, "length_delta_cm": 5}
+        note = {"change_cm": 4, "kept": False}
+        lines = coach.easy_findings(drift, note) + coach.length_findings(note, drift)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("Easy strokes: 4 cm longer than last row (the new length reference), and 5 cm longer by the "
+                      "end of this row than at its start", lines[0])
+        # Without a change since the last row: as before.
+        self.assertIn("Easy rowing, last minutes against the first: strokes 5 cm longer",
+                      coach.easy_findings(drift, None)[0])
+        self.assertEqual(coach.length_findings({"change_cm": 4, "kept": False}, None),
+                         ["Fresh Easy strokes were 4 cm longer than last time: the new length reference."])

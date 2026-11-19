@@ -112,9 +112,12 @@ class PhasesTest(unittest.TestCase):
                 "phases": {"load": 0.3, "legs": 0.9, "body": 0.25, "drive": 1.15, "parked": 1.2, "slide": 1.05,
                            "recovery": 2.25}}
         last = {**easy, "ratio": 1.7, "phases": {**easy["phases"], "parked": 0.9, "load": 0.45}}
-        text = " ".join(rhythm.rhythm_findings({"easy": easy, "efforts": [], "last": last}))
+        rh = {"easy": easy, "efforts": [], "last": last}
+        text = " ".join(rhythm.rhythm_findings(rh))
+        # On the stroke-parts card, not repeated in the summary.
         self.assertIn("Since the last row (Easy): ratio 1:1.7 → 1:2, catch to load 0.45 → 0.30 s, "
-                      "parked after the finish 0.90 → 1.20 s.", text)
+                      "parked after the finish 0.90 → 1.20 s.", rh["card_lines"])
+        self.assertNotIn("Since the last row", text)
         same = " ".join(rhythm.rhythm_findings({"easy": easy, "efforts": [], "last": easy}))
         self.assertIn("Stroke parts as in the last row.", same)
         faster = " ".join(rhythm.rhythm_findings({"easy": easy, "efforts": [], "last": {**last, "spm": 20.0}}))

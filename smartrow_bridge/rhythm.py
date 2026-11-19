@@ -220,6 +220,9 @@ def phase_findings(easy: dict, last: dict | None = None) -> list[str]:
     return out
 
 
+CARD_PREFIXES = ("Over the row (first third to last)", "Since the last row (Easy)")
+
+
 def rhythm_findings(rh: dict | None) -> list[str]:
     """The Easy rhythm (with the aim, at low rates), its parts with the seat sensor, and the efforts'."""
     if not rh:
@@ -247,7 +250,12 @@ def rhythm_findings(rh: dict | None) -> list[str]:
                          "from the catch, not only a slower slide.")
         out.append(text)
         if easy.get("source") == "seat":
-            out.extend(phase_findings(easy, rh.get("last")))
+            # Over the row and since the last row are on the stroke-parts card (rh["card_lines"]): not
+            # repeated in the summary.
+            lines = phase_findings(easy, rh.get("last"))
+            card = [x for x in lines if x.startswith(CARD_PREFIXES)]
+            rh["card_lines"] = card
+            out.extend(x for x in lines if x not in card)
         effort_src = {x.get("source") for x in rh.get("efforts", [])}
         if effort_src and effort_src != {easy.get("source")}:
             estimated = label(effort_src)
